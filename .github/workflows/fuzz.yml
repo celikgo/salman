@@ -1,0 +1,149 @@
+# Rule 7: untrusted input is treated as hostile — every parser is fuzzed.
+#
+# READ THIS BEFORE TRUSTING A RED RUN
+#
+# There are no fuzz targets in this repository yet, and this workflow FAILS
+# because of it. That is the intended behaviour, not an oversight, and the
+# choice was between two options:
+#
+#   (a) gate the whole workflow on `fuzz/` existing, so it is skipped until
+#       somebody writes a target, or
+#   (b) fail with a message naming what is missing.
+#
+# (b) was chosen. README lists rule 7 under "enforced, not aspirational", and
+# (a) would have made that sentence false in the quietest possible way: an
+# all-green checks list, with the fuzzing gate silently absent from it, for as
+# long as nobody happened to look. A gate that reports "nothing to do" and a
+# gate that reports "pass" are indistinguishable on a pull request page, and
+# this project's whole premise is that they must not be.
+#
+# The cost of (b) is bounded, and that is what makes it affordable here. This
+# workflow runs on a schedule and on demand only — it is NOT a pull-request
+# check, so a red run blocks no merge. It is a standing, visible reminder on
+# the Actions tab that a stated rule is not yet enforced. It turns green the
+# day the first fuzz target lands, and never by any other means.
+#
+# ---------------------------------------------------------------------------
+# What the schedule does and does not guarantee
+# ---------------------------------------------------------------------------
+#
+#   * `schedule` triggers only on the repository's DEFAULT branch. Editing this
+#     file on a branch changes nothing until it is merged there.
+#   * Scheduled runs are best-effort. GitHub drops them under load, and the
+#     cron time is a request, not an appointment. The minute below is off the
+#     hour deliberately: everything queued at :00 competes with everything else
+#     on the platform that also asked for :00.
+#   * On a public repository, scheduled workflows are disabled automatically
+#     after 60 days without repository activity, and GitHub emails an owner
+#     rather than announcing it here. If fuzzing appears to have stopped, check
+#     that this workflow is still enabled before assuming it is passing.
+name: fuzz
+
+on:
+  schedule:
+    # 03:27 UTC daily. Off the hour on purpose; see above.
+    - cron: "27 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: cargo-fuzz over every target
+    # ubuntu-latest only, and not by preference. cargo-fuzz drives libFuzzer
+    # through the sanitizer runtime, which rustc supports on Unix targets and
+    # not on the MSVC ones; `cargo fuzz` refuses to run on Windows outright.
+    # macOS would work, but adds a second platform's worth of runner time for
+    # a job whose findings are about input handling, not about the OS.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # This is the first step on purpose. When there is nothing to fuzz, the
+      # job should say so in ten seconds rather than after installing a nightly
+      # toolchain and building cargo-fuzz for a corpus that does not exist.
+      - name: Require fuzz targets to exist
+        run: |
+          set -euo pipefail
+          if [ ! -d fuzz ]; then
+            echo "::error title=No fuzz targets::README rule 7 says every parser is fuzzed. There is no fuzz/ directory in this repository, so nothing is fuzzed and this job cannot pass. Fuzz targets are required before the next milestone: create fuzz/ with 'cargo fuzz init', add a target per parser as each one lands, and this workflow starts doing real work with no change to it."
+            echo
+            echo "Expected: a fuzz/ directory containing fuzz/Cargo.toml and fuzz/fuzz_targets/*.rs"
+            echo "Found:    nothing"
+            echo
+            echo "This failure is deliberate. See the comment block at the top of"
+            echo ".github/workflows/fuzz.yml for why this is a failure rather than a skip."
+            exit 1
+          fi
+          # `set -euo pipefail` is on, so this counts without a pipeline that
+          # could abort the script before the message below is printed. A guard
+          # that exits silently is not a guard anybody can act on.
+          targets=0
+          if [ -d fuzz/fuzz_targets ]; then
+            for target in fuzz/fuzz_targets/*.rs; do
+              [ -e "$target" ] && targets=$((targets + 1))
+            done
+          fi
+          if [ "$targets" -eq 0 ]; then
+            echo "::error title=No fuzz targets::fuzz/ exists but contains no target in fuzz/fuzz_targets/*.rs, so this job would fuzz nothing. See the comment block at the top of .github/workflows/fuzz.yml."
+            exit 1
+          fi
+          echo "Found $targets fuzz target(s)."
+
+      # Everything below runs only once the guard above passes. It is the real
+      # job, written now so that the first fuzz target needs no workflow change.
+
+      # libFuzzer needs -Z sanitizer, which is nightly-only. The pinned stable
+      # toolchain in rust-toolchain.toml stays the toolchain for everything
+      # else; nightly is installed alongside it and named explicitly at every
+      # call site below, so nothing else in this repository can drift onto it.
+      - name: Install the nightly toolchain
+        run: rustup toolchain install nightly --profile minimal --component rust-src
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Fuzzing artefacts are built by a different toolchain from every
+          # other job, with different flags; sharing one cache key would mean
+          # each job repeatedly evicting the other's work.
+          key: fuzz-nightly
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Build every fuzz target
+        run: cargo +nightly fuzz build
+
+      - name: Run every fuzz target
+        run: |
+          set -euo pipefail
+          # A nightly job is a smoke test for regressions, not a fuzzing
+          # campaign: a few minutes per target catches a crash reintroduced
+          # yesterday, and long-running discovery belongs on dedicated
+          # infrastructure with a persistent corpus.
+          for target in $(cargo +nightly fuzz list); do
+            echo "::group::fuzzing $target"
+            cargo +nightly fuzz run "$target" -- -max_total_time=300 -timeout=10
+            echo "::endgroup::"
+          done
+
+      # Uploaded only on failure: a crashing input is the entire output of a
+      # failed fuzzing run, and losing it means the failure cannot be
+      # reproduced. On a passing run there is nothing here worth keeping.
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: fuzz-artifacts
+          path: |
+            fuzz/artifacts/
+            fuzz/corpus/
+          if-no-files-found: ignore
+          retention-days: 30

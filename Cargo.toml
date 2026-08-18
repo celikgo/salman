@@ -11,6 +11,7 @@ resolver = "3"
 # carry empty crates that imply a surface exists before it does.
 members = [
     "crates/salman-core",
+    "crates/salman-lang",
     "crates/salman-cli",
 ]
 
@@ -26,6 +27,7 @@ categories = ["development-tools", "simulation"]
 
 [workspace.dependencies]
 salman-core = { path = "crates/salman-core", version = "0.0.1" }
+salman-lang = { path = "crates/salman-lang", version = "0.0.1" }
 
 [workspace.lints.rust]
 # salman parses bytes that arrive from industrial networks and from files it
@@ -56,6 +58,12 @@ similar_names = "allow"
 # CANopen) that this lint wants wrapped in backticks in prose. It fights the
 # writing rather than helping it.
 doc_markdown = "allow"
+# A lexer's main dispatch and a parser's statement dispatch are long by nature.
+# Splitting them to satisfy a line count would scatter one decision across
+# several functions and make the grammar harder, not easier, to check.
+too_many_lines = "allow"
+# Configuration structs are mostly flags. That is what configuration is.
+struct_excessive_bools = "allow"
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
 cast_precision_loss = "allow"

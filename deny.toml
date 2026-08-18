@@ -1,0 +1,126 @@
+# cargo-deny configuration: what may enter salman's dependency graph.
+#
+# Checked by .github/workflows/supply-chain.yml. Every setting here is a
+# decision somebody has to make consciously; the defaults that would let a
+# problem through quietly are turned off.
+
+[graph]
+# Check the graph with every feature enabled, so that an advisory or a licence
+# hiding behind an off-by-default feature is still seen.
+all-features = true
+
+[output]
+feature-depth = 1
+
+# ---------------------------------------------------------------------------
+# Advisories
+# ---------------------------------------------------------------------------
+
+[advisories]
+version = 2
+
+# "all" rather than "workspace": a crate that nobody maintains is a risk
+# wherever it sits in the graph, and a transitive dependency is exactly where
+# an unmaintained crate is easiest not to notice. This is the strict setting
+# and it will occasionally be inconvenient — that inconvenience is the signal.
+unmaintained = "all"
+
+# Every entry here must use the `{ id, reason }` table form. A bare string id
+# records that somebody decided to ignore an advisory but not why, which makes
+# the decision impossible to revisit: the next person cannot tell whether the
+# advisory did not apply, or whether it applied and was accepted, or whether
+# the entry was a stopgap that outlived its reason.
+#
+# cargo-deny itself accepts the bare form, so this is enforced by a step in
+# supply-chain.yml that parses this file and rejects any entry without both
+# keys. Adding an ignore in the bare form fails CI.
+#
+# Correct form:
+#   { id = "RUSTSEC-0000-0000", reason = "why this does not apply to salman, or on what terms it is accepted, and what would make it matter again" }
+ignore = []
+
+# ---------------------------------------------------------------------------
+# Licences
+# ---------------------------------------------------------------------------
+
+[licenses]
+version = 2
+
+# An allowlist, not a denylist: a licence salman has not considered must stop
+# the build rather than slip in because nobody thought to forbid it. salman
+# ships under Apache-2.0, and every entry below is compatible with
+# redistributing it that way.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    # The licence of the Unicode character data that unicode-ident and its
+    # relatives carry.
+    "Unicode-3.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    # NCSA is not needed by anything in the graph today. It is listed now
+    # because libfuzzer-sys — the crate cargo-fuzz builds every fuzz target
+    # against — vendors LLVM's libFuzzer, which is NCSA-licensed. Rule 7 says
+    # every parser is fuzzed, so that dependency is coming; listing it here
+    # means the first fuzz target does not also arrive as a licence failure
+    # that somebody has to triage under pressure. See .github/workflows/fuzz.yml.
+    "NCSA",
+]
+
+# 0.93 is cargo-deny's default. Named explicitly because lowering it is how a
+# licence gets accepted on a fuzzy text match, and that should be a visible
+# change rather than an absent line.
+confidence-threshold = 0.93
+
+# No per-crate exceptions today. Same rule as `ignore` above: an exception
+# without a stated reason is not reviewable.
+exceptions = []
+
+# ---------------------------------------------------------------------------
+# Bans
+# ---------------------------------------------------------------------------
+
+[bans]
+multiple-versions = "warn"
+# A wildcard version requirement means the next release of that crate enters
+# salman's build without anybody agreeing to it.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+deny = [
+    # unsafe-libyaml and its fork unsafe-libyaml-norway are the C libyaml
+    # sources put through c2rust. They are not Rust that happens to use
+    # `unsafe`; they are transpiled C, carrying C's aliasing and lifetime
+    # assumptions into a language that does not check them, in code no human
+    # wrote and no human reviews.
+    #
+    # This workspace forbids `unsafe` outright, so neither could be a direct
+    # dependency — but both arrive transitively, most often under a YAML
+    # loader pulled in by something else entirely, and that is precisely how
+    # they would end up parsing input salman did not write.
+    #
+    # The specific thing being prevented: one of these sitting inside a
+    # fuzzed parsing path. Rule 7 fuzzes salman's parsers on the premise that
+    # untrusted input is hostile; a transpiled-C parser underneath that is the
+    # one place a memory-safety bug can still exist, and it would be reached by
+    # exactly the inputs the fuzzer is generating.
+    #
+    # If either is ever genuinely needed, that is an ADR and a deliberate
+    # decision about who reviews the transpiled code — not a lockfile update.
+    { crate = "unsafe-libyaml" },
+    { crate = "unsafe-libyaml-norway" },
+]
+
+# ---------------------------------------------------------------------------
+# Sources
+# ---------------------------------------------------------------------------
+
+[sources]
+unknown-registry = "deny"
+# A git dependency is a dependency on a mutable reference. Nothing in salman
+# should have one without an explicit decision recorded here.
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

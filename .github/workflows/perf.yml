@@ -1,0 +1,295 @@
+# Rule 5: the lightweight budget is a tested gate, not a slogan.
+#
+# Four measurements, on each platform, compared against perf-budget.toml at the
+# repository root. The thresholds live in that file, with the reasoning for
+# each number and for why they are per-OS; this workflow only measures and
+# compares.
+#
+# The work is split into two jobs on purpose. Measuring has to happen on each
+# platform; comparing has to happen once, with a full view, so that the log
+# shows one table covering all three rather than three isolated verdicts. The
+# measurement legs therefore write a small JSON file and upload it, and a
+# single Linux job downloads all of them and decides.
+name: perf
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  measure:
+    name: measure (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+
+      # hyperfine is preinstalled on none of the GitHub runner images. This
+      # action fetches a prebuilt release binary rather than building it from
+      # source, which would cost several minutes per leg.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: hyperfine
+
+      - name: Build the release binary
+        run: cargo build --release -p salman-cli
+
+      - name: Measure (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="target/release/salman"
+
+          # --- cold start -----------------------------------------------------
+          # hyperfine's mean over 20 timed runs after 5 warm-ups, so the number
+          # is not dominated by the first-touch page faults of the binary.
+          # CSV rather than JSON so the value can be read with awk and this step
+          # needs no interpreter.
+          hyperfine --warmup 5 --runs 20 --export-csv cold-start.csv "$bin version"
+          # header: command,mean,stddev,median,user,system,min,max  (seconds)
+          cold_start_ms=$(awk -F, 'NR == 2 { printf "%.3f", $2 * 1000 }' cold-start.csv)
+
+          # --- peak resident set ----------------------------------------------
+          # NEVER the shell's `time` builtin: it reports wall/user/sys and no
+          # memory at all. This is /usr/bin/time, and the two implementations
+          # disagree about both flags and units:
+          #
+          #   Linux (GNU coreutils): -f %M  ->  peak RSS in KILOBYTES
+          #   macOS (BSD):           -l     ->  peak RSS in BYTES
+          #
+          # Reading one as the other is a factor-of-1024 error in the threshold,
+          # in the direction that makes the gate pass silently. Both are
+          # normalised to bytes here, once, before anything compares them.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            { /usr/bin/time -l "$bin" version >/dev/null ; } 2> rss.txt
+            # BSD prints "<n>  maximum resident set size", already in bytes.
+            peak_rss_bytes=$(awk '/maximum resident set size/ { print $1 }' rss.txt)
+          else
+            # GNU time is a separate package from the shell builtin and is not
+            # guaranteed to be on the image. Fail loudly if it cannot be had,
+            # rather than falling back to something that reports no memory.
+            if [ ! -x /usr/bin/time ]; then
+              echo "::notice::/usr/bin/time is absent from this image; installing GNU time"
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq time
+            fi
+            { /usr/bin/time -f '%M' "$bin" version >/dev/null ; } 2> rss.txt
+            # GNU prints kilobytes, and nothing else with -f '%M'.
+            peak_rss_kb=$(tail -n 1 rss.txt)
+            peak_rss_bytes=$(( peak_rss_kb * 1024 ))
+          fi
+          if [ -z "${peak_rss_bytes:-}" ]; then
+            echo "::error::could not read peak RSS from /usr/bin/time output"
+            cat rss.txt
+            exit 1
+          fi
+
+          # --- binary size ----------------------------------------------------
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            binary_size_bytes=$(stat -f %z "$bin")
+          else
+            binary_size_bytes=$(stat -c %s "$bin")
+          fi
+
+          # --- test suite wall time -------------------------------------------
+          # Built first so that this measures the test run and not the compile;
+          # the budget in the README is about how long the suite takes, not how
+          # long a cold build takes.
+          #
+          # bash's SECONDS, not /usr/bin/time, because whole seconds are ample
+          # resolution against a 60 s ceiling and this avoids wrapping the cargo
+          # invocation in anything that could swallow its exit status.
+          cargo build --workspace --all-targets --all-features
+          start=$SECONDS
+          cargo test --workspace --all-features
+          test_suite_s=$(( SECONDS - start ))
+
+          printf '{"os":"%s","cold_start_ms":%s,"peak_rss_bytes":%s,"binary_size_bytes":%s,"test_suite_s":%s}\n' \
+            "${{ matrix.os }}" "$cold_start_ms" "$peak_rss_bytes" "$binary_size_bytes" "$test_suite_s" \
+            > "perf-${{ matrix.os }}.json"
+          cat "perf-${{ matrix.os }}.json"
+
+      - name: Measure (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bin = 'target\release\salman.exe'
+
+          # --- cold start ---
+          hyperfine --warmup 5 --runs 20 --export-json cold-start.json "$bin version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $coldStartMs = (Get-Content cold-start.json -Raw | ConvertFrom-Json).results[0].mean * 1000
+
+          # --- peak resident set ---
+          # Not measured on Windows, and deliberately absent from the output
+          # rather than filled in with a guess. The runner image has no
+          # /usr/bin/time, and every PowerShell way of reading the peak working
+          # set of a process that lives a few milliseconds races the process
+          # exit. perf-budget.toml sets no peak_rss_bytes threshold for
+          # windows-latest and explains what closing this gap would take.
+
+          # --- binary size ---
+          $binarySizeBytes = (Get-Item $bin).Length
+
+          # --- test suite wall time ---
+          cargo build --workspace --all-targets --all-features
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $watch = [System.Diagnostics.Stopwatch]::StartNew()
+          cargo test --workspace --all-features
+          $testExit = $LASTEXITCODE
+          $watch.Stop()
+          if ($testExit -ne 0) { exit $testExit }
+
+          $result = [ordered]@{
+            os                = '${{ matrix.os }}'
+            cold_start_ms     = [math]::Round($coldStartMs, 3)
+            binary_size_bytes = $binarySizeBytes
+            test_suite_s      = [math]::Round($watch.Elapsed.TotalSeconds, 3)
+          }
+          $result | ConvertTo-Json -Compress | Set-Content -NoNewline "perf-${{ matrix.os }}.json"
+          Get-Content "perf-${{ matrix.os }}.json"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: perf-${{ matrix.os }}
+          path: perf-${{ matrix.os }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  check:
+    name: compare against perf-budget.toml
+    needs: measure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # upload-artifact v7 and download-artifact v8 are the current matched
+      # pair; the major numbers differ on purpose and are not a typo.
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: perf-*
+          merge-multiple: true
+          path: measurements
+
+      - name: Compare every measurement against its budget
+        run: |
+          set -euo pipefail
+          # tomllib is in the standard library from Python 3.11; ubuntu-latest
+          # ships newer than that. This is the reason the comparison is a
+          # separate Linux job rather than three per-platform comparisons: the
+          # Windows image's Python is older, and this job should not depend on
+          # installing a TOML parser three times.
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import sys
+          import tomllib
+
+          # Every metric, with the unit its key name promises. perf.yml has
+          # already normalised peak RSS to bytes, so nothing here has to know
+          # that Linux and macOS report it differently.
+          UNITS = {
+              "cold_start_ms": "ms",
+              "peak_rss_bytes": "bytes",
+              "binary_size_bytes": "bytes",
+              "test_suite_s": "s",
+          }
+
+          budget = tomllib.loads(pathlib.Path("perf-budget.toml").read_text())["budget"]
+          files = sorted(pathlib.Path("measurements").glob("perf-*.json"))
+
+          failures = []
+          rows = []
+          measured_platforms = set()
+
+          # An empty artefact set must not pass. A comparison that compared
+          # nothing is the exact failure mode this repository exists to avoid.
+          if not files:
+              failures.append(
+                  "no measurement files were downloaded; the measure jobs "
+                  "produced nothing to compare"
+              )
+
+          for path in files:
+              measurement = json.loads(path.read_text())
+              platform = measurement["os"]
+              measured_platforms.add(platform)
+              limits = budget.get(platform)
+              if limits is None:
+                  failures.append(
+                      f"{platform}: measured, but perf-budget.toml has no "
+                      f"[budget.{platform}] table"
+                  )
+                  continue
+              for key, unit in UNITS.items():
+                  value = measurement.get(key)
+                  limit = limits.get(key)
+                  if value is None and limit is None:
+                      # Neither measured nor budgeted, and the absence is
+                      # documented in perf-budget.toml. Peak RSS on Windows is
+                      # the only case today.
+                      rows.append((platform, key, "not measured", "no budget", "n/a"))
+                      continue
+                  if value is None:
+                      failures.append(
+                          f"{platform}: perf-budget.toml sets a {key} threshold "
+                          f"but nothing measured it"
+                      )
+                      continue
+                  if limit is None:
+                      failures.append(
+                          f"{platform}: {key} was measured ({value} {unit}) but "
+                          f"perf-budget.toml sets no threshold for it"
+                      )
+                      continue
+                  within = value <= limit
+                  rows.append((platform, key, value, limit, "ok" if within else "OVER"))
+                  if not within:
+                      over = (value / limit - 1) * 100
+                      failures.append(
+                          f"{platform}: {key} = {value} {unit} exceeds the budget "
+                          f"of {limit} {unit} by {over:.1f}%"
+                      )
+
+          for platform in sorted(set(budget) - measured_platforms):
+              failures.append(
+                  f"{platform}: perf-budget.toml budgets it, but no measurement "
+                  f"arrived from it"
+              )
+
+          width = [max(len(str(r[i])) for r in rows) if rows else 0 for i in range(5)]
+          header = ("platform", "metric", "measured", "budget", "verdict")
+          width = [max(w, len(h)) for w, h in zip(width, header)]
+          line = "  ".join(h.ljust(w) for h, w in zip(header, width))
+          print(line)
+          print("-" * len(line))
+          for row in rows:
+              print("  ".join(str(c).ljust(w) for c, w in zip(row, width)))
+          print()
+
+          for message in failures:
+              print(f"::error title=Performance budget::{message}")
+          if failures:
+              print(f"{len(failures)} budget failure(s). See perf-budget.toml.")
+              sys.exit(1)
+          print("Every measurement is within its budget.")
+          PY

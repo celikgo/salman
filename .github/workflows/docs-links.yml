@@ -1,0 +1,76 @@
+# Rule 4: every URL in every doc resolves.
+#
+# "Every doc" is taken to include the Rust doc comments, because that is where
+# most of salman's real references live — the algorithm papers, the PRNG
+# reference implementations, the standards pages. A citation that 404s is
+# indistinguishable from a citation that was never checked, and this project
+# leans on its citations.
+name: docs-links
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: docs-links-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  links:
+    name: every URL in Markdown and in Rust doc comments resolves
+    # ubuntu-latest only, and not by preference: lychee-action's action.yml
+    # hardcodes a `*-unknown-linux-gnu` release tarball, so the action cannot
+    # run on the macOS or Windows runners at all. A URL resolves or does not
+    # resolve independently of the machine asking, so one platform is also the
+    # right amount.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check links
+        uses: lycheeverse/lychee-action@v2
+        env:
+          # Without a token, lychee's requests to github.com are unauthenticated
+          # and get rate-limited into 429s, which look exactly like dead links.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # `fail: true` is stated rather than left to the default, because the
+          # entire point of this job is that a dead link stops the build. A
+          # future default change must not quietly turn this into a report.
+          fail: true
+          args: >-
+            --no-progress
+            --verbose
+            --max-retries 3
+            --retry-wait-time 5
+            --timeout 30
+            --accept 200,206,301,302,308
+            --exclude '^https?://[^/]*\.invalid(/|$)'
+            './**/*.md'
+            './**/*.rs'
+
+# ---------------------------------------------------------------------------
+# The one exclusion, and why
+# ---------------------------------------------------------------------------
+#
+# `--exclude '^https?://[^/]*\.invalid(/|$)'`
+#
+# `.invalid` is one of the four TLDs RFC 2606 reserves precisely so that it can
+# never be delegated and can never resolve. salman uses it as the placeholder
+# in the citation-provenance tests (`crates/salman-core/src/clause.rs`), where
+# the point is to have a URL-shaped string that is obviously not a real source.
+# Asking a resolver about it would be asking a question whose answer is fixed
+# by the RFC.
+#
+# The pattern is anchored and matches only the reserved TLD, so it cannot
+# silently swallow a real host. Nothing else is excluded: if a link in this
+# repository is unreachable, this job is meant to say so.
+#
+# `--accept 200,206,301,302,308` is a status allowlist, not an exclusion. It is
+# here because several standards bodies answer a HEAD with a redirect chain,
+# and a 301 to a page that exists is a link that resolves.

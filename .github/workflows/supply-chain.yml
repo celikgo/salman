@@ -1,0 +1,117 @@
+# What is allowed into salman's dependency graph.
+#
+# salman parses bytes that arrive from files it did not write and, eventually,
+# from industrial networks. The workspace forbids `unsafe` in its own code,
+# which says nothing at all about the crates underneath it — so the graph gets
+# its own gate. The policy lives in deny.toml at the repository root, with the
+# reasoning for each rule next to the rule.
+name: supply-chain
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # 05:41 UTC daily, off the hour. An advisory published today makes a graph
+    # that was clean yesterday dirty without a single commit, so this cannot
+    # only run on push.
+    #
+    # The usual caveats apply and are worth knowing before reading a green
+    # Actions tab as an all-clear: scheduled workflows run only on the default
+    # branch, GitHub drops scheduled runs under load, and on a public
+    # repository they are disabled automatically after 60 days without
+    # repository activity.
+    - cron: "41 5 * * *"
+
+concurrency:
+  group: supply-chain-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    name: deny.toml is reviewable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Every ignore and exception states a reason
+        run: |
+          set -euo pipefail
+          # cargo-deny accepts a bare advisory id in `ignore`, which records
+          # that somebody silenced an advisory but not why. deny.toml requires
+          # the `{ id, reason }` table form instead, and this step is what makes
+          # that requirement real rather than a comment somebody can skip past.
+          #
+          # Same rule for `[licenses] exceptions`: an exception without a stated
+          # reason cannot be reviewed or retired.
+          python3 - <<'PY'
+          import pathlib
+          import sys
+          import tomllib
+
+          config = tomllib.loads(pathlib.Path("deny.toml").read_text())
+          failures = []
+
+          def require_keys(entries, where, keys):
+              for index, entry in enumerate(entries):
+                  if not isinstance(entry, dict):
+                      failures.append(
+                          f"{where}[{index}] is {entry!r}; every entry must be a "
+                          f"table with " + " and ".join(f"`{k}`" for k in keys)
+                      )
+                      continue
+                  for key in keys:
+                      value = entry.get(key)
+                      if not isinstance(value, str) or not value.strip():
+                          failures.append(
+                              f"{where}[{index}] has no non-empty `{key}`: {entry!r}"
+                          )
+
+          require_keys(
+              config.get("advisories", {}).get("ignore", []),
+              "[advisories] ignore",
+              ("id", "reason"),
+          )
+          require_keys(
+              config.get("licenses", {}).get("exceptions", []),
+              "[licenses] exceptions",
+              ("name", "reason"),
+          )
+
+          for message in failures:
+              print(f"::error file=deny.toml::{message}")
+          if failures:
+              print()
+              print(
+                  "Every ignore and exception must say why it exists, so that the "
+                  "next person can tell whether it still should. Use the "
+                  "{ id = \"...\", reason = \"...\" } form."
+              )
+              sys.exit(1)
+          print("Every ignore and exception in deny.toml states a reason.")
+          PY
+
+  cargo-deny:
+    name: cargo-deny (${{ matrix.checks }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Split so that the run log says which policy failed without anyone
+      # having to read it. An advisory and a licence problem need different
+      # people and different fixes.
+      fail-fast: false
+      matrix:
+        checks: [advisories, licenses, bans, sources]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check ${{ matrix.checks }}
+          # Warnings are errors here. `unmaintained = "all"` in deny.toml
+          # reports through the warning channel for some advisory kinds, and a
+          # policy that only reports is not a gate.
+          arguments: --all-features
+          command-arguments: --deny warnings

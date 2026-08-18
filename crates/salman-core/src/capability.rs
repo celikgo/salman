@@ -129,6 +129,29 @@ pub static REGISTRY: &[Capability] = &[
         note: "No clauses are cited yet; the mechanism and its honesty rules are in place.",
     },
     Capability {
+        id: "core.deterministic-rng",
+        area: "Determinism",
+        title: "Seeded xoshiro256++ generator, pinned and recorded in every trace header",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-core/src/rng.rs",
+                test: "splitmix64_reproduces_the_published_vectors_from_state_zero",
+            },
+            Evidence {
+                file: "crates/salman-core/src/rng.rs",
+                test: "xoshiro256plusplus_reproduces_the_published_vectors_for_seed_100",
+            },
+            Evidence {
+                file: "crates/salman-core/src/rng.rs",
+                test: "next_below_never_reaches_its_bound",
+            },
+        ],
+        note: "Written out in-crate rather than taken from rand, whose StdRng and SmallRng are \
+               documented as non-portable. Not cryptographic: never use it for a key or a token.",
+    },
+    Capability {
         id: "core.diagnostics",
         area: "Language",
         title: "Diagnostics with spans, IEC clause citations and the dialect rule applied",
@@ -232,6 +255,26 @@ pub static REGISTRY: &[Capability] = &[
         ],
         note: "Leap seconds, time zones and daylight saving are not modelled: every day \
                here is exactly 86 400 s.",
+    },
+    Capability {
+        id: "core.trace-fingerprint",
+        area: "Determinism",
+        title: "In-crate SHA-256 fingerprint of simulation traces, with NIST known-answer tests",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-core/src/hash.rs",
+                test: "the_published_fips_180_4_vectors_hash_to_their_published_digests",
+            },
+            Evidence {
+                file: "crates/salman-core/src/hash.rs",
+                test: "splitting_the_input_into_chunks_never_changes_the_digest",
+            },
+        ],
+        note: "A content fingerprint, not a security primitive: not constant-time, and not \
+               to be used where an attacker picks the input and the comparison is secret. \
+               Written in-crate so there is no runtime CPU-feature dispatch and no C toolchain.",
     },
     Capability {
         id: "core.value-model",

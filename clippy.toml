@@ -1,0 +1,84 @@
+# Determinism rules that the type checker cannot state, expressed as lints.
+#
+# salman's central promise is that the same project, the same inputs and the
+# same seed produce a byte-identical trace on Linux, macOS and Windows. Two
+# ordinary-looking pieces of std quietly break that promise, so they are banned
+# here rather than left to review to catch.
+#
+# ---------------------------------------------------------------------------
+# 1. Transcendental functions
+# ---------------------------------------------------------------------------
+#
+# Rust's documentation for `f64::sin` and its siblings says the precision of
+# the result "varies by platform, Rust version, and can even differ within the
+# same execution" — these methods are delegated to whatever libm the target
+# happens to link. A `SIN()` in Structured Text that returns a different last
+# bit on macOS than on Linux is a determinism failure, and it is one that no
+# test on a single machine will ever show. salman is to call the pinned `libm`
+# crate, which is a portable software implementation whose result depends only
+# on the input.
+#
+# `sqrt` and `mul_add` are deliberately NOT banned: IEEE 754 specifies both to
+# be correctly rounded, and the std documentation carries that guarantee
+# explicitly rather than the "varies by platform" wording. They are portable.
+#
+# The list covers `f32` and `f64` separately because they are separate inherent
+# impls; a path that names only one silently permits the other.
+#
+# ---------------------------------------------------------------------------
+# 2. The default hasher
+# ---------------------------------------------------------------------------
+#
+# `HashMap` and `HashSet` default to `RandomState`, which draws a seed once per
+# thread and then increments it per instance. Iteration order therefore differs
+# between two runs of the same binary on the same machine, never mind between
+# platforms. Anything whose order can reach a trace, a diagnostic, a generated
+# document or a golden file must use `BTreeMap` / `BTreeSet`. Where a hash map
+# is genuinely wanted for lookup only, pass an explicit deterministic hasher
+# and allow the lint at that site with a comment saying why the order cannot
+# escape.
+
+disallowed-methods = [
+  # --- f64 ---
+  { path = "f64::sin", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::cos", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::tan", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::asin", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::acos", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::atan", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::atan2", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::exp", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::exp2", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::ln", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::log", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::log2", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::log10", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::powf", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::powi", reason = "powi is not a single IEEE operation: the compiler is free to expand it into a different multiplication tree per target. Use the pinned `libm` crate, or an explicit multiplication chain." },
+  { path = "f64::cbrt", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f64::hypot", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+
+  # --- f32 ---
+  { path = "f32::sin", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::cos", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::tan", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::asin", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::acos", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::atan", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::atan2", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::exp", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::exp2", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::ln", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::log", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::log2", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::log10", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::powf", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::powi", reason = "powi is not a single IEEE operation: the compiler is free to expand it into a different multiplication tree per target. Use the pinned `libm` crate, or an explicit multiplication chain." },
+  { path = "f32::cbrt", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+  { path = "f32::hypot", reason = "std delegates to the platform libm; precision varies by platform, Rust version and even within one execution. Use the pinned `libm` crate." },
+]
+
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "the default hasher's RandomState is seeded per thread and then incremented per instance, so iteration order differs from run to run even on one machine. Use BTreeMap for anything whose order can reach a trace, a diagnostic or a generated file." },
+  { path = "std::collections::HashSet", reason = "the default hasher's RandomState is seeded per thread and then incremented per instance, so iteration order differs from run to run even on one machine. Use BTreeSet for anything whose order can reach a trace, a diagnostic or a generated file." },
+]

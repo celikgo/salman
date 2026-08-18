@@ -1,5 +1,5 @@
 # The first workflow, added in the same commit as the first source file.
-# See docs/adr/ADR-0009-ci-before-features.md and rule 1 in README.md.
+# See rule 1 in README.md: CI exists before feature #1.
 name: ci
 
 on:
@@ -12,40 +12,67 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+# There is deliberately NO `RUSTFLAGS: -D warnings` here.
+#
+# Cargo treats its four sources of rustflags — the RUSTFLAGS environment
+# variable, CARGO_ENCODED_RUSTFLAGS, `target.*.rustflags` and `build.rustflags`
+# in a config file — as mutually exclusive, highest precedence wins, and the
+# losers are discarded in silence. Setting RUSTFLAGS at the workflow level
+# would therefore switch off any `[build] rustflags` in `.cargo/config.toml`
+# without saying a word. There is no such file in the tree today, which is
+# precisely why this is worth writing down: the breakage would appear on the
+# day somebody adds one, in a workflow nobody was editing.
+#
+# The lint gate does not need it. `cargo clippy ... -- -D warnings` below
+# denies rustc's warnings too (missing_docs, unreachable_pub and the rest of
+# `[workspace.lints.rust]`), and it says so on the command line where a reader
+# can see it.
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
 
 jobs:
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # rust-toolchain.toml pins the compiler; rustup installs it (and the
-      # components it names) on first use. No third-party toolchain action.
+      # components it names) on first use. No third-party toolchain action, and
+      # no version duplicated into YAML where it could drift from the pin.
       - run: rustup show active-toolchain || rustup toolchain install
+      # No rust-cache here on purpose: this job compiles nothing, so there is
+      # no build artefact to cache and the restore would be pure overhead.
       - run: cargo fmt --all --check
 
   clippy:
     name: clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      # `-D warnings` lives here, on the command line, not in an environment
+      # variable. See the comment on `env:` above.
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      # A failure on one platform must not hide the result on the other two;
+      # "does this break only on Windows?" is the question this matrix exists
+      # to answer.
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      # Building all targets first means a broken benchmark or example is a
+      # build failure with a clear message, rather than a confusing test run.
       - run: cargo build --workspace --all-targets
       - run: cargo test --workspace --all-features

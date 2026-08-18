@@ -1,0 +1,154 @@
+# Rule 3: one source of version truth — the root VERSION file.
+#
+# WHY THIS EXISTS ALONGSIDE THE COMPILE-TIME CHECK
+#
+# crates/salman-core/src/version.rs embeds the root VERSION file with
+# `include_str!` and asserts, in a `const` block, that it equals
+# CARGO_PKG_VERSION. That check is stronger than any workflow: it fails the
+# build on every machine, not just on CI, and it cannot be skipped.
+#
+# But it can only see the one thing the compiler hands it — the version of the
+# crate being compiled. It cannot see the other places the number is written
+# down, and those are what this job covers:
+#
+#   * `[workspace.package] version` and every workspace member's resolved
+#     version, as Cargo actually computes them,
+#   * `[workspace.dependencies] salman-core = { version = "..." }`, which is a
+#     literal string no compile-time assert reads,
+#   * what the shipped binary prints when a user runs `salman version`, which
+#     is the only one of these an end user will ever see.
+#
+# So: the compiler proves VERSION == the crate version. This job proves the
+# rest of the metadata, and the user-visible output, agree with both.
+name: version-consistency
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: version-consistency-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version-consistency:
+    name: VERSION agrees with Cargo metadata and with `salman version`
+    # One platform is enough: this compares text, and the text is the same on
+    # every platform. Cross-platform behaviour is ci.yml's job.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Read the root VERSION file
+        id: version
+        run: |
+          set -euo pipefail
+          # The file is expected to hold exactly one line. Trailing whitespace
+          # is tolerated here because version.rs tolerates it too; anything
+          # else is a disagreement worth failing on.
+          version=$(tr -d '[:space:]' < VERSION)
+          if [ -z "$version" ]; then
+            echo "::error file=VERSION::the VERSION file is empty"
+            exit 1
+          fi
+          echo "VERSION file says: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Every workspace package version matches VERSION
+        env:
+          EXPECTED: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # --no-deps keeps this to the workspace's own packages; a third-party
+          # crate at some other version is none of this job's business.
+          failed=0
+          while read -r name pkg_version; do
+            if [ "$pkg_version" != "$EXPECTED" ]; then
+              echo "::error::package $name is at $pkg_version, but VERSION says $EXPECTED"
+              failed=1
+            else
+              echo "ok: $name $pkg_version"
+            fi
+          done < <(cargo metadata --no-deps --format-version 1 \
+                   | jq -r '.packages[] | "\(.name) \(.version)"')
+          exit "$failed"
+
+      - name: Every version literal in the workspace manifest matches VERSION
+        env:
+          EXPECTED: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # `cargo metadata` resolves inherited versions, so it cannot see a
+          # stale literal in `[workspace.dependencies]`: a path dependency wins
+          # over the version requirement written next to it, and the workspace
+          # would build happily with the two disagreeing. This reads the
+          # manifest as data to catch exactly that case.
+          #
+          # Read with tomllib rather than grep, so that a third-party
+          # dependency pinned to some unrelated 1.2.3 cannot fail this job for
+          # the wrong reason. Only the workspace's own crates are checked, and
+          # a crate is "our own" iff its entry carries a `path`.
+          python3 - <<'PY'
+          import os, sys, tomllib
+
+          expected = os.environ["EXPECTED"]
+          with open("Cargo.toml", "rb") as f:
+              manifest = tomllib.load(f)
+
+          workspace = manifest.get("workspace", {})
+          failures = []
+
+          declared = workspace.get("package", {}).get("version")
+          if declared is None:
+              failures.append("[workspace.package] has no version key")
+          elif declared != expected:
+              failures.append(
+                  f"[workspace.package] version = {declared!r}, VERSION says {expected!r}"
+              )
+          else:
+              print(f"ok: [workspace.package] version = {declared}")
+
+          for name, spec in workspace.get("dependencies", {}).items():
+              if not isinstance(spec, dict) or "path" not in spec:
+                  continue  # not one of ours; its version is its own business
+              found = spec.get("version")
+              if found is None:
+                  # Allowed: a path dependency with no version requirement has
+                  # nothing that can drift.
+                  print(f"ok: [workspace.dependencies] {name} pins no version")
+              elif found != expected:
+                  failures.append(
+                      f"[workspace.dependencies] {name} version = {found!r}, "
+                      f"VERSION says {expected!r}"
+                  )
+              else:
+                  print(f"ok: [workspace.dependencies] {name} version = {found}")
+
+          for message in failures:
+              print(f"::error file=Cargo.toml::{message}")
+          sys.exit(1 if failures else 0)
+          PY
+
+      - name: "`salman version` prints VERSION"
+        env:
+          EXPECTED: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cargo build --release -p salman-cli
+          actual=$(./target/release/salman version)
+          expected="salman $EXPECTED"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::\`salman version\` printed \"$actual\", expected \"$expected\""
+            exit 1
+          fi
+          echo "ok: $actual"

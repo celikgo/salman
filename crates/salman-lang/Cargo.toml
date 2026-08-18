@@ -1,0 +1,14 @@
+[package]
+name = "salman-lang"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "IEC 61131-3 lexer, parser, AST and type checker"
+
+[dependencies]
+salman-core.workspace = true
+
+[lints]
+workspace = true

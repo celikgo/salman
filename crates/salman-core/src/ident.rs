@@ -207,8 +207,12 @@ mod tests {
 
     #[test]
     fn identifiers_hash_case_insensitively() {
-        use std::collections::HashSet;
-        let mut set = HashSet::new();
+        // A HashSet is the point of this test: it is what exercises the `Hash`
+        // impl. Nothing here is iterated and nothing leaves the test, so the
+        // non-deterministic order the clippy.toml ban exists to prevent cannot
+        // reach a trace or a generated file.
+        #[allow(clippy::disallowed_types, reason = "testing Hash; order never escapes")]
+        let mut set = std::collections::HashSet::new();
         set.insert(id("Valve_Open"));
         assert!(set.contains(&id("VALVE_OPEN")));
         assert_eq!(set.len(), 1);

@@ -1,0 +1,86 @@
+# Rule 6: same project, same inputs, same seed, identical trace, bit for bit.
+#
+# READ THIS BEFORE TRUSTING THE GREEN TICK
+#
+# This workflow does not yet check trace determinism, because at 0.0.1 there is
+# no simulation runtime in this repository and therefore no trace to compare.
+# What it does today is run the workspace test suite on Linux, macOS and
+# Windows — which is a real cross-platform gate, and is all this job claims —
+# plus one step that says out loud, on every run, that the comparison itself is
+# still missing.
+#
+# The placeholder is deliberate and is not decoration. A determinism workflow
+# that passed because it compared nothing would be worse than no workflow: it
+# would put a green tick next to the project's central promise on the strength
+# of having done no work. The step below is written so that anyone reading a
+# successful run sees exactly which half is real.
+#
+# WHY THIS IS SEPARATE FROM ci.yml, GIVEN THE MATRIX IS THE SAME TODAY
+#
+# The overlap with ci.yml's `test` job is real and temporary. This workflow is
+# the place the trace comparison lands, and when it does it will need artefact
+# upload from each OS and a comparison job that fans them back in — a shape
+# ci.yml should not grow. Keeping the file now means the determinism gate has
+# somewhere to arrive, and means its current emptiness is visible rather than
+# implied.
+name: determinism
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: determinism-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cross-platform-tests:
+    name: workspace tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # "Which platform disagreed?" is the only interesting question here, so
+      # every leg must run even after one has failed.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run the workspace test suite
+        run: cargo test --workspace --all-features
+
+      # ---------------------------------------------------------------------
+      # PLACEHOLDER. This step compares nothing. It exists so that the gap is
+      # stated in the run log instead of being hidden by a passing job.
+      #
+      # What is missing: salman has no VM, so `salman run` does not exist and
+      # no trace file is produced. The comparison this workflow is named after
+      # — run the same project with the same seed on all three platforms,
+      # hash the resulting traces, assert the hashes are equal — cannot be
+      # written until salman-vm can produce a trace.
+      #
+      # When salman-vm lands, this step is replaced by: run the reference
+      # project, upload the trace as an artefact per OS, and add a job that
+      # downloads all three and compares them byte for byte. Until then it must
+      # keep printing, on every run, that it has not done that.
+      # ---------------------------------------------------------------------
+      - name: "PLACEHOLDER: trace determinism is NOT checked yet (no runtime exists)"
+        shell: bash
+        run: |
+          echo "::warning title=Determinism not yet enforced::This workflow ran the test suite on ${{ matrix.os }} but did NOT compare any simulation trace. salman 0.0.1 has no VM and produces no trace, so there is nothing to compare. The byte-for-byte trace comparison lands with salman-vm; see the comment block in .github/workflows/determinism.yml."
+          echo
+          echo "  What ran:        cargo test --workspace --all-features on ${{ matrix.os }}"
+          echo "  What did NOT run: cross-platform trace comparison (rule 6)"
+          echo "  Blocked on:      salman-vm producing a trace"
+          echo
+          echo "This step is a placeholder. It asserts nothing and proves nothing."

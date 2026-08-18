@@ -1,0 +1,98 @@
+# Rule 5: the lightweight budget is a tested gate, not a slogan.
+#
+# .github/workflows/perf.yml measures each of these on each platform and fails
+# when a measurement exceeds the number written here. Raising a threshold is a
+# reviewed change to this file, which is the point: the budget can only move in
+# a commit that says it is moving.
+#
+# ---------------------------------------------------------------------------
+# Why the thresholds are per-operating-system
+# ---------------------------------------------------------------------------
+#
+# The three runners are not three copies of one machine.
+#
+#   * macos-latest is aarch64. Different instruction set, different code
+#     density, different malloc, different page size (16 KiB rather than
+#     4 KiB), which alone moves resident-set numbers.
+#   * windows-latest links the MSVC CRT and produces a PE binary with its own
+#     import tables and section alignment; its start-up cost and its on-disk
+#     size have no reason to match a Linux ELF's.
+#   * ubuntu-latest is the x86-64 glibc baseline.
+#
+# A single shared number would therefore have to be the loosest of the three,
+# which would mean the two tighter platforms had no gate at all. Separate
+# tables let each platform regress against its own history.
+#
+# ---------------------------------------------------------------------------
+# Why the timing numbers are generous
+# ---------------------------------------------------------------------------
+#
+# GitHub-hosted runners are shared-tenant virtual machines. Their CPU, disk and
+# network are contended with other customers' jobs, and a run can be two or
+# three times slower than the median for reasons that have nothing to do with
+# this repository. A threshold set near the observed mean would fail on noise,
+# and a gate that fails on noise gets ignored, then disabled, then deleted.
+#
+# So these are ceilings, not targets. They are the numbers from the README
+# performance budget — the promises made to a user — and they are meant to
+# catch a change that makes salman an order of magnitude worse, not a change
+# that makes it 15% worse. Detecting small regressions needs a trend line
+# against a stable baseline, which shared-tenant runners cannot provide; that
+# is a different tool, not a tighter number here.
+#
+# ---------------------------------------------------------------------------
+# Units
+# ---------------------------------------------------------------------------
+#
+# Every key names its unit, and byte counts are decimal (1 MB = 1_000_000
+# bytes) to match the way the README states them. The unit is in the key name
+# on purpose: peak RSS is reported in kilobytes by GNU `/usr/bin/time -f %M`
+# on Linux and in bytes by BSD `/usr/bin/time -l` on macOS, and reading one as
+# the other is a 1024x error in the threshold. perf.yml normalises both to
+# bytes before comparing against these.
+
+[budget.ubuntu-latest]
+# `salman version` — process start to exit, hyperfine mean of 20 runs.
+# README budget: cold start under 2 s.
+cold_start_ms = 2000
+# Peak resident set of that same invocation. README budget: 350 MB.
+peak_rss_bytes = 350_000_000
+# Size of the release `salman` binary on disk.
+#
+# NOTE: the 120 MB figure in the README is an INSTALLER budget — the download a
+# user is asked to accept, which will eventually include the binary plus the
+# bundled standard library, examples and documentation. There is no installer
+# in this repository, so there is nothing to weigh against that budget. Until
+# one exists, this job budgets the CLI binary instead, at the same number. That
+# is deliberately loose for a single executable, and it is stated here rather
+# than hidden so that nobody later reads a passing run as evidence that the
+# installer fits. When the installer lands, it gets its own key and this one
+# gets a number that means something for a binary.
+binary_size_bytes = 120_000_000
+# Wall-clock time for `cargo test --workspace`, excluding the build.
+# README budget: 60 s.
+test_suite_s = 60
+
+[budget.macos-latest]
+cold_start_ms = 2000
+peak_rss_bytes = 350_000_000
+binary_size_bytes = 120_000_000
+test_suite_s = 60
+
+[budget.windows-latest]
+cold_start_ms = 2000
+# There is deliberately no `peak_rss_bytes` here, and perf.yml measures none.
+#
+# The Windows runner image has no `/usr/bin/time`, and the PowerShell
+# alternatives for a process that lives a few milliseconds are all racy:
+# `Get-Process` samples a running process and the value is gone once it exits,
+# and `Process.PeakWorkingSet64` throws on an exited process. A number obtained
+# by racing the process would be a number nobody could act on, so this job does
+# not produce one rather than producing one it cannot defend.
+#
+# Doing this properly means calling GetProcessMemoryInfo through a job object,
+# which is a small program, not a workflow step. When salman grows a
+# `salman bench` subcommand it can measure its own peak working set from
+# inside, on every platform, and this gap closes.
+binary_size_bytes = 120_000_000
+test_suite_s = 60
