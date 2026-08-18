@@ -29,7 +29,7 @@ use salman_core::diag::{DiagCode, Diagnostic, Diagnostics};
 use salman_core::span::Span;
 use salman_core::time::Duration;
 use salman_core::value::{ElementaryType, Value};
-use salman_lang::address::DirectAddress;
+use salman_lang::address::{AddressLocation, DirectAddress};
 use salman_lang::ast::{
     Arg, BinaryOp, CaseLabel, CompilationUnit, Expr, ExprKind, Pou, PouKind, Stmt, StmtKind,
     UnaryOp, VarSection,
@@ -40,11 +40,16 @@ use salman_lang::stdlib;
 use salman_lang::types::{BoolWidening, TypeData, TypeId, common_type};
 
 use crate::bytecode::{BinOp, Op, Program, Routine, UnOp};
-use crate::memory::{ImageLayout, Memory, Persistence, SlotId};
+use crate::memory::{ImageLayout, Memory, Persistence, ProcessImage, SlotId};
 use crate::task::{ProgramBinding, TaskConfig, TaskTrigger};
 
 /// A construct the compiler does not implement yet.
 pub const U_NOT_COMPILED: DiagCode = DiagCode("U0301");
+/// An `AT %...` location that does not resolve, or that a declaration's width
+/// does not match.
+pub const E_BAD_LOCATION: DiagCode = DiagCode("E0503");
+/// A write to a variable located in the input image.
+pub const E_WRITE_TO_INPUT: DiagCode = DiagCode("E0504");
 /// Something the compiler could not lay out, such as a type of unknown size.
 pub const E_LAYOUT: DiagCode = DiagCode("E0501");
 /// A compiled unit that has nothing to run.
@@ -161,7 +166,7 @@ impl Compiler<'_> {
             }
             return None;
         }
-        self.report_located_variables();
+        self.check_located_variables();
         self.report_external_variables();
         self.allocate_globals();
         self.allocate_functions();
@@ -383,7 +388,13 @@ impl Compiler<'_> {
         let mut next = 0u32;
         for symbol in &pou.symbols {
             offsets.push(next);
-            next = next.saturating_add(self.slot_size(symbol.ty, 0));
+            // A located variable IS its place in the process image, so it takes
+            // no storage of its own. Giving it a slot would put a name in the
+            // watch list whose value never changes when the input does — the
+            // same quiet lie that kept `AT` refused until now.
+            if symbol.address.is_none() {
+                next = next.saturating_add(self.slot_size(symbol.ty, 0));
+            }
         }
         let temp_base = next;
         let temps = self
@@ -625,32 +636,93 @@ impl Compiler<'_> {
     ///
     /// A directly represented variable used in an expression, `%IX0.0`, works
     /// today; it is the `AT` binding that does not.
-    fn report_located_variables(&mut self) {
-        let mut located: Vec<(Span, String)> = Vec::new();
+    /// Checks every `AT %...` located variable.
+    ///
+    /// A located variable **is** the location it names, so the two have to
+    /// agree. Two things are checked here that nothing else can check: that the
+    /// address resolves inside the process image at all, and that the declared
+    /// type is as wide as the address size. `Level AT %IW4 : BOOL;` names a
+    /// sixteen-bit location and declares a one-bit variable; whichever of the
+    /// two the engineer meant, the declaration as written cannot be honoured,
+    /// and reading it would silently give the low bit of a word.
+    fn check_located_variables(&mut self) {
+        let mut located: Vec<(Span, DirectAddress, ElementaryType, String)> = Vec::new();
         for symbol in &self.checked.globals {
             if let Some(address) = &symbol.address {
-                located.push((symbol.name.span, address.to_string()));
+                let ty = self.slot_type(symbol.ty);
+                located.push((
+                    symbol.name.span,
+                    address.clone(),
+                    ty,
+                    symbol.name.to_string(),
+                ));
             }
         }
         for pou in &self.checked.pous {
             for symbol in &pou.symbols {
                 if let Some(address) = &symbol.address {
-                    located.push((symbol.name.span, address.to_string()));
+                    let ty = self.slot_type(symbol.ty);
+                    located.push((
+                        symbol.name.span,
+                        address.clone(),
+                        ty,
+                        symbol.name.to_string(),
+                    ));
                 }
             }
         }
-        for (span, address) in located {
-            self.diags.push(
-                Diagnostic::error(
-                    U_NOT_COMPILED,
-                    format!("salman does not implement `AT {address}` yet"),
-                )
-                .with_primary(span, "the IO mapping layer is not in this version")
-                .with_note(
-                    "a directly represented variable used in an expression, such as                      `%IX0.0 := TRUE;`, does work. It is the AT binding that does not,                      because there is nothing yet to bind it to",
-                )
-                .with_note("see docs/ROADMAP.md; IO mapping arrives with the Modbus layer"),
-            );
+
+        // One scratch image, only to resolve addresses against the same layout
+        // and size the runtime will use.
+        let image = ProcessImage::new(IMAGE_BYTES, ImageLayout::default());
+        for (span, address, ty, name) in located {
+            let written = address.to_string();
+            match image.resolve(&address) {
+                Err(error) => {
+                    self.diags.push(
+                        Diagnostic::error(
+                            E_BAD_LOCATION,
+                            format!("`{name}` cannot be located at {written}"),
+                        )
+                        .with_primary(span, error.to_string()),
+                    );
+                    continue;
+                }
+                Ok(position) => {
+                    let end = u64::from(position.byte)
+                        + u64::from(address.size.bits()).div_ceil(8).max(1);
+                    if end > IMAGE_BYTES as u64 {
+                        self.diags.push(
+                            Diagnostic::error(
+                                E_BAD_LOCATION,
+                                format!("`{name}` is located past the end of the process image"),
+                            )
+                            .with_primary(
+                                span,
+                                format!("{written} needs byte {end}, and the image is {IMAGE_BYTES} bytes"),
+                            ),
+                        );
+                        continue;
+                    }
+                }
+            }
+
+            let declared = ty.bit_width().unwrap_or(0);
+            let located_bits = address.size.bits();
+            if declared != located_bits {
+                self.diags.push(
+                    Diagnostic::error(
+                        E_BAD_LOCATION,
+                        format!("`{name}` is {declared} bits wide and {written} is {located_bits}"),
+                    )
+                    .with_primary(span, format!("a {ty} does not fit {written}"))
+                    .with_note(
+                        "A located variable is the location it names rather than a copy of it, \
+                         so the two have to be the same width. %IX is one bit, %IB eight, %IW \
+                         sixteen, %ID thirty-two and %IL sixty-four.",
+                    ),
+                );
+            }
         }
     }
 
@@ -694,6 +766,11 @@ impl Compiler<'_> {
         for symbol in &globals {
             let offset = self.slot_types.len() as u32;
             self.global_offsets.push(offset);
+            if symbol.address.is_some() {
+                // Located: no storage of its own. The offset recorded above is
+                // never used, because `place` returns an address for it.
+                continue;
+            }
             let persistence = Self::persistence_of(symbol.qualifiers);
             self.emit_slots(symbol.name.as_str(), symbol.ty, persistence, 0);
             if let Some(init) = &symbol.init {
@@ -728,6 +805,10 @@ impl Compiler<'_> {
         let layout = self.layouts.get(index).cloned().unwrap_or_default();
         let start = self.slot_types.len() as u32;
         for symbol in &symbols {
+            // A located variable has no slot; see `layout_for`.
+            if symbol.address.is_some() {
+                continue;
+            }
             let persistence = Self::persistence_of(symbol.qualifiers);
             let name = format!("{prefix}.{}", symbol.name.as_str());
             let offset = self.slot_types.len() as u32;
@@ -1080,6 +1161,58 @@ impl Body<'_, '_> {
         slot
     }
 
+    /// Whether a place may be written, reporting it if not.
+    ///
+    /// The input image is what the world tells the program. A program able to
+    /// write it could fake its own sensors, and a test that passed because it
+    /// did would be worse than no test.
+    fn writable(&mut self, place: Place, target: &Expr) -> bool {
+        let Place::Address(index) = place else {
+            return true;
+        };
+        let Some(address) = self.compiler.addresses.get(index as usize) else {
+            return true;
+        };
+        if address.location != AddressLocation::Input {
+            return true;
+        }
+        let written = address.to_string();
+        self.compiler.diags.push(
+            Diagnostic::error(
+                E_WRITE_TO_INPUT,
+                format!("{written} is an input and cannot be written"),
+            )
+            .with_primary(target.span, "this assignment would write the input image")
+            .with_note(
+                "The input image is what the world tells the program: it is filled before every \
+                 scan and read during it. Write to an output (%Q) or to memory (%M) instead.",
+            ),
+        );
+        false
+    }
+
+    /// The address a POU variable is located at, if it is located.
+    fn located(&self, pou: u32, symbol: u32) -> Option<DirectAddress> {
+        self.compiler
+            .checked
+            .pous
+            .get(pou as usize)?
+            .symbols
+            .get(symbol as usize)?
+            .address
+            .clone()
+    }
+
+    /// The address a global is located at, if it is located.
+    fn located_global(&self, symbol: u32) -> Option<DirectAddress> {
+        self.compiler
+            .checked
+            .globals
+            .get(symbol as usize)?
+            .address
+            .clone()
+    }
+
     fn local_offset(&self, symbol: u32) -> Option<u32> {
         self.compiler
             .layouts
@@ -1315,12 +1448,20 @@ impl Body<'_, '_> {
                     return Some(Place::Local(result));
                 }
                 match self.compiler.checked.resolution(expr.id)? {
-                    Resolution::Local { symbol, .. } => {
-                        Some(Place::Local(self.local_offset(symbol)?))
-                    }
-                    Resolution::Global { symbol } => Some(Place::Global(
-                        self.compiler.global_offsets.get(symbol as usize).copied()?,
-                    )),
+                    // A variable declared `AT %IX0.0` **is** that bit of the
+                    // process image. It gets no slot of its own, because a slot
+                    // would be a copy, and a copy of an input is correct right
+                    // up until the moment it matters.
+                    Resolution::Local { pou, symbol } => match self.located(pou, symbol) {
+                        Some(address) => Some(Place::Address(self.compiler.address(&address))),
+                        None => Some(Place::Local(self.local_offset(symbol)?)),
+                    },
+                    Resolution::Global { symbol } => match self.located_global(symbol) {
+                        Some(address) => Some(Place::Address(self.compiler.address(&address))),
+                        None => Some(Place::Global(
+                            self.compiler.global_offsets.get(symbol as usize).copied()?,
+                        )),
+                    },
                     _ => None,
                 }
             }
@@ -2101,6 +2242,12 @@ impl Body<'_, '_> {
                     );
                     return;
                 };
+                // A program may not write its own inputs. The runtime refuses it
+                // too, but a fault on the first scan is a poor way to learn
+                // something the declaration already said.
+                if !self.writable(place, target) {
+                    return;
+                }
                 self.expr(value);
                 let declared = self.compiler.checked.type_of(target.id);
                 let have = self.elementary(value);

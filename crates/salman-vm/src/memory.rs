@@ -596,6 +596,27 @@ impl Memory {
         &mut self.markers
     }
 
+    /// Writes a value into the **physical** input area, as a device would.
+    ///
+    /// This is what a test uses to play the part of the field: it writes what
+    /// the world is presenting, and the next [`latch_inputs`] makes the program
+    /// see it. Writing the input *image* directly instead would let a test
+    /// change an input part way through a scan, which no device can do.
+    ///
+    /// [`latch_inputs`]: Memory::latch_inputs
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AddressError`] if the address cannot be resolved.
+    pub fn drive_input(
+        &mut self,
+        address: &DirectAddress,
+        value: &Value,
+    ) -> Result<bool, AddressError> {
+        let position = self.physical_inputs.resolve(address)?;
+        Ok(self.physical_inputs.write(position, value))
+    }
+
     /// Takes the input snapshot. The first half of a scan.
     pub fn latch_inputs(&mut self) {
         self.input_image.copy_from(&self.physical_inputs);

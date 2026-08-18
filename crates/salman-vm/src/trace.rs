@@ -24,6 +24,8 @@ use salman_core::hash::{Sha256, to_hex};
 use salman_core::time::Duration;
 use salman_core::value::Value;
 
+use salman_lang::address::DirectAddress;
+
 use crate::memory::SlotId;
 
 /// The version of the trace format itself.
@@ -36,10 +38,48 @@ pub const TRACE_FORMAT_VERSION: u32 = 1;
 /// A signal being recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Signal {
-    /// The slot being watched.
-    pub slot: SlotId,
+    /// What is being watched.
+    pub source: SignalSource,
     /// The name shown in the trace, normally the variable's declared name.
     pub name: String,
+}
+
+impl Signal {
+    /// A signal watching a variable slot.
+    #[must_use]
+    pub fn slot(slot: SlotId, name: impl Into<String>) -> Self {
+        Self {
+            source: SignalSource::Slot(slot),
+            name: name.into(),
+        }
+    }
+
+    /// A signal watching a location in the process image.
+    #[must_use]
+    pub fn address(address: DirectAddress, name: impl Into<String>) -> Self {
+        Self {
+            source: SignalSource::Address(Box::new(address)),
+            name: name.into(),
+        }
+    }
+}
+
+/// Where a recorded signal's value comes from.
+///
+/// A variable declared `AT %IX0.0` **is** that bit of the process image and has
+/// no slot of its own, so a trace has to be able to name a location as well as
+/// a variable. Recording a mirror of it instead would give a value that is
+/// right most of the time, which is the worst kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignalSource {
+    /// A variable slot.
+    Slot(SlotId),
+    /// A location in the process image.
+    ///
+    /// Boxed because a `DirectAddress` owns its index path and is far larger
+    /// than a slot id; without the box every signal would pay for the widest
+    /// variant.
+    Address(Box<DirectAddress>),
 }
 
 /// One row of a trace: every watched signal at one instant.
@@ -246,14 +286,8 @@ mod tests {
     fn trace() -> Trace {
         let mut t = Trace::new(
             vec![
-                Signal {
-                    slot: SlotId(0),
-                    name: "Motor_Run".into(),
-                },
-                Signal {
-                    slot: SlotId(1),
-                    name: "Count".into(),
-                },
+                Signal::slot(SlotId(0), "Motor_Run"),
+                Signal::slot(SlotId(1), "Count"),
             ],
             0,
             true,
@@ -369,14 +403,7 @@ mod tests {
 
     #[test]
     fn csv_export_quotes_fields_that_would_otherwise_be_misread() {
-        let mut t = Trace::new(
-            vec![Signal {
-                slot: SlotId(0),
-                name: "a,b".into(),
-            }],
-            0,
-            true,
-        );
+        let mut t = Trace::new(vec![Signal::slot(SlotId(0), "a,b")], 0, true);
         t.push(Sample {
             scan: 0,
             time: Duration::ZERO,

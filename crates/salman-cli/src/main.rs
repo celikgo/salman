@@ -229,11 +229,7 @@ fn run_program(
     if !record.is_empty() {
         let mut signals = Vec::new();
         for name in record {
-            let slot = find_slot(&compiled, name)?;
-            signals.push(Signal {
-                slot,
-                name: name.clone(),
-            });
+            signals.push(find_signal(&compiled, name)?);
         }
         runtime.record(signals);
     }
@@ -420,7 +416,17 @@ fn test_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-fn find_slot(compiled: &Compiled, name: &str) -> Result<SlotId, String> {
+/// Finds what `--record` named: a variable, or a location in the process image.
+///
+/// A variable declared `AT %IX0.0` has no slot of its own, so it is named by
+/// its location instead — which is also how a run observes an area no variable
+/// is bound to.
+fn find_signal(compiled: &Compiled, name: &str) -> Result<Signal, String> {
+    if name.starts_with('%') {
+        let address = salman_test::runner::parse_address_public(name)
+            .ok_or_else(|| format!("{name} is not an address salman can read"))?;
+        return Ok(Signal::address(address, name.to_string()));
+    }
     compiled
         .program
         .slot_index(name)
@@ -438,7 +444,13 @@ fn find_slot(compiled: &Compiled, name: &str) -> Result<SlotId, String> {
                 .and_then(|index| u32::try_from(index).ok())
                 .map(SlotId)
         })
-        .ok_or_else(|| format!("no variable called {name}"))
+        .map(|slot| Signal::slot(slot, name.to_string()))
+        .ok_or_else(|| {
+            format!(
+                "no variable called {name}. A variable declared `AT %...` has no name here \
+                 because it has no storage; write the location, as in `%IX0.0`"
+            )
+        })
 }
 
 fn parse_duration(text: &str) -> Result<Duration, String> {

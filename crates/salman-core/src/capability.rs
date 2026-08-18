@@ -327,6 +327,31 @@ pub static REGISTRY: &[Capability] = &[
                is a compile error, not a CI job.",
     },
     Capability {
+        id: "io.located-variables",
+        area: "Runtime",
+        title: "AT %IX0.0 binds a variable to the process image, with no copy",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-cli/tests/located.rs",
+                test: "a_located_variable_gets_no_storage_of_its_own",
+            },
+            Evidence {
+                file: "crates/salman-cli/tests/located.rs",
+                test: "an_input_driven_mid_scan_is_not_seen_until_the_next_latch",
+            },
+            Evidence {
+                file: "crates/salman-cli/tests/located.rs",
+                test: "a_declarative_test_can_drive_and_read_a_location",
+            },
+        ],
+        note: "A located variable IS its location: it has no slot, so it cannot go stale. The \
+               declared width must match the address size, and a program may not write its own \
+               inputs. Nothing yet maps a device's registers onto the image; that is the \
+               Modbus layer.",
+    },
+    Capability {
         id: "lang.st.dialects",
         area: "Language",
         title: "Dialects as configuration, with every diagnostic naming the rule it applied",

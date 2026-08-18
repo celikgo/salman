@@ -10,6 +10,8 @@ use std::collections::BTreeMap;
 
 use salman_core::time::Duration;
 use salman_core::value::{ElementaryType, Value};
+use salman_lang::address::{AddressLocation, AddressSize, DirectAddress};
+use salman_lang::dialect::Dialect;
 use salman_vm::bytecode::Program;
 use salman_vm::clock::Clock;
 use salman_vm::compile::Compiled;
@@ -104,10 +106,10 @@ pub fn run(compiled: &Compiled, case: &TestCase) -> Outcome {
         let mut signals = Vec::new();
         for name in &case.record {
             match resolve(&compiled.program, case.pou.as_deref(), name) {
-                Ok(slot) => signals.push(Signal {
-                    slot,
-                    name: name.clone(),
-                }),
+                Ok(Target::Slot(slot)) => signals.push(Signal::slot(slot, name.clone())),
+                Ok(Target::Address(address)) => {
+                    signals.push(Signal::address(address, name.clone()));
+                }
                 Err(message) => {
                     outcome.problems.push(Problem {
                         step: None,
@@ -152,9 +154,14 @@ pub fn run(compiled: &Compiled, case: &TestCase) -> Outcome {
         );
         for name in &step.release {
             match resolve(&compiled.program, case.pou.as_deref(), name) {
-                Ok(slot) => {
+                Ok(Target::Slot(slot)) => {
                     runtime.memory_mut().release(slot);
                 }
+                Ok(Target::Address(_)) => problem(
+                    &mut outcome,
+                    Some(number),
+                    format!("{name} is a location, and salman forces variables, not locations"),
+                ),
                 Err(message) => problem(&mut outcome, Some(number), message),
             }
         }
@@ -213,24 +220,51 @@ fn apply(
     how: Application,
 ) {
     for (name, spec) in values {
-        let slot = match resolve(&compiled.program, case.pou.as_deref(), name) {
-            Ok(slot) => slot,
+        let target = match resolve(&compiled.program, case.pou.as_deref(), name) {
+            Ok(target) => target,
             Err(message) => {
                 problem(outcome, step, message);
                 continue;
             }
         };
-        let ty = slot_type(&compiled.program, slot);
-        match spec.to_value(ty) {
-            Ok(value) => match how {
-                Application::Set => {
-                    runtime.memory_mut().write_slot(slot, value);
+        let ty = match &target {
+            Target::Slot(slot) => slot_type(&compiled.program, *slot),
+            Target::Address(address) => address_type(address.size),
+        };
+        let value = match spec.to_value(ty) {
+            Ok(value) => value,
+            Err(error) => {
+                problem(outcome, step, format!("{name}: {error}"));
+                continue;
+            }
+        };
+        match (&target, how) {
+            (Target::Slot(slot), Application::Set) => {
+                runtime.memory_mut().write_slot(*slot, value);
+            }
+            (Target::Slot(slot), Application::Force) => {
+                runtime.memory_mut().force(*slot, value);
+            }
+            // Setting an input writes what the *world* is presenting; the next
+            // scan's latch is what makes the program see it. Writing the input
+            // image directly would let a test change an input part way through
+            // a scan, which no device can do.
+            (Target::Address(address), Application::Set) => {
+                let written = match address.location {
+                    AddressLocation::Input => runtime.memory_mut().drive_input(address, &value),
+                    _ => runtime.memory_mut().write_address(address, &value),
+                };
+                match written {
+                    Ok(true) => {}
+                    Ok(false) => problem(outcome, step, format!("{name} could not be written")),
+                    Err(error) => problem(outcome, step, format!("{name}: {error}")),
                 }
-                Application::Force => {
-                    runtime.memory_mut().force(slot, value);
-                }
-            },
-            Err(error) => problem(outcome, step, format!("{name}: {error}")),
+            }
+            (Target::Address(_), Application::Force) => problem(
+                outcome,
+                step,
+                format!("{name} is a location, and salman forces variables, not locations"),
+            ),
         }
     }
 }
@@ -274,14 +308,17 @@ fn check(
     outcome: &mut Outcome,
 ) {
     for (name, spec) in &step.expect {
-        let slot = match resolve(&compiled.program, case.pou.as_deref(), name) {
-            Ok(slot) => slot,
+        let target = match resolve(&compiled.program, case.pou.as_deref(), name) {
+            Ok(target) => target,
             Err(message) => {
                 problem(outcome, Some(number), message);
                 continue;
             }
         };
-        let ty = slot_type(&compiled.program, slot);
+        let ty = match &target {
+            Target::Slot(slot) => slot_type(&compiled.program, *slot),
+            Target::Address(address) => address_type(address.size),
+        };
         let wanted = match spec.to_value(ty) {
             Ok(value) => value,
             Err(error) => {
@@ -289,11 +326,21 @@ fn check(
                 continue;
             }
         };
-        let found = runtime
-            .memory()
-            .read_slot(slot)
-            .cloned()
-            .unwrap_or(Value::Bool(false));
+        // A location is read the way the program reads it: an input from the
+        // snapshot the scan took, an output and a marker from the image.
+        let found = match &target {
+            Target::Slot(slot) => runtime
+                .memory()
+                .read_slot(*slot)
+                .cloned()
+                .unwrap_or(Value::Bool(false)),
+            Target::Address(address) => runtime
+                .memory()
+                .read_address(address)
+                .ok()
+                .flatten()
+                .unwrap_or(Value::Bool(false)),
+        };
         if found != wanted {
             let note = step
                 .note
@@ -330,7 +377,64 @@ fn slot_type(program: &Program, slot: SlotId) -> ElementaryType {
 /// a name that would match several slots is an **error listing them**, never a
 /// guess — a test that silently asserted about the wrong instance would be
 /// worse than one that failed to run.
-fn resolve(program: &Program, pou: Option<&str>, name: &str) -> Result<SlotId, String> {
+/// What a name in a test file refers to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// A variable with storage of its own.
+    Slot(SlotId),
+    /// A location in the process image, written `%IX0.0` in the test file.
+    ///
+    /// A variable declared `AT %IX0.0` has no slot, so a test that wants to
+    /// drive or read one names the location instead — which is also how a test
+    /// plays the part of a device that salman has no driver for yet.
+    Address(DirectAddress),
+}
+
+/// The type a location holds, from its size letter.
+const fn address_type(size: AddressSize) -> ElementaryType {
+    match size {
+        AddressSize::Bit => ElementaryType::Bool,
+        AddressSize::Byte => ElementaryType::Byte,
+        AddressSize::Word => ElementaryType::Word,
+        AddressSize::DoubleWord => ElementaryType::Dword,
+        AddressSize::LongWord => ElementaryType::Lword,
+    }
+}
+
+/// Parses a direct address written in a test file, such as `%IX0.0`.
+///
+/// Public so the command line can accept the same spelling in `--record`;
+/// there should be one definition of what an address written by hand means.
+pub fn parse_address_public(text: &str) -> Option<DirectAddress> {
+    parse_address(text)
+}
+
+fn parse_address(text: &str) -> Option<DirectAddress> {
+    if !text.starts_with('%') {
+        return None;
+    }
+    let mut map = salman_core::span::SourceMap::new();
+    let file = map.add("<test target>", text).ok()?;
+    let (stream, diagnostics) = salman_lang::lexer::lex(file, text, &Dialect::generic());
+    if diagnostics.has_errors() {
+        return None;
+    }
+    let tokens = stream.tokens();
+    if tokens.len() != 2 {
+        return None;
+    }
+    match tokens.first()?.kind {
+        salman_lang::token::TokenKind::DirectAddress(index) => stream.address(index).cloned(),
+        _ => None,
+    }
+}
+
+fn resolve(program: &Program, pou: Option<&str>, name: &str) -> Result<Target, String> {
+    if name.starts_with('%') {
+        return parse_address(name)
+            .map(Target::Address)
+            .ok_or_else(|| format!("{name} is not an address salman can read"));
+    }
     let mut exact = Vec::new();
     let mut suffix = Vec::new();
     for (index, candidate) in program.slot_names.iter().enumerate() {
@@ -371,13 +475,14 @@ fn resolve(program: &Program, pou: Option<&str>, name: &str) -> Result<SlotId, S
 
     match candidates.len() {
         0 => Err(format!(
-            "no variable called {name}. The program has: {}",
+            "no variable called {name}. A variable declared `AT %...` has no name here \
+             because it has no storage; write the location, as in `%IX0.0`. The program has: {}",
             summarise(&program.slot_names)
         )),
         1 => candidates
             .first()
             .and_then(|index| u32::try_from(*index).ok())
-            .map(SlotId)
+            .map(|index| Target::Slot(SlotId(index)))
             .ok_or_else(|| format!("{name} could not be addressed")),
         _ => {
             let names: Vec<&str> = candidates

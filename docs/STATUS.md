@@ -40,6 +40,7 @@ A capability is only marked *implemented and tested* if it names tests that exis
 
 | | Capability | Status | Milestone | Notes |
 |---|---|---|---|---|
+| `[x]` | AT %IX0.0 binds a variable to the process image, with no copy | implemented and tested | v0.2 | A located variable IS its location: it has no slot, so it cannot go stale. The declared width must match the address size, and a program may not write its own inputs. Nothing yet maps a device's registers onto the image; that is the Modbus layer. |
 | `[x]` | Bytecode compiler with static instance layout and no run-time allocation | implemented and tested | v0.1 | Exponentiation, AT %-located variables and VAR_EXTERNAL are reported as not implemented rather than compiled to something approximate. Every value stored into a declared destination passes through one coercion point, so a subrange bound or a string length cannot be enforced at one site and forgotten at another. |
 | `[x]` | Subrange bounds and string lengths enforced wherever a value is stored | implemented and tested | v0.1 | A subrange violation is a fault naming the variable, the value and the bounds; a string too long for its target keeps the characters that fit, which is what the standard defines. Both are salman decisions where the standard is silent. |
 | `[x]` | Bytecode interpreter that faults rather than panics, with a scan watchdog | implemented and tested | v0.1 | Integer overflow wraps and division by zero faults; both are salman decisions, documented in docs/CONFORMANCE.md. |

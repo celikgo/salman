@@ -44,7 +44,7 @@ use crate::bytecode::Program;
 use crate::clock::Clock;
 use crate::exec::{ExecLimits, Fault, execute};
 use crate::memory::{Memory, SlotId};
-use crate::trace::{Sample, Signal, Trace};
+use crate::trace::{Sample, Signal, SignalSource, Trace};
 
 /// What releases a task.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -526,11 +526,20 @@ impl Runtime {
         let values = trace
             .signals
             .iter()
-            .map(|signal| {
-                self.memory
-                    .read_slot(signal.slot)
+            .map(|signal| match &signal.source {
+                SignalSource::Slot(slot) => self
+                    .memory
+                    .read_slot(*slot)
                     .cloned()
-                    .unwrap_or(salman_core::value::Value::Bool(false))
+                    .unwrap_or(salman_core::value::Value::Bool(false)),
+                // A located variable has no slot: it is read from the image,
+                // exactly as the program reads it.
+                SignalSource::Address(address) => self
+                    .memory
+                    .read_address(address)
+                    .ok()
+                    .flatten()
+                    .unwrap_or(salman_core::value::Value::Bool(false)),
             })
             .collect();
         trace.push(Sample {
@@ -825,10 +834,7 @@ mod tests {
             base: 0,
         }];
         let mut rt = runtime(vec![task]);
-        rt.record(vec![Signal {
-            slot: SlotId(0),
-            name: "Count".into(),
-        }]);
+        rt.record(vec![Signal::slot(SlotId(0), "Count")]);
         rt.run_scans(3);
         let trace = rt.trace().expect("recording");
         assert_eq!(trace.len(), 3);
@@ -847,10 +853,7 @@ mod tests {
                 base: 0,
             }];
             let mut rt = runtime(vec![task]);
-            rt.record(vec![Signal {
-                slot: SlotId(0),
-                name: "Count".into(),
-            }]);
+            rt.record(vec![Signal::slot(SlotId(0), "Count")]);
             rt.run_until(ms(200));
             rt.trace().map(crate::trace::Trace::fingerprint_hex)
         };

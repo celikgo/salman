@@ -308,15 +308,45 @@ fn exit_outside_a_loop_is_rejected() {
 }
 
 #[test]
-fn located_variables_report_that_the_io_mapping_layer_does_not_exist() {
-    // The syntax parses; what does not exist is anything to bind it to. Giving
-    // it an ordinary slot would produce a variable that looks located and never
-    // changes when the input does.
-    let build = compile(&program(
-        "  Sensor AT %IX0.0 : BOOL;",
-        "  Sensor := Sensor;",
-    ));
-    assert!(codes(&build).contains(&"U0301"), "{:?}", codes(&build));
+fn a_located_variable_binds_to_the_process_image() {
+    // `AT %IX0.0` means the variable IS that bit of the image. It was refused
+    // until the IO mapping layer existed, because giving it a slot of its own
+    // would have produced a variable that looks located and never changes when
+    // the input does.
+    assert_clean(
+        "PROGRAM P\nVAR\n  Start AT %IX0.0 : BOOL;\n  Motor AT %QX0.0 : BOOL;\n\
+           Count AT %MW2 : UINT;\nEND_VAR\n  Motor := Start;\n  Count := Count + 1;\n\
+         END_PROGRAM\n",
+    );
+}
+
+#[test]
+fn a_located_variable_must_be_as_wide_as_the_location_it_names() {
+    // `%IW4` is sixteen bits and a BOOL is one. Whichever the engineer meant,
+    // the declaration as written cannot be honoured, and reading it would
+    // quietly give the low bit of a word.
+    let build = compile("PROGRAM P\nVAR Bad AT %IW4 : BOOL; END_VAR\n  ;\nEND_PROGRAM\n");
+    assert!(codes(&build).contains(&"E0503"), "{:?}", codes(&build));
+}
+
+#[test]
+fn a_program_may_not_write_a_variable_located_in_the_input_image() {
+    // The input image is what the world tells the program. A program able to
+    // write it could fake its own sensors.
+    let build = compile("PROGRAM P\nVAR S AT %IX0.0 : BOOL; END_VAR\n  S := TRUE;\nEND_PROGRAM\n");
+    assert!(codes(&build).contains(&"E0504"), "{:?}", codes(&build));
+}
+
+#[test]
+fn a_location_past_the_end_of_the_process_image_is_refused() {
+    let build = compile("PROGRAM P\nVAR Far AT %IW60000 : UINT; END_VAR\n  ;\nEND_PROGRAM\n");
+    assert!(codes(&build).contains(&"E0503"), "{:?}", codes(&build));
+}
+
+#[test]
+fn a_partly_specified_location_is_refused_rather_than_defaulted() {
+    let build = compile("PROGRAM P\nVAR Some AT %IW* : UINT; END_VAR\n  ;\nEND_PROGRAM\n");
+    assert!(codes(&build).contains(&"E0503"), "{:?}", codes(&build));
 }
 
 #[test]
