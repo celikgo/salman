@@ -589,3 +589,55 @@ fn the_limit_depends_on_which_way_the_data_moves() {
         "a write of 125 registers should be refused: {found:?}"
     );
 }
+
+#[test]
+fn two_mappings_that_write_the_same_device_registers_are_refused() {
+    // Found by review: the mirror of an image overlap, at the other end of the
+    // wire, and just as quiet. Both mappings run every scan in file order, the
+    // second overwrites the first, and one of the program's outputs never
+    // reaches the device while the file reads as though it does.
+    let found = problems(&with_map(&[
+        "{ table: coils, from: 0, count: 8, to: \"%QX0.0\" }",
+        "{ table: coils, from: 0, count: 8, to: \"%QX1.0\" }",
+    ]));
+    assert!(
+        found
+            .iter()
+            .any(|p| p.contains("both write") && p.contains("would win")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn two_mappings_that_read_the_same_device_registers_are_allowed() {
+    // Only writes conflict. Two mappings reading the same registers into
+    // different places are wasteful and correct, and refusing them would be
+    // salman inventing a rule.
+    parse(&with_map(&[
+        "{ table: input-registers, from: 0, count: 4, to: \"%IW0\" }",
+        "{ table: input-registers, from: 0, count: 4, to: \"%IW10\" }",
+    ]))
+    .expect("reading the same registers twice is wasteful, not wrong");
+}
+
+#[test]
+fn device_ranges_that_only_touch_are_not_an_overlap() {
+    // The boundary, in the direction that must succeed: coils 0..7 and 8..15.
+    parse(&with_map(&[
+        "{ table: coils, from: 0, count: 8, to: \"%QX0.0\" }",
+        "{ table: coils, from: 8, count: 8, to: \"%QX1.0\" }",
+    ]))
+    .expect("adjacent register ranges do not overlap");
+}
+
+#[test]
+fn writes_to_different_tables_at_the_same_address_are_not_an_overlap() {
+    // A coil numbered 3 and a holding register numbered 3 are different
+    // things. APS permits a device to overlay its tables and permits it not
+    // to, and that is the device's business rather than salman's.
+    parse(&with_map(&[
+        "{ table: coils, from: 0, count: 8, to: \"%QX0.0\" }",
+        "{ table: holding-registers, from: 0, count: 4, to: \"%QW1\" }",
+    ]))
+    .expect("different tables do not collide");
+}

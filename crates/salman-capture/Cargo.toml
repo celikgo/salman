@@ -10,5 +10,8 @@ description = "Reading and writing packet captures, and decoding what is inside 
 [dependencies]
 salman-core.workspace = true
 
+[dev-dependencies]
+salman-modbus.workspace = true
+
 [lints]
 workspace = true

@@ -159,6 +159,7 @@ name = "salman-capture"
 version = "0.0.1"
 dependencies = [
  "salman-core",
+ "salman-modbus",
 ]
 
 [[package]]

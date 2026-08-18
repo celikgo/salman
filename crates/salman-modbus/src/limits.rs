@@ -1,10 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The size limits Modbus imposes, and where each one comes from.
 //!
-//! Every quantity limit below is exactly the largest value that keeps the PDU
-//! within [`MAX_PDU`]. That is not a coincidence and it is not folklore: it is
-//! arithmetic, and `the_quantity_limits_are_what_the_pdu_size_allows` in this
-//! module checks it rather than trusting the transcription.
+//! Every limit here fits in a protocol data unit, and the tests below check
+//! the arithmetic rather than trusting the transcription. Two of them are
+//! *exactly* the largest value that fits — one more register does not — and
+//! two are not.
+//!
+//! The register limits are forced: 125 read and 123 written are what a PDU
+//! holds, and they could not have been anything else. The **bit** limits are
+//! round numbers APS chose below the ceiling: 2000 coils fit in a read
+//! response with three bytes to spare, and so would 2008. salman uses the
+//! specification's numbers rather than the arithmetic maxima, because a server
+//! that accepted 2008 would be accepting what the standard does not permit.
+//!
+//! An earlier version of this paragraph claimed all four limits were forced
+//! arithmetic, which the test `the_bit_limits_are_round_numbers_below_what_would_fit`
+//! twelve lines below disproves.
 
 /// The largest protocol data unit, in bytes. APS §4.1.
 ///

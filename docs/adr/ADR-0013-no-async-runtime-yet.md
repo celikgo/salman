@@ -16,17 +16,27 @@ oversight rather than a decision.
 At 0.0.1 the dependency position is worth stating precisely, because the loose version of it
 ("salman has no dependencies") is not true.
 
-`salman-core`, `salman-lang`, `salman-vm`, `salman-modbus` and `salman-modbus-net` depend on
-**nothing outside the standard library**. That is every crate that decodes bytes: the
-Structured Text front end, the runtime, and the whole Modbus stack. SHA-256, the
-pseudo-random generator, the diagnostic renderer, the CRC and every decoder are written
-in-crate, so `unsafe_code = "forbid"` is provable across all of it and a fuzz finding
-anywhere in it is one salman can act on.
+`salman-core`, `salman-lang`, `salman-vm`, `salman-modbus`, `salman-modbus-net`,
+`salman-capture` and `salman-link` depend on **nothing outside the standard library**. That
+covers every crate that decodes bytes off a wire or out of a file salman did not write: the
+Structured Text front end, the runtime, the whole Modbus stack, and the capture reader with
+its link, IP and TCP decoders. SHA-256, the pseudo-random generator, the diagnostic renderer,
+the CRC, the pcap container and every protocol decoder are written in-crate, so
+`unsafe_code = "forbid"` is provable across all of it and a fuzz finding anywhere in it is
+one salman can act on.
 
-Two crates at the edges do have dependencies: `salman-test` reads its YAML test format with
-`serde` and `serde-saphyr`, and `salman-cli` parses arguments with `clap`. Both handle input
-a user wrote on their own machine rather than input that arrived from a network, and neither
-is in the path of anything this ADR is about.
+Three crates do have third-party dependencies, and it is worth being exact about which and
+where, because the loose version of this claim was wrong in an earlier revision of this ADR:
+
+- `salman-cli` parses arguments with `clap`.
+- `salman-test` reads its YAML test format with `serde` and `serde-saphyr`.
+- `salman-project` reads the YAML project file with the same two.
+
+`salman-project` **is** in the path of what this ADR is about: `salman-link` depends on it,
+and `salman-link` is what drives `salman-modbus-net` at the scan boundaries. So a project run
+through the link does parse a file with third-party code. The distinction that still holds,
+and the one that matters, is between a file a user wrote on their own machine and bytes that
+arrived from a network: no third-party parser is on the second path.
 
 ## Decision
 

@@ -36,5 +36,7 @@
 
 pub mod frame;
 pub mod pcap;
+pub mod reassemble;
 
 pub use pcap::{CaptureError, LinkType, Reader, Record, Resolution, TimestampScale, Writer};
+pub use reassemble::{Delivery, Note, Reassembler, Stream};

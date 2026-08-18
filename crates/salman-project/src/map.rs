@@ -284,6 +284,32 @@ impl Mapping {
         }
     }
 
+    /// Whether two mappings write the same registers on the same device.
+    ///
+    /// The hazard is the mirror of an image overlap and just as quiet:
+    /// whichever mapping ran second would win, and which one that is depends
+    /// on the order somebody typed them in the file. One of the program's
+    /// outputs would never reach the device, and the file would read as though
+    /// it did.
+    ///
+    /// Only writes conflict. Two mappings that *read* the same registers into
+    /// different places are wasteful and correct.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MappingError`] if either mapping has no direction.
+    pub fn writes_the_same_registers_as(&self, other: &Self) -> Result<bool, MappingError> {
+        if self.table != other.table {
+            return Ok(false);
+        }
+        if self.direction()? != Direction::Output || other.direction()? != Direction::Output {
+            return Ok(false);
+        }
+        let a_end = u32::from(self.device_start) + u32::from(self.count);
+        let b_end = u32::from(other.device_start) + u32::from(other.count);
+        Ok(u32::from(self.device_start) < b_end && u32::from(other.device_start) < a_end)
+    }
+
     /// Whether two mappings claim any of the same image bits.
     ///
     /// # Errors
@@ -381,6 +407,15 @@ pub enum MappingError {
         /// The address as written.
         image: String,
     },
+    /// Two mappings write the same registers on the same device.
+    DeviceOverlap {
+        /// The table.
+        table: Table,
+        /// The first address they share.
+        from: u16,
+        /// How many they share.
+        count: u16,
+    },
     /// Two mappings claim the same image bits.
     Overlap {
         /// The first, as written.
@@ -467,6 +502,13 @@ impl fmt::Display for MappingError {
                 "{image} names a hierarchical position, and a mapping needs a plain \
                  address such as %IW0 or %IX0.0"
             ),
+            Self::DeviceOverlap { table, from, count } => write!(
+                f,
+                "two mappings both write {count} {} from address {from}, so whichever ran \
+                 second would win and one of the program's outputs would never reach the \
+                 device",
+                table.name()
+            ),
             Self::Overlap { first, second } => write!(
                 f,
                 "{first} and {second} claim the same part of the process image, so \
@@ -498,6 +540,17 @@ pub fn check_all(mappings: &[Mapping], image_bytes: usize) -> Vec<MappingError> 
                 problems.push(MappingError::Overlap {
                     first: first.image.to_string(),
                     second: second.image.to_string(),
+                });
+            }
+            // The same hazard at the other end of the wire, and just as quiet.
+            if first.writes_the_same_registers_as(second).unwrap_or(false) {
+                let from = first.device_start.max(second.device_start);
+                let first_end = first.device_start.saturating_add(first.count);
+                let second_end = second.device_start.saturating_add(second.count);
+                problems.push(MappingError::DeviceOverlap {
+                    table: first.table,
+                    from,
+                    count: first_end.min(second_end).saturating_sub(from),
                 });
             }
         }

@@ -608,8 +608,10 @@ pub enum Response {
 impl Response {
     /// Writes the response as a PDU.
     ///
-    /// `request` supplies the function code, which a response does not always
-    /// determine on its own.
+    /// Infallible, unlike [`Request::encode`]. Every response payload is
+    /// sized by a **read** limit, and those are exactly the quantities a frame
+    /// holds — so there is no response this type can represent that does not
+    /// fit.
     #[must_use]
     pub fn encode(&self) -> Pdu {
         match self {

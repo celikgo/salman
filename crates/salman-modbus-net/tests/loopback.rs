@@ -513,7 +513,9 @@ fn a_server_that_never_answers_times_out_rather_than_waiting_for_ever() {
             },
         )
         .unwrap_err();
-    assert!(matches!(error, ClientError::Io(_)), "{error}");
+    // A silent server and a talkative one that never answers are the same
+    // thing from here: the answer did not come in the time allowed.
+    assert!(matches!(error, ClientError::TimedOut { .. }), "{error}");
     assert!(
         started.elapsed() < Duration::from_millis(250),
         "the timeout was not honoured"
@@ -676,5 +678,122 @@ fn a_peer_that_breaks_framing_and_keeps_talking_does_not_hold_the_client_for_eve
         took < Duration::from_millis(500),
         "the client took {took:?} to give up, which means it was spinning"
     );
+    let _ = server.join();
+}
+
+#[test]
+fn bytes_read_past_the_wanted_frame_are_kept_for_the_next_call() {
+    // Found by review, and a fault that needs a byte-perfect server to
+    // provoke. A read returns whatever the operating system has, which is
+    // regularly more than one frame. The tail was dropped, so the next call
+    // began reading in the middle of a frame and the framer parsed an MBAP
+    // header out of the middle of something — losing a connection whose peer
+    // had done nothing wrong.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut scratch = [0_u8; 512];
+
+        // The answer to request 1, and — in the same write — the first five
+        // bytes of the answer to request 2.
+        let _ = socket.read(&mut scratch).unwrap();
+        let mut first = vec![
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x05, 0x01, 0x03, 0x02, 0x00, 0x2A,
+        ];
+        first.extend_from_slice(&[0x00, 0x02, 0x00, 0x00, 0x00]);
+        socket.write_all(&first).unwrap();
+        socket.flush().unwrap();
+
+        // Then the rest of it, once the second request arrives.
+        let _ = socket.read(&mut scratch).unwrap();
+        socket
+            .write_all(&[0x05, 0x01, 0x03, 0x02, 0xDE, 0xAD])
+            .unwrap();
+        socket.flush().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+    });
+
+    let mut client = Client::connect(address, DEFAULT_TIMEOUT).unwrap();
+    let read = Request::ReadHoldingRegisters {
+        start: 0,
+        quantity: 1,
+    };
+    let first = client.read_from(1, &read).expect("the first answer");
+    let Response::ReadHoldingRegisters(words) = first else {
+        panic!("{first:?}")
+    };
+    assert_eq!(words.values(), [0x002A]);
+
+    let second = client
+        .read_from(1, &read)
+        .expect("the second answer, whose first five bytes arrived with the first");
+    let Response::ReadHoldingRegisters(words) = second else {
+        panic!("{second:?}")
+    };
+    assert_eq!(words.values(), [0xDEAD]);
+    server.join().unwrap();
+}
+
+#[test]
+fn a_peer_that_answers_other_questions_for_ever_does_not_hold_the_call() {
+    // Found by review. The socket's read timeout bounds one read, so it bounds
+    // nothing against a peer that keeps the socket fed: every read succeeds,
+    // the timeout never fires, and the call never returns. One hostile device
+    // would have stalled a whole scan through the IO link.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let server_stop = std::sync::Arc::clone(&stop);
+
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut scratch = [0_u8; 512];
+        let _ = socket.read(&mut scratch);
+        // An answer to transaction 0x03E7, which nobody asked for, for ever.
+        while !server_stop.load(std::sync::atomic::Ordering::Relaxed) {
+            if socket
+                .write_all(&[
+                    0x03, 0xE7, 0x00, 0x00, 0x00, 0x05, 0x01, 0x03, 0x02, 0xDE, 0xAD,
+                ])
+                .is_err()
+            {
+                break;
+            }
+            let _ = socket.flush();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    });
+
+    let mut client = Client::connect(address, Duration::from_millis(300)).unwrap();
+    let started = std::time::Instant::now();
+    let error = client
+        .read_from(
+            1,
+            &Request::ReadHoldingRegisters {
+                start: 0,
+                quantity: 1,
+            },
+        )
+        .expect_err("this answer never comes");
+    let took = started.elapsed();
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+
+    assert!(
+        matches!(error, ClientError::TimedOut { .. }),
+        "expected a deadline, got {error}"
+    );
+    assert!(
+        took < Duration::from_millis(1500),
+        "the client waited {took:?}, so the deadline is not holding"
+    );
+    assert!(
+        client.unmatched_responses() > 0,
+        "the answers to other questions should have been counted"
+    );
+    // And the message says what happened, because "timed out" alone would send
+    // a reader looking at the network when the device is answering the wrong
+    // question.
+    assert!(error.to_string().contains("other requests"), "{error}");
     let _ = server.join();
 }

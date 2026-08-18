@@ -1189,12 +1189,20 @@ Messaging on TCP/IP Implementation Guide V1.0b, 24 October 2006.
 specification. Each is salman's decision, and each is here because a reader would otherwise
 reasonably assume it came from APS.
 
-1. **A declared byte count must agree with the declared quantity.** APS states both fields
-   and never tells an implementation to cross-check them. salman refuses a frame where they
-   disagree instead of trusting one of them. The two obvious choices — trust the byte count,
-   trust the quantity — are both taken by real implementations, so a frame in which they
-   disagree is one where two conforming readers get different answers. That is the shape of
-   a fault, and reporting it beats resolving it.
+1. **A declared byte count must agree with the declared quantity.** For the two functions
+   where salman checks this on a *request* — Write Multiple Coils and Write Multiple
+   Registers — this is **not** salman being stricter: APS's per-function figures in §6.11 and
+   §6.12 make the check explicit and give exception 03 for failing it. An earlier version of
+   this section said APS never asks for it and presented the check as salman's own decision,
+   which was wrong in the direction this document exists to avoid: it attributed to salman a
+   point the specification settles, and would have told a reader that a device sending
+   `quantity=4, byte count=2` was merely unlucky with salman rather than non-conforming.
+
+   What *is* salman's own is applying the same check to a **response**, where APS defines the
+   byte count as N or 2N without writing the check out. salman refuses a response whose two
+   fields disagree instead of trusting one of them, because the two obvious choices — trust
+   the byte count, trust the quantity — are both taken by real implementations, so such a
+   frame is one where two conforming readers get different answers.
 2. **Bytes after the end of a frame are refused.** APS defines each function's fields and
    stops. A frame with more bytes after the last field is most often two frames run
    together, and silently ignoring the tail is how a framing fault becomes a wrong reading
@@ -1227,6 +1235,34 @@ fully decoded by anyone.
 **Addresses.** The PDU address, zero-based, everywhere, with no offset applied at any point.
 See `docs/adr/ADR-0012-modbus-addressing.md`, which records that the `4xxxx` convention
 appears zero times in any of the four Modbus Organization documents salman consulted.
+
+### 27. The TCP overlap policy, and what a capture cannot tell you
+
+**What salman does.** When a retransmitted segment overlaps bytes already delivered to a
+decoder, **the bytes already delivered win** and the overlapping prefix is discarded. If the
+retransmission disagrees with what was delivered, that is reported as an observation rather
+than resolved silently.
+
+**Why a policy.** This is a choice and not a fact. Operating systems differ on it — some
+prefer the first writer, some the last — and the difference is precisely what traffic
+normalisation and evasion techniques exploit, so a tool that leaves it emergent is a tool
+whose reading of a capture cannot be reproduced. salman prefers the first writer because
+those bytes have already been handed to a decoder and cannot be recalled; the alternative
+would mean the stream salman reported and the stream salman decoded were different streams.
+
+**Three more things a capture cannot tell you, which salman says rather than guesses.**
+
+- **Whether it started at the beginning.** Most captures join a conversation already running.
+  The first sequence number seen is adopted as the base and the stream is marked as joined in
+  progress, so that nothing downstream reads "salman did not see the beginning" as "the
+  device sent nothing before this".
+- **Whether a hole will ever fill.** A segment dropped by the capturing tool rather than by
+  the network never arrives. salman bounds how much it will hold behind a hole and then
+  reports a gap, because holding for ever makes a stream go silent with nothing saying why.
+- **Whether a duplicate is a retransmission.** A mirror or SPAN port routinely delivers every
+  packet twice, and nothing on the network resent anything. salman distinguishes a
+  byte-identical duplicate from a genuine retransmission, because counting frames rather than
+  reassembling them makes a mirrored capture double-count every transaction.
 
 ---
 

@@ -21,7 +21,7 @@
 
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use salman_core::posture::{DenialReason, Effect, Permit, PostureState, UserConfirmation};
 use salman_modbus::function::ExceptionCode;
@@ -42,6 +42,15 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_millis(1000);
 pub struct Client {
     stream: TcpStream,
     framer: Framer,
+    /// Bytes read from the socket that belonged to the next frame.
+    ///
+    /// A read returns whatever the operating system has, which is regularly
+    /// more than one frame. Dropping the tail once the wanted frame is found
+    /// would throw away bytes that have already left the stream, and the next
+    /// call would start reading in the middle of a frame — the framer would
+    /// then parse an MBAP header out of the middle of something and lose a
+    /// connection whose peer sent a byte-perfect stream.
+    residue: Vec<u8>,
     next_transaction: u16,
     /// Responses whose transaction identifier matched no outstanding request.
     ///
@@ -53,6 +62,13 @@ pub struct Client {
     /// diagnostics. A confirmation that cannot say which device it is about is
     /// not one a person can act on.
     peer: String,
+    /// How long one exchange may take in total.
+    ///
+    /// Separate from the socket's read timeout, which bounds a single read and
+    /// therefore bounds nothing against a peer that keeps talking: every read
+    /// succeeds, so the read timeout never fires and the call never returns.
+    /// This is the deadline that actually holds.
+    timeout: Duration,
 }
 
 impl Client {
@@ -90,9 +106,11 @@ impl Client {
         Ok(Self {
             stream,
             framer: Framer::new(),
+            residue: Vec::new(),
             next_transaction: 1,
             unmatched_responses: 0,
             peer,
+            timeout,
         })
     }
 
@@ -198,43 +216,106 @@ impl Client {
     }
 
     /// Sends one request and waits for the response that answers it.
+    ///
+    /// Two things here are not obvious, and both are corrections of real
+    /// faults. Bytes read from the socket that belong to the *next* frame are
+    /// kept in `residue` rather than dropped, because they have already left
+    /// the stream and losing them desynchronises the framer. And the whole
+    /// exchange has a deadline, because the socket's read timeout bounds one
+    /// read and therefore bounds nothing at all against a peer that keeps
+    /// sending.
     fn exchange(&mut self, unit: u8, request: &Request) -> Result<Response, ClientError> {
         let transaction = self.allocate_transaction();
         let adu = TcpAdu::new(transaction, unit, request.encode()?);
         self.stream.write_all(&adu.to_vec())?;
         self.stream.flush()?;
 
+        let deadline = Instant::now() + self.timeout;
         let mut scratch = [0_u8; MAX_TCP_ADU];
+        // Whatever was left over from the previous exchange goes through the
+        // framer first, before another byte is taken from the socket.
+        let mut pending = core::mem::take(&mut self.residue);
+
         loop {
-            let read = self.stream.read(&mut scratch)?;
-            if read == 0 {
-                return Err(ClientError::ConnectionClosed);
-            }
-            let mut rest = scratch.get(..read).unwrap_or(&[]);
+            let mut rest = &pending[..];
+            let mut answer = None;
             loop {
                 let (used, outcome) = self.framer.advance(rest);
                 rest = rest.get(used..).unwrap_or(&[]);
                 match outcome {
                     Ok(Some(frame)) => {
-                        if frame.header.transaction != transaction {
-                            // MG mandates matching on the transaction
-                            // identifier and says nothing about ordering, so a
-                            // response that answers something else is not a
-                            // fault — it is almost always an answer to a
-                            // request salman already gave up on.
-                            self.unmatched_responses += 1;
-                            continue;
+                        if frame.header.transaction == transaction {
+                            // Keep what has not been framed yet: it is the
+                            // start of whatever comes next.
+                            self.residue = rest.to_vec();
+                            answer = Some(Response::decode(frame.pdu.as_bytes(), request));
+                            break;
                         }
-                        let response = Response::decode(frame.pdu.as_bytes(), request)?;
-                        if let Response::Exception { code, .. } = response {
-                            return Err(ClientError::Exception { code, unit });
-                        }
-                        return Ok(response);
+                        // MG mandates matching on the transaction identifier
+                        // and says nothing about ordering, so a response that
+                        // answers something else is not a fault — it is almost
+                        // always an answer to a request salman gave up on.
+                        self.unmatched_responses += 1;
                     }
                     Ok(None) => break,
-                    Err(error) => return Err(ClientError::Framing(error)),
+                    Err(error) => {
+                        self.residue.clear();
+                        return Err(ClientError::Framing(error));
+                    }
+                }
+                if Instant::now() >= deadline {
+                    self.residue = rest.to_vec();
+                    return Err(ClientError::TimedOut {
+                        waited: self.timeout,
+                        unmatched: self.unmatched_responses,
+                    });
                 }
             }
+
+            if let Some(result) = answer {
+                let response = result?;
+                if let Response::Exception { code, .. } = response {
+                    return Err(ClientError::Exception { code, unit });
+                }
+                return Ok(response);
+            }
+
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(ClientError::TimedOut {
+                    waited: self.timeout,
+                    unmatched: self.unmatched_responses,
+                });
+            }
+            // Never wait past the deadline on one read either: a peer sending
+            // one byte just inside the socket timeout would otherwise still
+            // hold the call for as long as it liked.
+            self.stream.set_read_timeout(Some(left))?;
+
+            let read = match self.stream.read(&mut scratch) {
+                Ok(read) => read,
+                // The socket's timeout was set to whatever was left of the
+                // deadline, so it expiring *is* the deadline expiring. Passing
+                // it up as a raw I/O error would send a reader looking for a
+                // network fault when what happened is that the answer never
+                // came.
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Err(ClientError::TimedOut {
+                        waited: self.timeout,
+                        unmatched: self.unmatched_responses,
+                    });
+                }
+                Err(error) => return Err(ClientError::Io(error)),
+            };
+            if read == 0 {
+                return Err(ClientError::ConnectionClosed);
+            }
+            pending = scratch.get(..read).unwrap_or(&[]).to_vec();
         }
     }
 
@@ -259,6 +340,18 @@ pub enum ClientError {
     Io(io::Error),
     /// The server closed the connection.
     ConnectionClosed,
+    /// The exchange took longer than the client's timeout.
+    ///
+    /// Distinct from a socket read timing out: this fires against a peer that
+    /// keeps the socket fed and never sends the answer, which no per-read
+    /// timeout can catch.
+    TimedOut {
+        /// How long the client was willing to wait.
+        waited: Duration,
+        /// How many answers to other questions arrived meanwhile, which is
+        /// usually the explanation.
+        unmatched: u64,
+    },
     /// The stream could not be framed, so the connection is unusable.
     Framing(FrameError),
     /// The response could not be decoded.
@@ -313,6 +406,11 @@ impl std::fmt::Display for ClientError {
         match self {
             Self::Io(error) => write!(f, "{error}"),
             Self::ConnectionClosed => f.write_str("the server closed the connection"),
+            Self::TimedOut { waited, unmatched } => write!(
+                f,
+                "no answer within {waited:?}; {unmatched} answers to other requests arrived \
+                 while waiting"
+            ),
             Self::Framing(error) => write!(f, "{error}"),
             Self::Decode(error) => write!(f, "{error}"),
             Self::Encode(error) => write!(f, "{error}"),

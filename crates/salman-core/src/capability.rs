@@ -399,6 +399,40 @@ pub static REGISTRY: &[Capability] = &[
                not read.",
     },
     Capability {
+        id: "io.capture.reassembly",
+        area: "Protocols",
+        title: "TCP reassembly, so a decoder sees a byte stream rather than packets",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-capture/tests/reassemble.rs",
+                test: "a_stream_that_crosses_the_wrap_stays_contiguous",
+            },
+            Evidence {
+                file: "crates/salman-capture/tests/reassemble.rs",
+                test: "reordering_the_segments_does_not_change_the_stream",
+            },
+            Evidence {
+                file: "crates/salman-capture/tests/reassemble.rs",
+                test: "a_mirror_port_delivering_everything_twice_does_not_double_the_stream",
+            },
+            Evidence {
+                file: "crates/salman-capture/tests/end_to_end.rs",
+                test: "a_capture_file_becomes_modbus_transactions",
+            },
+        ],
+        note: "Each direction is its own stream. Sequence numbers are compared modularly, \
+               because they wrap and a busy connection passes 2^32 in minutes. A capture \
+               that starts mid-conversation adopts a base and says so, rather than letting \
+               anything read 'salman did not see the beginning' as 'nothing came before'. \
+               Duplicates from a mirror port are recognised, and a hole that never fills is \
+               given up on with a named gap instead of holding everything behind it for \
+               ever. Where a retransmission overlaps delivered bytes, the delivered bytes \
+               win — a choice, not a fact, and written down in docs/CONFORMANCE.md because \
+               operating systems differ and the difference is what evasion exploits.",
+    },
+    Capability {
         id: "io.located-variables",
         area: "Runtime",
         title: "AT %IX0.0 binds a variable to the process image, with no copy",
@@ -625,10 +659,13 @@ pub static REGISTRY: &[Capability] = &[
             },
         ],
         note: "Eight function codes: read and write, bits and words. The rest decode by \
-               number and are reported as not implemented rather than guessed at. Nothing \
-               here opens a socket or reads a file — no transport, no client and no server \
-               exists yet. Addresses are the PDU addresses on the wire; salman applies no \
-               4xxxx offset anywhere, see docs/adr/ADR-0012-modbus-addressing.md.",
+               number and are reported as not implemented rather than guessed at. Nothing in \
+               **this crate** opens a socket or reads a file; the transport lives in \
+               salman-modbus-net, which has its own entry. Encoding refuses a request whose \
+               quantity the function does not permit, so salman never writes a frame it \
+               would itself refuse to read. Addresses are the PDU addresses on the wire; \
+               salman applies no 4xxxx offset anywhere, see \
+               docs/adr/ADR-0012-modbus-addressing.md.",
     },
     Capability {
         id: "lang.project.multi-file",
