@@ -751,9 +751,11 @@ of the implementation.
   of scalars, which is a distinction the messages do not draw.
 - **`VAR_ACCESS` and `VAR_CONFIG` semantics.** The sections parse; nothing acts on them. A
   `VAR_CONFIG` instance path is refused by name.
-- **A formatter, a language server, a project file, a GUI, any protocol, any network model,
-  any plant model, any importer, any AI layer.** None of these has any code in this
-  repository. See `docs/ROADMAP.md` for when each is intended. The declarative test harness,
+- **A formatter, a language server, a project file, a GUI, a network model, a plant model,
+  any importer, any AI layer, and every protocol except Modbus.** None of these has any code
+  in this repository. Modbus does: `crates/salman-modbus` decodes and encodes it, and
+  `crates/salman-modbus-net` has a client and a simulator. Nothing yet maps a device's
+  registers onto the process image, and nothing reads a capture file. See `docs/ROADMAP.md` for when each is intended. The declarative test harness,
   which an earlier version of this list said did not exist, does: it is `salman-test`, it is
   driven by `salman test`, and the worked example depends on it.
 

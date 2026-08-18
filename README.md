@@ -85,11 +85,15 @@ and equipment the user owns or is authorised to work on.
 - Follow IEC 62443 concepts in the architecture and say which parts of it the
   tool addresses and which it does not.
 
-At 0.0.1 there is no code path in this repository that opens a socket, writes to
-a device, or changes a controller mode. The posture model
-(`crates/salman-core/src/posture.rs`) exists before it is needed, so that the
-first write path cannot be written without going through it. Firmware
-operations, credential guessing and denial of service are refused there at every
+The posture model (`crates/salman-core/src/posture.rs`) was written before
+anything could reach a network, so that the first write path could not be
+written without going through it. That path now exists — a Modbus TCP client —
+and it does: `Client::write` requires the ARMED posture and takes a
+`UserConfirmation` **by value**, so one confirmation authorises exactly one
+write and cannot be kept. That type has no public constructor and can only come
+from asking a person, so an automated caller cannot manufacture consent. Reads
+need no permission, which is what read-only by default means. Firmware
+operations, credential guessing and denial of service are refused at every
 posture, in code, and are not configuration options. See
 [`SECURITY.md`](SECURITY.md) and
 [`docs/adr/ADR-0002-read-only-by-default.md`](docs/adr/ADR-0002-read-only-by-default.md).
@@ -164,14 +168,16 @@ table is [`docs/STATUS.md`](docs/STATUS.md); `salman status` prints it.
 compiler and a deterministic scan runtime. All ten IEC standard function blocks.
 Cyclic, event and freewheeling tasks with a correct process image, and `AT %`
 variables bound to it with no copy. Several source files build as one program.
+Modbus TCP and RTU framing, a client, and a simulator to point it at — with
+every write gated by the posture model.
 Declarative unit tests and golden-trace tests, with JUnit XML output and a real
 exit code. Two dialect profiles.
 
 **Not written:** every graphical language, Instruction List, the Edition 3
 object-oriented extensions, references, most of the standard function library,
 the project file, any mapping from a device's registers onto the process image,
-every protocol, every importer, the network model, the desktop application and
-the AI layer. Meeting one of these in source produces a message naming what is
+every protocol except Modbus, capture and decode of recorded traffic, every
+importer, the network model, the desktop application and the AI layer. Meeting one of these in source produces a message naming what is
 missing, not a confusing failure.
 
 ---

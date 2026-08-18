@@ -1,0 +1,15 @@
+[package]
+name = "salman-modbus-net"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Modbus TCP client and simulator over blocking sockets, gated by salman's posture model"
+
+[dependencies]
+salman-core.workspace = true
+salman-modbus.workspace = true
+
+[lints]
+workspace = true

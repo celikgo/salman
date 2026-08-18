@@ -226,8 +226,13 @@ pub static REGISTRY: &[Capability] = &[
                 test: "armed_still_requires_per_call_confirmation_for_live_writes",
             },
         ],
-        note: "No code path in salman writes to a device yet, so nothing calls this. \
-               It exists first so that the first write path cannot avoid it.",
+        note: "The first caller exists. salman_modbus_net::Client::write takes a \
+               UserConfirmation **by value**, so one confirmation authorises one write and \
+               cannot be kept and reused; that type has no public constructor and can only \
+               come from asking a person, so an agent cannot manufacture consent. The \
+               posture is checked at the write as well as by whatever called in, because a \
+               check a caller can forget is not a boundary. Running a simulator needs \
+               SIMULATE: salman refuses to start one while observing.",
     },
     Capability {
         id: "core.source-map",
@@ -350,6 +355,38 @@ pub static REGISTRY: &[Capability] = &[
                declared width must match the address size, and a program may not write its own \
                inputs. Nothing yet maps a device's registers onto the image; that is the \
                Modbus layer.",
+    },
+    Capability {
+        id: "io.modbus.client-and-simulator",
+        area: "Protocols",
+        title: "A Modbus TCP client and a simulator, over real sockets, with writes gated",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-modbus-net/tests/loopback.rs",
+                test: "a_write_is_refused_at_every_posture_below_armed",
+            },
+            Evidence {
+                file: "crates/salman-modbus-net/tests/loopback.rs",
+                test: "an_arming_grant_that_has_expired_does_not_authorise_a_write",
+            },
+            Evidence {
+                file: "crates/salman-modbus-net/tests/loopback.rs",
+                test: "a_stale_response_is_counted_and_skipped_rather_than_returned",
+            },
+            Evidence {
+                file: "crates/salman-modbus-net/tests/loopback.rs",
+                test: "a_response_split_across_two_segments_is_reassembled",
+            },
+        ],
+        note: "Real TCP on loopback, not a mock. Blocking sockets and a thread per \
+               connection; salman has no async runtime and no dependency on one, see \
+               docs/adr/ADR-0013-no-async-runtime-yet.md. A read needs no permission. A \
+               write to a real device needs the ARMED posture and a UserConfirmation taken \
+               by value, so it authorises exactly one call. A response whose transaction \
+               identifier matches nothing outstanding is counted and skipped rather than \
+               returned as the answer to the question being asked.",
     },
     Capability {
         id: "io.modbus.decoder-fuzzing",

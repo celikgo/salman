@@ -334,6 +334,26 @@ impl Request {
         }
     }
 
+    /// Whether answering this request changes the device.
+    ///
+    /// The distinction that decides whether salman may issue it at all: a read
+    /// is permitted at every posture, and a write to a real device needs an
+    /// armed posture and a human's confirmation of that specific call. See
+    /// `salman_core::posture`.
+    #[must_use]
+    pub const fn is_write(&self) -> bool {
+        match self {
+            Self::ReadCoils { .. }
+            | Self::ReadDiscreteInputs { .. }
+            | Self::ReadHoldingRegisters { .. }
+            | Self::ReadInputRegisters { .. } => false,
+            Self::WriteSingleCoil { .. }
+            | Self::WriteSingleRegister { .. }
+            | Self::WriteMultipleCoils { .. }
+            | Self::WriteMultipleRegisters { .. } => true,
+        }
+    }
+
     /// Writes the request as a PDU.
     #[must_use]
     pub fn encode(&self) -> Pdu {

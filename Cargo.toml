@@ -14,6 +14,7 @@ members = [
     "crates/salman-lang",
     "crates/salman-vm",
     "crates/salman-modbus",
+    "crates/salman-modbus-net",
     "crates/salman-test",
     "crates/salman-cli",
 ]
@@ -33,6 +34,7 @@ salman-core = { path = "crates/salman-core", version = "0.0.1" }
 salman-lang = { path = "crates/salman-lang", version = "0.0.1" }
 salman-vm = { path = "crates/salman-vm", version = "0.0.1" }
 salman-modbus = { path = "crates/salman-modbus", version = "0.0.1" }
+salman-modbus-net = { path = "crates/salman-modbus-net", version = "0.0.1" }
 salman-test = { path = "crates/salman-test", version = "0.0.1" }
 
 [workspace.lints.rust]

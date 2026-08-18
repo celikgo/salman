@@ -184,6 +184,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "salman-modbus-net"
+version = "0.0.1"
+dependencies = [
+ "salman-core",
+ "salman-modbus",
+]
+
+[[package]]
 name = "salman-test"
 version = "0.0.1"
 dependencies = [

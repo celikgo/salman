@@ -8,8 +8,8 @@ front end and the runtime actually do. Where those two disagree with this page, 
 right.
 
 Everything below the v0.2 section is written in the future tense on purpose. None of it
-exists. There is no GUI, no protocol support, no AI layer, no importer, no network model, no
-plant model and no fieldbus in this repository at 0.0.1. The `salman` binary has five
+exists. There is no GUI, no AI layer, no importer, no network model, no plant model and no
+fieldbus other than Modbus in this repository at 0.0.1. The `salman` binary has five
 subcommands — `version`, `status`, `check`, `run` and `test` — and nothing beyond them. Two
 v0.2 items are done and are marked so below; the rest of v0.2 is future tense as well.
 
@@ -113,8 +113,10 @@ The first version that leaves the process. Two items are done; the rest is futur
 - `[x]` **Several source files as one program.** `salman check` and `salman run` take a list
   of files; a `PROGRAM` in one may call a `FUNCTION_BLOCK` in another. `salman test` still
   takes one, which is a limit the project file removes.
-- A **Modbus client** and a **Modbus simulator**, so that a test can drive both ends without
-  any hardware.
+- `[x]` **A Modbus client and a Modbus simulator**, so that a test can drive both ends
+  without any hardware. The wire format, both framings, the server's data model, the client
+  and the simulator are all in the tree, and every write goes through the posture model.
+  Nothing reads or writes a serial port yet.
 - **I/O mapping**: binding a device's registers to `%I` and `%Q` in the process image, with
   the mapping declared in the project file rather than in code.
 - **Capture, decode and timeline**: recording traffic, decoding it, and putting it on the
