@@ -218,13 +218,45 @@ fn a_framer_that_lost_the_stream_stays_lost() {
     let mut framer = Framer::new();
     let mut broken = READ_COILS;
     broken[3] = 0x10;
-    let (_, outcome) = framer.advance(&broken);
-    assert!(outcome.is_err());
+    let (_, first) = framer.advance(&broken);
+    let error = first.unwrap_err();
     assert!(framer.is_poisoned());
 
-    let (used, outcome) = framer.advance(&READ_COILS);
-    assert_eq!(used, 0, "a poisoned framer consumes nothing");
-    assert_eq!(outcome.unwrap(), None);
+    // And it keeps saying so. Reporting a fault once and then going quiet is
+    // worse than not reporting it: a caller that reads until it has a frame
+    // would read for ever against a peer that keeps sending, with the read
+    // timeout never firing because bytes keep arriving. That was a real
+    // livelock in the client, found by review.
+    for _ in 0..3 {
+        let (used, outcome) = framer.advance(&READ_COILS);
+        assert_eq!(used, 0, "a poisoned framer consumes nothing");
+        assert_eq!(
+            outcome.unwrap_err(),
+            error,
+            "a poisoned framer must keep reporting the error that lost the stream"
+        );
+    }
+}
+
+#[test]
+fn a_poisoned_framer_cannot_be_read_past_by_a_peer_that_keeps_sending() {
+    // The livelock, as a property. However many bytes arrive after framing is
+    // lost, the framer consumes none of them and reports the fault every time,
+    // so a caller's loop terminates on the error rather than spinning.
+    let mut framer = Framer::new();
+    let mut broken = READ_COILS;
+    broken[3] = 0x10;
+    let (_, outcome) = framer.advance(&broken);
+    assert!(outcome.is_err());
+
+    let filler = vec![0_u8; 4096];
+    let mut consumed_after = 0;
+    for _ in 0..100 {
+        let (used, outcome) = framer.advance(&filler);
+        consumed_after += used;
+        assert!(outcome.is_err(), "the framer went quiet");
+    }
+    assert_eq!(consumed_after, 0);
 }
 
 #[test]

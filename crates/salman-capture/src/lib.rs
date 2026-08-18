@@ -34,6 +34,7 @@
 //! §4 are correct and are what this module implements, checked against real
 //! files and against libpcap's own `sf-pcap.c`.
 
+pub mod frame;
 pub mod pcap;
 
 pub use pcap::{CaptureError, LinkType, Reader, Record, Resolution, TimestampScale, Writer};

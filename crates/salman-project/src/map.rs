@@ -26,6 +26,9 @@ use core::fmt;
 
 use salman_lang::address::{AddressLocation, AddressSize, DirectAddress};
 use salman_modbus::device::Table;
+use salman_modbus::limits::{
+    MAX_READ_BITS, MAX_READ_REGISTERS, MAX_WRITE_BITS, MAX_WRITE_REGISTERS,
+};
 
 /// Which way data moves, and therefore what salman does each scan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -140,6 +143,26 @@ impl Mapping {
 
         if self.count == 0 {
             return Err(MappingError::Empty);
+        }
+
+        // One mapping becomes one Modbus request, and a request has a limit.
+        // A mapping of 200 registers is a perfectly reasonable thing to want
+        // and is two requests, not one; salman does not split it, so it says
+        // so here rather than building a frame it would itself refuse on the
+        // first scan against real equipment.
+        let max = match (Flow::of(self.table), direction) {
+            (Flow::Bit, Direction::Input) => MAX_READ_BITS,
+            (Flow::Bit, Direction::Output) => MAX_WRITE_BITS,
+            (Flow::Word, Direction::Input) => MAX_READ_REGISTERS,
+            (Flow::Word, Direction::Output) => MAX_WRITE_REGISTERS,
+        };
+        if self.count > max {
+            return Err(MappingError::MoreThanOneRequest {
+                table: self.table,
+                direction,
+                count: self.count,
+                max,
+            });
         }
 
         // The widths have to agree, or a run of bits would appear as words.
@@ -330,6 +353,17 @@ pub enum MappingError {
         /// The address as written.
         image: String,
     },
+    /// The mapping is larger than one Modbus request may carry.
+    MoreThanOneRequest {
+        /// Which table.
+        table: Table,
+        /// Which way the data moves, since the limits differ.
+        direction: Direction,
+        /// How many items the mapping asks for.
+        count: u16,
+        /// How many one request carries.
+        max: u16,
+    },
     /// A bit address named a bit above seven.
     BitNumberOutOfRange {
         /// The address as written.
@@ -400,6 +434,18 @@ impl fmt::Display for MappingError {
                 f,
                 "{count} items at {image} need bit {needs_bit} of the process image, \
                  and it holds {image_bits}"
+            ),
+            Self::MoreThanOneRequest {
+                table,
+                direction,
+                count,
+                max,
+            } => write!(
+                f,
+                "{count} {} {direction} is more than the {max} one Modbus request carries. \
+                 salman does not split a mapping across requests: write it as several \
+                 mappings",
+                table.name()
             ),
             Self::BitNumberOutOfRange { image, bit } => write!(
                 f,

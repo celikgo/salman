@@ -332,6 +332,40 @@ pub static REGISTRY: &[Capability] = &[
                is a compile error, not a CI job.",
     },
     Capability {
+        id: "io.capture.decode",
+        area: "Protocols",
+        title: "Decoding a captured frame down to a TCP payload",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-capture/tests/frame.rs",
+                test: "ethernet_padding_on_a_short_frame_is_not_payload",
+            },
+            Evidence {
+                file: "crates/salman-capture/tests/frame.rs",
+                test: "ip_options_move_the_tcp_header_and_are_not_read_as_one",
+            },
+            Evidence {
+                file: "crates/salman-capture/tests/frame.rs",
+                test: "stacked_vlan_tags_are_stepped_past",
+            },
+            Evidence {
+                file: "crates/salman-capture/tests/frame.rs",
+                test: "a_payload_is_never_longer_than_the_frame_it_came_from",
+            },
+        ],
+        note: "Ethernet with stacked VLAN tags, Linux cooked captures in both versions, raw \
+               IP and BSD loopback; IPv4 and IPv6; TCP. The payload is bounded by the IP \
+               header's length field and never by the frame's, because a bare acknowledgement \
+               arrives padded to the Ethernet minimum and those padding bytes read as a \
+               Modbus header of all zeros — a phantom frame on every acknowledgement in a \
+               capture where nothing is wrong. A frame that is not TCP over IP is named \
+               rather than reported as broken. IPv6 extension chains and UDP are not decoded \
+               and say so. Verified against a real HTTP capture, agreeing with tcpdump on \
+               every frame.",
+    },
+    Capability {
         id: "io.capture.pcap",
         area: "Protocols",
         title: "Reading and writing classic pcap captures",
@@ -559,7 +593,10 @@ pub static REGISTRY: &[Capability] = &[
         note: "TCP: frames are reassembled from a byte stream, and what comes out does not \
                depend on where the segments were cut. A bad length or a non-zero protocol \
                id is fatal to the connection, because a Modbus TCP stream carries no sync \
-               word and resynchronising would mean guessing. RTU: an ADU with its CRC, and \
+               word and resynchronising would mean guessing — and a framer that has lost \
+               the stream keeps saying so rather than falling silent, which is what stopped \
+               a chatty peer holding a client in a read loop for ever. RTU: an ADU with its \
+               CRC, and \
                the timing rules that delimit one — but a byte stream alone cannot be framed \
                as RTU, and salman says so rather than pretending otherwise.",
     },

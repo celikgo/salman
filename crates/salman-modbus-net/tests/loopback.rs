@@ -620,3 +620,61 @@ fn a_multiple_write_crosses_the_socket_whole() {
     };
     assert_eq!(words.values(), [1, 2, 3, 4, 5]);
 }
+
+#[test]
+fn a_peer_that_breaks_framing_and_keeps_talking_does_not_hold_the_client_for_ever() {
+    // Found by review, and the worst kind of fault: no crash, no error, no
+    // timeout. The framer reported the broken protocol identifier once and
+    // then said "need more bytes" for ever, so the client read and discarded
+    // as fast as the peer could send. The read timeout never fired, because
+    // bytes kept arriving.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let server_stop = std::sync::Arc::clone(&stop);
+
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut scratch = [0_u8; 512];
+        let _ = socket.read(&mut scratch);
+        // An answer whose protocol identifier is not Modbus, which loses
+        // framing for good.
+        socket
+            .write_all(&[
+                0x00, 0x01, 0x00, 0x01, 0x00, 0x04, 0x01, 0x03, 0x02, 0x00, 0x07,
+            ])
+            .unwrap();
+        let _ = socket.flush();
+        // Then keep talking, as any chatty peer would.
+        let filler = [0_u8; 1024];
+        while !server_stop.load(std::sync::atomic::Ordering::Relaxed) {
+            if socket.write_all(&filler).is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut client = Client::connect(address, Duration::from_secs(5)).unwrap();
+    let started = std::time::Instant::now();
+    let error = client
+        .read_from(
+            1,
+            &Request::ReadHoldingRegisters {
+                start: 0,
+                quantity: 1,
+            },
+        )
+        .expect_err("a stream that cannot be framed is not a response");
+    let took = started.elapsed();
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+
+    assert!(
+        matches!(error, ClientError::Framing(_)),
+        "expected a framing error, got {error}"
+    );
+    assert!(
+        took < Duration::from_millis(500),
+        "the client took {took:?} to give up, which means it was spinning"
+    );
+    let _ = server.join();
+}

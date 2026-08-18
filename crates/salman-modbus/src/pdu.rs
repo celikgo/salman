@@ -413,13 +413,24 @@ impl Request {
     }
 
     /// Whether this request fits the limits its function gives.
+    ///
+    /// Every function, not only the ones whose payload could outgrow a frame.
+    /// A `ReadCoils` asking for zero coils encodes to five bytes and is
+    /// perfectly shaped, and salman's own decoder refuses it — so writing one
+    /// would mean salman putting a frame on the wire that it would not accept
+    /// back. The two sets of limits have to be the same set.
     fn check_encodable(&self) -> Result<(), EncodeError> {
         let (quantity, max) = match self {
+            Self::ReadCoils { quantity, .. } | Self::ReadDiscreteInputs { quantity, .. } => {
+                (*quantity, MAX_READ_BITS)
+            }
+            Self::ReadHoldingRegisters { quantity, .. }
+            | Self::ReadInputRegisters { quantity, .. } => (*quantity, MAX_READ_REGISTERS),
             Self::WriteMultipleCoils { values, .. } => (values.count(), MAX_WRITE_BITS),
             Self::WriteMultipleRegisters { values, .. } => (values.count(), MAX_WRITE_REGISTERS),
-            // Every other function's payload is one item or a pair of 16-bit
-            // fields, neither of which can outgrow a frame.
-            _ => return Ok(()),
+            // A single write carries one item and a pair of 16-bit fields,
+            // which no quantity governs.
+            Self::WriteSingleCoil { .. } | Self::WriteSingleRegister { .. } => return Ok(()),
         };
         if quantity < 1 || quantity > max {
             return Err(EncodeError::QuantityOutOfRange {

@@ -212,9 +212,14 @@ impl core::error::Error for FrameError {}
 pub struct Framer {
     buffer: [u8; MAX_TCP_ADU],
     len: usize,
-    /// Set once a fatal error is reported, so a caller that ignores the error
-    /// cannot go on receiving frames from a stream salman has lost track of.
-    poisoned: bool,
+    /// The error that lost the stream, kept so it can be given again.
+    ///
+    /// Reporting a fault once and then going quiet is worse than not
+    /// reporting it: a caller that reads until it has a frame would read for
+    /// ever against a peer that keeps sending, with the read timeout never
+    /// firing because bytes keep arriving. So a poisoned framer answers with
+    /// the same error every time it is asked.
+    poisoned: Option<FrameError>,
 }
 
 impl Default for Framer {
@@ -233,7 +238,7 @@ impl Framer {
         Self {
             buffer: [0; MAX_TCP_ADU],
             len: 0,
-            poisoned: false,
+            poisoned: None,
         }
     }
 
@@ -246,7 +251,7 @@ impl Framer {
     /// Whether framing has been lost and the connection must be closed.
     #[must_use]
     pub const fn is_poisoned(&self) -> bool {
-        self.poisoned
+        self.poisoned.is_some()
     }
 
     /// Takes bytes from the stream until one ADU is complete.
@@ -280,8 +285,12 @@ impl Framer {
     /// Returns [`FrameError`] when the stream cannot be framed. Every variant
     /// is fatal to the connection; see [`FrameError::is_fatal`].
     pub fn advance(&mut self, input: &[u8]) -> (usize, Result<Option<TcpAdu>, FrameError>) {
-        if self.poisoned {
-            return (0, Ok(None));
+        // Once the stream is lost it stays lost, and salman keeps saying so
+        // rather than falling silent. A framer that answered "need more bytes"
+        // for ever would turn a caller's read loop into a spin against any
+        // peer that keeps sending — no error, no timeout, no progress.
+        if let Some(error) = self.poisoned {
+            return (0, Err(error));
         }
         let mut consumed = 0;
 
@@ -295,23 +304,19 @@ impl Framer {
         // sized by them.
         let protocol = u16::from_be_bytes([self.byte(2), self.byte(3)]);
         if protocol != 0 {
-            self.poisoned = true;
-            return (
-                consumed,
-                Err(FrameError::ProtocolNotModbus { found: protocol }),
-            );
+            let error = FrameError::ProtocolNotModbus { found: protocol };
+            self.poisoned = Some(error);
+            return (consumed, Err(error));
         }
         let length = u16::from_be_bytes([self.byte(4), self.byte(5)]);
         if !(MIN_MBAP_LENGTH..=MAX_MBAP_LENGTH).contains(&length) {
-            self.poisoned = true;
-            return (
-                consumed,
-                Err(FrameError::LengthOutOfRange {
-                    found: length,
-                    min: MIN_MBAP_LENGTH,
-                    max: MAX_MBAP_LENGTH,
-                }),
-            );
+            let error = FrameError::LengthOutOfRange {
+                found: length,
+                min: MIN_MBAP_LENGTH,
+                max: MAX_MBAP_LENGTH,
+            };
+            self.poisoned = Some(error);
+            return (consumed, Err(error));
         }
 
         // Step 4: the whole frame is six bytes plus what the length claims.
@@ -342,15 +347,13 @@ impl Framer {
             // `length >= MIN_MBAP_LENGTH` guarantees at least one PDU byte, so
             // this cannot be reached. Reporting it as a length fault beats a
             // panic in a decoder that faces the network.
-            self.poisoned = true;
-            return (
-                consumed,
-                Err(FrameError::LengthOutOfRange {
-                    found: length,
-                    min: MIN_MBAP_LENGTH,
-                    max: MAX_MBAP_LENGTH,
-                }),
-            );
+            let error = FrameError::LengthOutOfRange {
+                found: length,
+                min: MIN_MBAP_LENGTH,
+                max: MAX_MBAP_LENGTH,
+            };
+            self.poisoned = Some(error);
+            return (consumed, Err(error));
         };
         (consumed, Ok(Some(TcpAdu { header, pdu })))
     }

@@ -547,3 +547,45 @@ fn a_flat_bit_mapping_agrees_with_the_process_image_about_where_it_lands() {
         );
     }
 }
+
+#[test]
+fn a_mapping_larger_than_one_modbus_request_is_refused_when_the_file_is_read() {
+    // Found by review. A mapping of 200 registers is a reasonable thing to
+    // want and is two requests, not one. salman does not split it, so the
+    // alternative to refusing here was building a request that salman's own
+    // encoder refuses — discovered on the first scan against real equipment.
+    let found = problems(&with_map(&[
+        "{ table: input-registers, from: 0, count: 200, to: \"%IW0\" }",
+    ]));
+    assert!(
+        found
+            .iter()
+            .any(|p| p.contains("more than the 125") && p.contains("several mappings")),
+        "{found:?}"
+    );
+
+    // 125 is the limit for a read and still works.
+    parse(&with_map(&[
+        "{ table: input-registers, from: 0, count: 125, to: \"%IW0\" }",
+    ]))
+    .expect("125 registers is one request");
+}
+
+#[test]
+fn the_limit_depends_on_which_way_the_data_moves() {
+    // 125 registers may be read and 123 written, so the same count is legal in
+    // one direction and not the other. A single limit would have been wrong
+    // for one of them.
+    parse(&with_map(&[
+        "{ table: input-registers, from: 0, count: 125, to: \"%IW0\" }",
+    ]))
+    .expect("125 is a legal read");
+
+    let found = problems(&with_map(&[
+        "{ table: holding-registers, from: 0, count: 125, to: \"%QW0\" }",
+    ]));
+    assert!(
+        found.iter().any(|p| p.contains("more than the 123")),
+        "a write of 125 registers should be refused: {found:?}"
+    );
+}

@@ -619,3 +619,74 @@ fn everything_the_encoder_produces_the_decoder_accepts() {
             .unwrap_or_else(|e| panic!("salman wrote {encoded:?} and refused to read it: {e}"));
     }
 }
+
+#[test]
+fn a_read_of_a_quantity_the_standard_forbids_is_also_refused_by_the_encoder() {
+    // Found by review. A `ReadCoils` asking for zero encodes to five perfectly
+    // shaped bytes, and salman's own decoder refuses it — so salman could put
+    // a frame on the wire that it would not accept back. Nothing truncates
+    // here; the frame is simply one no device should be sent.
+    for (request, max) in [
+        (
+            Request::ReadCoils {
+                start: 0,
+                quantity: 0,
+            },
+            MAX_READ_BITS,
+        ),
+        (
+            Request::ReadCoils {
+                start: 0,
+                quantity: MAX_READ_BITS + 1,
+            },
+            MAX_READ_BITS,
+        ),
+        (
+            Request::ReadHoldingRegisters {
+                start: 0,
+                quantity: 0,
+            },
+            MAX_READ_REGISTERS,
+        ),
+        (
+            Request::ReadInputRegisters {
+                start: 0,
+                quantity: MAX_READ_REGISTERS + 1,
+            },
+            MAX_READ_REGISTERS,
+        ),
+    ] {
+        assert!(
+            matches!(
+                request.encode().unwrap_err(),
+                EncodeError::QuantityOutOfRange { max: m, .. } if m == max
+            ),
+            "{request:?} was encodable"
+        );
+    }
+}
+
+#[test]
+fn what_the_encoder_writes_the_decoder_reads_for_every_quantity() {
+    // The property stated over a range rather than over a handful of fixtures:
+    // the encoder's limits and the decoder's must be the same set, in both
+    // directions. Where one accepts, the other must; where one refuses, the
+    // other must.
+    for quantity in [
+        0_u16, 1, 2, 124, 125, 126, 1967, 1968, 1969, 1999, 2000, 2001, 65535,
+    ] {
+        for request in [
+            Request::ReadCoils { start: 7, quantity },
+            Request::ReadHoldingRegisters { start: 7, quantity },
+        ] {
+            // A refusal has nothing on the wire to check: the refusal is the
+            // point. Only what was written has to survive being read back.
+            if let Ok(pdu) = request.encode() {
+                assert!(!pdu.overflowed());
+                Request::decode(pdu.as_bytes()).unwrap_or_else(|e| {
+                    panic!("salman wrote {request:?} and refused to read it: {e}")
+                });
+            }
+        }
+    }
+}
