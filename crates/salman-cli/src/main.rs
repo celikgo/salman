@@ -115,14 +115,23 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<u8, String> {
     match cli.command {
         Command::Version => {
+            // One line, and nothing else. `salman version` is parsed by
+            // scripts and by the version-consistency CI job, and a second line
+            // of friendly context makes it a worse interface for both. The
+            // posture belongs where it is acted on: `salman status` and
+            // `salman run` both report it.
             println!("salman {}", salman_core::VERSION);
-            println!("posture: {} (read-only)", Posture::default());
             Ok(0)
         }
         Command::Status { markdown } => {
             if markdown {
+                // The generated document, byte for byte, so that
+                // `salman status --markdown > docs/STATUS.md` and the test that
+                // compares the two cannot disagree.
                 print!("{}", capability::render_markdown());
             } else {
+                println!("posture: {} (read-only)", Posture::default());
+                println!();
                 print!("{}", status_table());
             }
             Ok(0)
