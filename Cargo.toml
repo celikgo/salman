@@ -52,6 +52,10 @@ module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_panics_doc = "allow"
 similar_names = "allow"
+# Domain vocabulary is full of proper nouns (JUnit, PLCopen, TwinCAT, EtherCAT,
+# CANopen) that this lint wants wrapped in backticks in prose. It fights the
+# writing rather than helping it.
+doc_markdown = "allow"
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
 cast_precision_loss = "allow"

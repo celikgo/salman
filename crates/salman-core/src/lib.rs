@@ -13,6 +13,22 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod capability;
+pub mod clause;
+pub mod diag;
+pub mod ident;
+pub mod posture;
+pub mod span;
+pub mod time;
+pub mod value;
 pub mod version;
 
+pub use capability::{Capability, Status};
+pub use clause::ClauseRef;
+pub use diag::{DiagCode, Diagnostic, Diagnostics, Severity};
+pub use ident::{Ident, IdentKey};
+pub use posture::{Effect, Permit, Posture, PostureState};
+pub use span::{FileId, SourceMap, Span};
+pub use time::{Date, DateTime, Duration, TimeOfDay};
+pub use value::{ElementaryType, GenericType, Value};
 pub use version::VERSION;
