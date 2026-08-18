@@ -22,14 +22,28 @@
 //! namespaces and the graphical languages all produce a message naming what is
 //! missing rather than a confusing downstream failure.
 
+use std::collections::{BTreeMap, BTreeSet};
+
+use salman_core::clause;
+use salman_core::diag::{DiagCode, Diagnostic, Diagnostics, Edit};
 use salman_core::ident::IdentKey;
 use salman_core::span::Span;
-use salman_core::value::Value;
+use salman_core::value::{ElementaryType, GenericType, Value};
 
-use crate::address::DirectAddress;
-use crate::ast::{Name, PouKind, VarQualifiers, VarSection};
-use crate::stdlib::NativeBlock;
-use crate::types::{TypeArena, TypeId};
+use crate::address::{AddressSize, DirectAddress};
+use crate::ast::{
+    Arg, ArrayDim, BinaryOp, CaseLabel, CompilationUnit, ConfigurationDecl, Expr, ExprKind, Item,
+    Name, NodeId, Pou, PouKind, ProgramInstance, Stmt, StmtKind, TaskDecl, TypeDecl, TypeDeclKind,
+    TypeRef, UnaryOp, VarBlock, VarDecl, VarQualifiers, VarSection,
+};
+use crate::codes;
+use crate::dialect::Dialect;
+use crate::stdlib::{self, FieldRole, NativeBlock};
+use crate::types::{
+    ArrayBounds, BoolWidening, Field, OpResult, TypeArena, TypeData, TypeId, check_binary,
+    check_unary, common_type, default_literal_type, implicit_conversion_allowed, integer_fits,
+    integer_range,
+};
 
 /// One declared variable, after its type has been resolved.
 #[derive(Debug, Clone, PartialEq)]

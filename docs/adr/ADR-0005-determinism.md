@@ -78,14 +78,14 @@ tree now.
 ## Consequences
 
 The honest scope statement, which is the only claim salman makes: bit-identical traces are
-gated for `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`
-on the pinned toolchain, for programs whose floating-point operations stay within the
+gated for x86_64-unknown-linux-gnu, aarch64-apple-darwin and x86_64-pc-windows-msvc on the
+pinned toolchain, for programs whose floating-point operations stay within the
 exactly-specified set, with NaN canonicalised at the value boundary. Nothing is claimed for
 32-bit targets, for parallel evaluation, or across toolchain upgrades.
 
-Cross-OS artefact determinism is currently an **untested premise** — the determinism
-workflow exists to discover whether it holds, and salman must not claim it until that job
-has been green on all three operating systems for a meaningful period. Today
+Cross-OS artefact determinism is currently an untested premise — the determinism workflow
+exists to discover whether it holds, and salman must not claim it until that job has been
+green on all three operating systems for a meaningful period. Today
 `.github/workflows/determinism.yml` runs the test suite on three platforms and then prints
 a warning saying that it compared no trace, because there is no `salman run` and therefore
 no trace to compare. The green tick on that workflow currently means "the tests passed

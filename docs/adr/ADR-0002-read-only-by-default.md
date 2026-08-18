@@ -44,19 +44,17 @@ Specifics:
   `DenialOfService`. `PostureState::permits` matches on that enum exhaustively, so the
   check is total rather than a list of special cases somebody remembered to write.
 - `permits` returns `Permit::Allowed`, `Permit::RequiresConfirmation` or
-  `Permit::Denied(DenialReason)`. Being armed yields `RequiresConfirmation` for live
-  writes, mode changes and discovery — arming is permission to be asked, not permission to
-  act.
+  `Permit::Denied(DenialReason)`. Being armed yields `RequiresConfirmation` for live writes,
+  mode changes and discovery: arming is permission to be asked, not permission to act.
 - Reaching `Armed` requires a `UserConfirmation`. That type has a private field and no
-  public constructor. The only way to obtain one is `ConfirmationRequest::ask`, which
-  takes a `&mut dyn ConfirmationPrompt` — something that can actually put the question in
-  front of a person. An automated caller cannot manufacture consent, because it cannot
-  construct the proof that consent happened. An agent must be given a prompt; it cannot be
-  one.
+  public constructor. The only way to obtain one is `ConfirmationRequest::ask`, which takes
+  a `&mut dyn ConfirmationPrompt` — something that can actually put the question to a
+  person. An automated caller cannot manufacture consent, because it cannot construct the
+  proof that consent happened. An agent must be given a prompt; it cannot be one.
 - Arming expires. `PostureState::arm` takes a `now_ms` and a `ttl_ms` and records an
   `armed_until_ms`; `PostureState::posture(now_ms)` reports `Observe` once that instant
   passes. There is no way to arm indefinitely. Time is passed in rather than read, which
-  keeps the expiry rule testable and keeps `salman-core` free of the wall-clock reads that
+  keeps the expiry rule testable and keeps `salman-core` free of the wall-clock reads
   [ADR-0005](ADR-0005-determinism.md) forbids.
 - `FirmwareOperation`, `CredentialGuessing` and `DenialOfService` are refused at every
   posture by `Effect::is_categorically_refused`. They are refused in code and are not
@@ -106,9 +104,9 @@ an imagined API. Worth revisiting when the protocol layer arrives.
 
 **Documentation and code review.** Write the rule down, review against it. This is the
 default in most projects and it is the reason the rule is worth structuring instead. Review
-catches what a reviewer thinks to look for, and the failure mode here — a write path nobody
-noticed was a write path — is precisely the one review is worst at. This is the class of
-thing that has to be structural, or it is nothing.
+catches what a reviewer thinks to look for, and the failure mode here — a write path
+nobody noticed was a write path — is precisely the one review is worst at. This is the
+class of thing that has to be structural, or it is nothing.
 
 **Refusing to write at all, ever.** Tempting, and it would make this ADR much shorter. It
 was rejected because it does not remove the risk, it relocates it: engineers who need to

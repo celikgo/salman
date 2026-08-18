@@ -18,21 +18,21 @@ great deal of code exists only as plain Structured Text files with no project st
 around them. Each of those formats encodes not only the code but a model of what a project
 is, and those models disagree.
 
-There is exactly one neutral candidate. PLCopen's XML exchange format was developed by
-PLCopen's TC6 working group for exactly this purpose, and in 2019 it was adopted into the
-standard as IEC 61131-10, "Programmable controllers – Part 10: PLC open XML exchange
-format"; see [PLCopen's page on
-it](https://www.plcopen.org/standards/xml-echange/). It is not a perfect model of every
-vendor's project, and no such model exists.
+There is exactly one neutral candidate. PLCopen's XML exchange format was developed by its
+TC6 working group for exactly this purpose, and in 2019 it was adopted into the standard as
+IEC 61131-10:2019 "Programmable controllers - Part 10: PLC open XML exchange format"; see
+[PLCopen's page on it](https://www.plcopen.org/standards/xml-echange/). It is not a perfect
+model of every vendor's project, and no such model exists.
 
 The other force is honesty about fidelity. "Imports Rockwell projects" is a claim that
 means nothing without a statement of what survives the trip. Every tool in this space makes
 that claim; very few publish what is lost.
 
 Note on editions: salman's language work targets IEC 61131-3:2013 (Edition 3.0), which was
-withdrawn on 2025-05-22 and superseded by IEC 61131-3:2025 (Edition 4.0). salman targets
-Edition 3.0 because it is the edition our public sources let us verify. IEC 61131-10 is a
-separate part of the standard and is not affected by that withdrawal.
+[withdrawn on 2025-05-22](https://webstore.iec.ch/en/publication/4552) and superseded by
+IEC 61131-3:2025 (Edition 4.0). salman targets Edition 3.0 because it is the edition our
+public sources let us verify. IEC 61131-10:2019 is a separate part of the standard,
+unaffected by that withdrawal.
 
 ## Decision
 

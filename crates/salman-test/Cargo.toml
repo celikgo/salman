@@ -1,22 +1,18 @@
 [package]
-name = "salman-cli"
+name = "salman-test"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "salman command line interface"
-
-[[bin]]
-name = "salman"
-path = "src/main.rs"
+description = "Unit and golden-trace tests for IEC 61131-3 code"
 
 [dependencies]
 salman-core.workspace = true
 salman-lang.workspace = true
 salman-vm.workspace = true
-salman-test.workspace = true
-clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+serde = { version = "1", features = ["derive"] }
+serde-saphyr = "1"
 
 [lints]
 workspace = true

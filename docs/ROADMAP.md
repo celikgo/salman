@@ -21,8 +21,9 @@ red/green table some readers cannot distinguish is a defect:
 
 ## Where v0.1 stands today
 
-The capability registry currently holds thirteen entries: twelve `[x]` and one `[~]`. Across
-the workspace 436 tests pass (`cargo test --workspace`).
+The capability registry currently holds thirteen entries: twelve `[x]` and one `[~]`. The
+workspace test suite passes; at the time of writing `cargo test --workspace` runs 436 tests.
+Both numbers are a snapshot of a moving tree — the registry, not this page, is the authority.
 
 ### Claimed, and tested
 
@@ -171,9 +172,12 @@ and it has to be resolved before anyone else's contribution is accepted.
 
 ### The name and location of the shared AI provider crate
 
-v0.5 needs one crate that owns provider configuration, and both the workbench and the CLI
-need to use it. What it is called and which crate it lives in are open. It is not created
-early: salman does not carry empty crates that imply a surface exists before it does.
+v0.5 needs one crate that owns the provider abstraction, and it is to be shared rather than
+duplicated — that much is decided in `docs/adr/ADR-0011-shared-ai-provider-crate.md`. What
+it is **called** and **where it lives** are not decided, and that ADR deliberately declines
+to invent either. The crate is not created early: salman does not carry empty crates that
+imply a surface exists before it does, and the capability registry gets no entry for any of
+this until the crate has a name, because a registry entry is a claim about a named thing.
 
 ---
 

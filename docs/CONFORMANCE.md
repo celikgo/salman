@@ -414,8 +414,9 @@ CODESYS and Beckhoff both state that a sign is not permitted. Unresolved.
 
 **What salman does.** `4`. Unary binds tighter, following the row order of
 IEC 61131-3:2013 Table 71 "Operators of the ST language" (Ed 3.0) and the Edition 3.0
-normative annex grammar, in which the operands of `**` are unary expressions. salman **warns** on any unparenthesised unary operand of `**`, so that nobody is
-silently bitten when code moves between tools. A parenthesised operand does not warn.
+normative annex grammar, in which the operands of `**` are unary expressions. salman
+**warns** on any unparenthesised unary operand of `**`, so that nobody is silently bitten
+when code moves between tools. A parenthesised operand does not warn.
 
 **Why a policy.** CODESYS and Beckhoff both publish binding-strength tables in the older
 Edition 2 order, with exponentiation above negation, and both give `-4` for the same text.
@@ -431,9 +432,9 @@ load-bearing: it rests entirely on the inference in the UNVERIFIED list below.
 **Why a policy.** No source salman could read states the associativity of `**` *specifically*.
 IEC 61131-3:2013 Table 71 "Operators of the ST language" (Ed 3.0) fixes its precedence and
 says nothing about grouping, and the corresponding production in the Edition 3.0 normative
-annex grammar is a repetition, conventionally read as left-associative. Three open implementations group to
-the left, so salman does. This is the weakest thing in the expression grammar and code that
-depends on it should use parentheses.
+annex grammar is a repetition, conventionally read as left-associative. Three open
+implementations group to the left, so salman does. This is the weakest thing in the
+expression grammar, and code that depends on it should use parentheses.
 
 ### 7. `FOR` loops — three separate unknowns
 
@@ -640,8 +641,9 @@ governing clause from a public source, and the diagnostic says so.
 ## `SEMA` is not a standard function block
 
 `SEMA` is in neither the Edition 2 bistable table nor IEC 61131-3:2013 Table 43 "Standard
-bistable function blocks" (Ed 3.0), which between them contain every standard bistable. salman ships it anyway, for one reason: existing code uses it, and a
-tool that refuses to read the code people actually have is a tool nobody can adopt.
+bistable function blocks" (Ed 3.0), which between them contain every standard bistable.
+salman ships it anyway, for one reason: existing code uses it, and a tool that refuses to
+read the code people actually have is a tool nobody can adopt.
 
 salman never describes it as standard. `NativeBlock::is_iec_standard` returns false for it
 and only for it, and a test enforces exactly that:

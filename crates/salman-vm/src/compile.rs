@@ -147,6 +147,7 @@ impl Compiler<'_> {
 
     fn run(&mut self) -> Option<Compiled> {
         self.compute_layouts();
+        self.report_located_variables();
         self.allocate_globals();
         self.allocate_functions();
 
@@ -404,6 +405,45 @@ impl Compiler<'_> {
             Persistence::Retain
         } else {
             Persistence::Volatile
+        }
+    }
+
+    /// Reports every `AT %...` located variable as not implemented.
+    ///
+    /// The lexer, parser and checker all understand `AT %IX0.0`; what does not
+    /// exist yet is the IO mapping layer that would make such a variable
+    /// **be** that bit of the process image. Giving it an ordinary slot instead
+    /// would produce a variable that looks located, watches like a variable,
+    /// and never changes when the input does — a quiet lie. salman says so.
+    ///
+    /// A directly represented variable used in an expression, `%IX0.0`, works
+    /// today; it is the `AT` binding that does not.
+    fn report_located_variables(&mut self) {
+        let mut located: Vec<(Span, String)> = Vec::new();
+        for symbol in &self.checked.globals {
+            if let Some(address) = &symbol.address {
+                located.push((symbol.name.span, address.to_string()));
+            }
+        }
+        for pou in &self.checked.pous {
+            for symbol in &pou.symbols {
+                if let Some(address) = &symbol.address {
+                    located.push((symbol.name.span, address.to_string()));
+                }
+            }
+        }
+        for (span, address) in located {
+            self.diags.push(
+                Diagnostic::error(
+                    U_NOT_COMPILED,
+                    format!("salman does not implement `AT {address}` yet"),
+                )
+                .with_primary(span, "the IO mapping layer is not in this version")
+                .with_note(
+                    "a directly represented variable used in an expression, such as                      `%IX0.0 := TRUE;`, does work. It is the AT binding that does not,                      because there is nothing yet to bind it to",
+                )
+                .with_note("see docs/ROADMAP.md; IO mapping arrives with the Modbus layer"),
+            );
         }
     }
 

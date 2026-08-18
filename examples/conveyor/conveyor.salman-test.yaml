@@ -1,0 +1,98 @@
+# Tests for examples/conveyor/conveyor.st
+#
+#   salman test examples/conveyor/conveyor.st examples/conveyor/
+#
+# Values are written as IEC literals and mean here exactly what they mean in
+# source: T#5s is a duration, 16#FF is a byte, TRUE is a BOOL.
+
+- test: "the belt does not run until the start button is pressed"
+  pou: Conveyor
+  steps:
+    - { scans: 1, expect: { Motor: false, Jam_Lamp: false, State: 0 } }
+    - { set: { Start_PB: true }, scans: 1, expect: { Motor: true, State: 1 } }
+
+- test: "the belt runs on for two seconds after the stop button, then stops"
+  pou: Conveyor
+  steps:
+    - { set: { Start_PB: true }, scans: 1, expect: { Motor: true } }
+    - set: { Start_PB: false, Stop_PB: true }
+      scans: 1
+      expect: { Motor: true }
+      note: "the run-on TOF holds the motor while the belt clears"
+    - { advance: "T#1s999ms", expect: { Motor: true } }
+    - { advance: "T#2ms", expect: { Motor: false } }
+
+- test: "the stop button wins when both buttons are pressed"
+  pou: Conveyor
+  steps:
+    - set: { Start_PB: true, Stop_PB: true }
+      scans: 1
+      expect: { Motor: true }
+      note: "RS is reset dominant, so the latch is clear and only the run-on delay holds the motor"
+    - { advance: "T#3s", expect: { Motor: false } }
+
+- test: "each part counts exactly once, on the leading edge of the sensor"
+  pou: Conveyor
+  steps:
+    - { set: { Start_PB: true }, scans: 1, expect: { Parts.CV: 0 } }
+    - { set: { Part_Sensor: true }, scans: 1, expect: { Parts.CV: 1 } }
+    - set: {}
+      scans: 5
+      expect: { Parts.CV: 1 }
+      note: "a sensor held high must not count five more times"
+    - { set: { Part_Sensor: false }, scans: 1 }
+    - { set: { Part_Sensor: true }, scans: 1, expect: { Parts.CV: 2 } }
+
+- test: "the batch completes at ten parts and progress reaches one hundred percent"
+  pou: Conveyor
+  steps:
+    - { set: { Start_PB: true }, scans: 1 }
+    - { set: { Part_Sensor: true }, scans: 1 }
+    - { set: { Part_Sensor: false }, scans: 1 }
+    - { set: { Part_Sensor: true }, scans: 1 }
+    - { set: { Part_Sensor: false }, scans: 1 }
+    - { set: { Part_Sensor: true }, scans: 1 }
+    - { set: { Part_Sensor: false }, scans: 1 }
+    - { set: { Part_Sensor: true }, scans: 1 }
+    - { set: { Part_Sensor: false }, scans: 1 }
+    - { set: { Part_Sensor: true }, scans: 1 }
+    - { set: { Part_Sensor: false }, scans: 1 }
+    - { set: { Part_Sensor: true }, scans: 1 }
+    - { set: { Part_Sensor: false }, scans: 1 }
+    - { set: { Part_Sensor: true }, scans: 1 }
+    - { set: { Part_Sensor: false }, scans: 1 }
+    - { set: { Part_Sensor: true }, scans: 1 }
+    - { set: { Part_Sensor: false }, scans: 1 }
+    - { set: { Part_Sensor: true }, scans: 1 }
+    - { set: { Part_Sensor: false }, scans: 1 }
+    - { set: { Part_Sensor: true }, scans: 1, expect: { Parts.CV: 10, Batch_Done: true } }
+    - { expect: { Progress: 100, State: 3 } }
+
+- test: "a jam is flagged after ten seconds of running with no part"
+  pou: Conveyor
+  steps:
+    - { set: { Start_PB: true }, scans: 1, expect: { Jam_Lamp: false } }
+    - { advance: "T#9s999ms", expect: { Jam_Lamp: false } }
+    - { advance: "T#2ms", expect: { Jam_Lamp: true, State: 2 } }
+
+- test: "a part restarts the jam timer"
+  pou: Conveyor
+  steps:
+    - { set: { Start_PB: true }, scans: 1 }
+    - { advance: "T#9s", expect: { Jam_Lamp: false } }
+    - set: { Part_Sensor: true }
+      scans: 1
+      note: "the edge output drops IN for one scan, which restarts the timer"
+    - { set: { Part_Sensor: false }, advance: "T#9s", expect: { Jam_Lamp: false } }
+    - { advance: "T#2s", expect: { Jam_Lamp: true } }
+
+- test: "the whole sequence produces the recorded trace"
+  pou: Conveyor
+  record: [Motor, Jam_Lamp, Batch_Done, "Parts.CV", Progress, State]
+  golden: conveyor.trace
+  steps:
+    - { set: { Start_PB: true }, scans: 4 }
+    - { set: { Part_Sensor: true }, scans: 3 }
+    - { set: { Part_Sensor: false }, scans: 3 }
+    - { set: { Part_Sensor: true }, scans: 3 }
+    - { set: { Stop_PB: true, Start_PB: false }, scans: 4 }

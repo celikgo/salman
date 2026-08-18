@@ -33,6 +33,7 @@ pub mod clock;
 pub mod compile;
 pub mod exec;
 pub mod memory;
+// pub mod project;  <- enabled as soon as sema::check lands; see project.rs
 pub mod stdfb;
 pub mod task;
 pub mod trace;
