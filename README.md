@@ -162,15 +162,17 @@ table is [`docs/STATUS.md`](docs/STATUS.md); `salman status` prints it.
 
 **Working end to end:** Structured Text — lexer, parser, type checker, bytecode
 compiler and a deterministic scan runtime. All ten IEC standard function blocks.
-Cyclic, event and freewheeling tasks with a correct process image. Declarative
-unit tests and golden-trace tests, with JUnit XML output and a real exit code.
-Two dialect profiles.
+Cyclic, event and freewheeling tasks with a correct process image, and `AT %`
+variables bound to it with no copy. Several source files build as one program.
+Declarative unit tests and golden-trace tests, with JUnit XML output and a real
+exit code. Two dialect profiles.
 
 **Not written:** every graphical language, Instruction List, the Edition 3
 object-oriented extensions, references, most of the standard function library,
-IO mapping for `AT %` located variables, every protocol, every importer, the
-network model, the desktop application and the AI layer. Meeting one of these in
-source produces a message naming what is missing, not a confusing failure.
+the project file, any mapping from a device's registers onto the process image,
+every protocol, every importer, the network model, the desktop application and
+the AI layer. Meeting one of these in source produces a message naming what is
+missing, not a confusing failure.
 
 ---
 

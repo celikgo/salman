@@ -54,9 +54,11 @@ been rewritten against the whole pipeline rather than against the parser.
 That is the good half. Here is the other half, which belongs beside it rather than in a
 footnote:
 
-- **One source file per invocation.** `salman_vm::project::build` compiles one file. There is
-  no project model, no multi-file compilation unit, no import and no namespace. A second file
-  is not merged; it is not read.
+- **No project file, no import, no namespace.** `salman check` and `salman run` build several
+  source files as one program, but the list of files is command-line arguments; there is no
+  manifest. `salman test` still takes one source file. Nothing imports and nothing namespaces:
+  every declaration in a project is visible to every other, and a name declared twice is a
+  duplicate.
 - **Five subcommands**: `version`, `status`, `check`, `run` and `test`. There is no formatter,
   no language server, no debugger, no project file and no graphical interface.
 - **Not one standard *function* is implemented.** No `*_TO_*` conversions, no `ABS`, no
@@ -1067,17 +1069,23 @@ budget is salman's number rather than any standard's, so a program near the limi
 differently here from on hardware. `exec.rs: the_watchdog_stops_a_routine_that_jumps_to_itself`,
 `task.rs: the_scan_watchdog_stops_a_program_that_never_ends`.
 
-### 21. One source file per invocation
+### 21. Several files, one node-id space, and no manifest
 
-**What salman does.** `salman check`, `salman run` and `salman test` each take exactly one
-Structured Text file and compile it alone. There is no project model and no multi-file
-compilation unit.
+**What salman does.** `salman check` and `salman run` take one or more source files and build
+them as one program: a `PROGRAM` in one file may call a `FUNCTION_BLOCK` declared in another,
+and a name declared in two files is reported as a duplicate rather than accepted twice. The
+files are parsed from disjoint node-id ranges and joined before checking. `salman test` takes
+exactly one source file, because it already has two positional paths and a list of sources
+needs the project file that does not exist yet.
 
-**Why a policy.** Node identity is allocated per parse, so merging two parsed units means
-renumbering, and that is work for a project model rather than a quiet approximation now.
-salman says so rather than silently compiling only the first file and leaving a reader to
-wonder where the rest went. Recorded here because "compiles Structured Text" reads as
-"compiles a project" unless it is contradicted.
+**Why a policy.** Every analysis salman runs after parsing hangs its results on a side table
+indexed by node id. Two files parsed independently both start at zero, so joining them without
+care makes two different nodes read and write the same entry — the second file's expressions
+take the first file's inferred types, and the program compiles and is wrong. Handing each file
+a disjoint range at parse time makes the units disjoint by construction, rather than by a
+renumbering pass that is wrong the first time a node is missed. Recorded here because
+"compiles several files" reads as "has a project model", and salman has no manifest, no import
+and no namespace: a project is a list of files on a command line.
 
 ### 22. `SEMA` ships, and salman never calls it standard
 

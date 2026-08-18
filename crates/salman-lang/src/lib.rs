@@ -44,6 +44,6 @@ pub use address::DirectAddress;
 pub use ast::{CompilationUnit, Expr, ExprKind, Item, Pou, Stmt, StmtKind};
 pub use dialect::{Dialect, DialectId};
 pub use lexer::{TokenStream, lex};
-pub use parser::{parse, parse_source};
+pub use parser::{parse, parse_from, parse_source, parse_source_from};
 pub use stdlib::NativeBlock;
 pub use token::{Keyword, LiteralValue, Punct, Token, TokenKind};

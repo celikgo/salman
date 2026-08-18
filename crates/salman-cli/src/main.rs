@@ -56,18 +56,20 @@ enum Command {
         #[arg(long)]
         markdown: bool,
     },
-    /// Parse and type-check a source file.
+    /// Parse and type-check one or more source files as one project.
     Check {
-        /// The Structured Text file.
-        path: PathBuf,
+        /// The Structured Text files. Several are built as one program.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
         /// Which dialect to apply.
         #[arg(long, default_value = "generic")]
         dialect: String,
     },
-    /// Compile and run a source file on the simulation runtime.
+    /// Compile and run one or more source files on the simulation runtime.
     Run {
-        /// The Structured Text file.
-        path: PathBuf,
+        /// The Structured Text files. Several are built as one program.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
         /// How many scans to run.
         #[arg(long)]
         scans: Option<u64>,
@@ -136,16 +138,16 @@ fn run(cli: Cli) -> Result<u8, String> {
             }
             Ok(0)
         }
-        Command::Check { path, dialect } => check(&path, &dialect),
+        Command::Check { paths, dialect } => check(&paths, &dialect),
         Command::Run {
-            path,
+            paths,
             scans,
             until,
             record,
             trace,
             dialect,
         } => run_program(
-            &path,
+            &paths,
             scans,
             until.as_deref(),
             &record,
@@ -179,17 +181,34 @@ fn read(path: &Path) -> Result<String, String> {
 }
 
 fn build(path: &Path, dialect: &str) -> Result<salman_vm::project::Build, String> {
-    let dialect = dialect_for(dialect)?;
-    let text = read(path)?;
-    let name = path.file_name().map_or_else(
-        || path.display().to_string(),
-        |n| n.to_string_lossy().into_owned(),
-    );
-    salman_vm::project::build(&name, &text, &dialect).map_err(|e| e.to_string())
+    build_all(std::slice::from_ref(&path.to_path_buf()), dialect)
 }
 
-fn check(path: &Path, dialect: &str) -> Result<u8, String> {
-    let built = build(path, dialect)?;
+/// Reads every path and builds them as one program.
+///
+/// A name declared in two of them is a duplicate, and a `PROGRAM` in one may
+/// call a `FUNCTION_BLOCK` in another: they are one project, not a sequence of
+/// independent compilations.
+fn build_all(paths: &[PathBuf], dialect: &str) -> Result<salman_vm::project::Build, String> {
+    let dialect = dialect_for(dialect)?;
+    let mut loaded = Vec::with_capacity(paths.len());
+    for path in paths {
+        let text = read(path)?;
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        loaded.push((name, text));
+    }
+    let borrowed: Vec<(&str, &str)> = loaded
+        .iter()
+        .map(|(name, text)| (name.as_str(), text.as_str()))
+        .collect();
+    salman_vm::project::build_all(&borrowed, &dialect).map_err(|e| e.to_string())
+}
+
+fn check(paths: &[PathBuf], dialect: &str) -> Result<u8, String> {
+    let built = build_all(paths, dialect)?;
     let rendered = built.render_diagnostics();
     if !rendered.is_empty() {
         print!("{rendered}");
@@ -199,19 +218,28 @@ fn check(path: &Path, dialect: &str) -> Result<u8, String> {
         println!("{count} error{}", if count == 1 { "" } else { "s" });
         return Ok(EXIT_PROBLEM);
     }
-    println!("{}: no errors", path.display());
+    println!("{}: no errors", describe(paths));
     Ok(0)
 }
 
+/// Names what was built, for a line an engineer reads rather than parses.
+fn describe(paths: &[PathBuf]) -> String {
+    match paths {
+        [] => "<project>".to_string(),
+        [one] => one.display().to_string(),
+        many => format!("{} files", many.len()),
+    }
+}
+
 fn run_program(
-    path: &Path,
+    paths: &[PathBuf],
     scans: Option<u64>,
     until: Option<&str>,
     record: &[String],
     trace_path: Option<&Path>,
     dialect: &str,
 ) -> Result<u8, String> {
-    let built = build(path, dialect)?;
+    let built = build_all(paths, dialect)?;
     let rendered = built.render_diagnostics();
     if !rendered.is_empty() {
         print!("{rendered}");
@@ -299,6 +327,9 @@ fn run_tests(
     update_golden: bool,
     dialect: &str,
 ) -> Result<u8, String> {
+    // One source file. `salman test` takes two positional paths already, so a
+    // list of sources needs the project file rather than a third meaning for
+    // the same argument.
     let built = build(path, dialect)?;
     let rendered = built.render_diagnostics();
     if !rendered.is_empty() {

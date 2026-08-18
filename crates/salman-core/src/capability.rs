@@ -352,6 +352,31 @@ pub static REGISTRY: &[Capability] = &[
                Modbus layer.",
     },
     Capability {
+        id: "lang.project.multi-file",
+        area: "Language",
+        title: "Several source files build as one program",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-lang/src/parser.rs",
+                test: "two_files_parsed_for_one_project_share_no_node_id",
+            },
+            Evidence {
+                file: "crates/salman-cli/tests/project.rs",
+                test: "a_program_can_call_a_function_block_declared_in_another_file",
+            },
+            Evidence {
+                file: "crates/salman-cli/tests/project.rs",
+                test: "a_name_declared_in_two_files_is_reported_as_a_duplicate",
+            },
+        ],
+        note: "Files are parsed from disjoint node-id ranges and joined before checking, so a \
+               name declared twice across two files is a duplicate rather than two valid \
+               declarations. `salman check` and `salman run` take several paths; `salman test` \
+               still takes one, and there is no project file yet.",
+    },
+    Capability {
         id: "lang.st.dialects",
         area: "Language",
         title: "Dialects as configuration, with every diagnostic naming the rule it applied",
@@ -498,7 +523,9 @@ pub static REGISTRY: &[Capability] = &[
                 test: "an_unknown_key_is_rejected_rather_than_ignored",
             },
         ],
-        note: "One source file per run. Multi-file projects are not implemented.",
+        note: "One source file per run: `salman test` takes two positional paths already, so \
+               a list of sources waits for the project file. `salman check` and `salman run` \
+               build several files as one program.",
     },
     Capability {
         id: "test.golden-traces",
@@ -556,8 +583,8 @@ pub static REGISTRY: &[Capability] = &[
                 test: "a_constant_subscript_outside_the_declared_bounds_is_rejected_at_compile_time",
             },
         ],
-        note: "Exponentiation, AT %-located variables and VAR_EXTERNAL are reported as not \
-               implemented rather than compiled to something approximate. Every value stored \
+        note: "Exponentiation and VAR_EXTERNAL are reported as not implemented rather than \
+               compiled to something approximate. Every value stored \
                into a declared destination passes through one coercion point, so a subrange \
                bound or a string length cannot be enforced at one site and forgotten at \
                another.",
@@ -629,8 +656,8 @@ pub static REGISTRY: &[Capability] = &[
                 test: "a_force_records_what_the_program_wanted_so_the_difference_is_visible",
             },
         ],
-        note: "Nothing maps a located variable to the image yet; the image is reachable only \
-               through a directly represented variable in an expression.",
+        note: "A located variable and a directly represented variable in an expression both \
+               reach the image. Nothing maps a device's registers onto it yet.",
     },
     Capability {
         id: "vm.retain-simulation",

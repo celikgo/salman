@@ -6,16 +6,17 @@
 //! list. Doing that in one place means the pipeline cannot be assembled
 //! slightly differently in two of them.
 //!
-//! # One source file
+//! # One file or several
 //!
-//! [`build`] compiles **one** source file. A project spanning several files is
-//! not implemented: node identity is allocated per parse, so merging units
-//! means renumbering, and that is work for the project model rather than a
-//! quiet approximation now. `salman` says so rather than silently compiling
-//! only the first file.
+//! [`build`] compiles one source file; [`build_all`] compiles several as one
+//! program, so a POU declared in one file can be called from another. The files
+//! share a single node-id space, handed out at parse time — see
+//! [`parse_source_from`](salman_lang::parse_source_from) — because every side
+//! table downstream is indexed by node id.
 
 use salman_core::diag::Diagnostics;
 use salman_core::span::{FileId, SourceError, SourceMap};
+use salman_lang::ast::CompilationUnit;
 use salman_lang::dialect::Dialect;
 use salman_lang::sema::{self, Checked};
 
@@ -26,8 +27,8 @@ use crate::compile::{Compiled, compile};
 pub struct Build {
     /// The source map, so diagnostics can be rendered.
     pub sources: SourceMap,
-    /// The file that was built.
-    pub file: FileId,
+    /// The files that were built, in the order they were given.
+    pub files: Vec<FileId>,
     /// What semantic analysis learned, whether or not compilation succeeded.
     pub checked: Checked,
     /// The compiled program, if there were no errors.
@@ -62,10 +63,52 @@ impl Build {
 /// is, when it is larger than salman's source limit. Everything else is a
 /// diagnostic.
 pub fn build(name: &str, text: &str, dialect: &Dialect) -> Result<Build, SourceError> {
-    let mut sources = SourceMap::new();
-    let file = sources.add(name, text)?;
+    build_all(&[(name, text)], dialect)
+}
 
-    let (unit, mut diagnostics) = salman_lang::parse_source(file, text, dialect);
+/// Builds several source files as one program.
+///
+/// The files are parsed independently and then joined, so a `PROGRAM` in one
+/// file may call a `FUNCTION_BLOCK` declared in another, and a name declared
+/// twice across two files is reported as a duplicate with both spans — which is
+/// the reason to join before checking rather than check each file alone.
+///
+/// Order matters only for reading: declarations resolve across the whole
+/// project, not from the top down.
+///
+/// # Errors
+///
+/// Returns [`SourceError`] only when a file cannot be loaded at all — that is,
+/// when it is larger than salman's source limit. Everything else is a
+/// diagnostic. An empty list is not an error: it produces a build with no
+/// program and the diagnostic that says there is nothing to run.
+pub fn build_all(files: &[(&str, &str)], dialect: &Dialect) -> Result<Build, SourceError> {
+    let mut sources = SourceMap::new();
+    let mut ids = Vec::with_capacity(files.len());
+    let mut units = Vec::with_capacity(files.len());
+    let mut diagnostics = Diagnostics::new();
+    // Each file is handed the id space above every file before it, so no two
+    // nodes in the project share an id and the side tables stay disjoint.
+    let mut next_id = 0;
+    for (name, text) in files {
+        let file = sources.add(*name, *text)?;
+        ids.push(file);
+        let (unit, file_diagnostics) = salman_lang::parse_source_from(file, text, dialect, next_id);
+        next_id = unit.node_count;
+        diagnostics.extend(file_diagnostics);
+        units.push(unit);
+    }
+
+    // No files at all still has to produce a build, and the honest one says
+    // there is nothing to run. An empty source gives an empty unit without a
+    // special case in the checker.
+    let unit = if let Some(unit) = CompilationUnit::join(units) {
+        unit
+    } else {
+        let file = sources.add("<project>", "")?;
+        salman_lang::parse_source(file, "", dialect).0
+    };
+
     let (checked, check_diagnostics) = sema::check(&unit, dialect);
     diagnostics.extend(check_diagnostics);
 
@@ -84,7 +127,7 @@ pub fn build(name: &str, text: &str, dialect: &Dialect) -> Result<Build, SourceE
     diagnostics.sort();
     Ok(Build {
         sources,
-        file,
+        files: ids,
         checked,
         compiled,
         diagnostics,

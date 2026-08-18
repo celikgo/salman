@@ -7,10 +7,11 @@ salman publishes, and `docs/CONFORMANCE.md`, which says feature by feature what 
 front end and the runtime actually do. Where those two disagree with this page, they are
 right.
 
-Everything below the "Where v0.1 stands" section is written in the future tense on purpose.
-None of it exists. There is no GUI, no protocol support, no AI layer, no importer, no network
-model, no plant model and no fieldbus in this repository at 0.0.1. The `salman` binary has
-five subcommands — `version`, `status`, `check`, `run` and `test` — and nothing beyond them.
+Everything below the v0.2 section is written in the future tense on purpose. None of it
+exists. There is no GUI, no protocol support, no AI layer, no importer, no network model, no
+plant model and no fieldbus in this repository at 0.0.1. The `salman` binary has five
+subcommands — `version`, `status`, `check`, `run` and `test` — and nothing beyond them. Two
+v0.2 items are done and are marked so below; the rest of v0.2 is future tense as well.
 
 Status markers are the four from the capability registry — shapes, not colours, because a
 red/green table some readers cannot distinguish is a defect:
@@ -21,9 +22,9 @@ red/green table some readers cannot distinguish is a defect:
 
 ## Where v0.1 stands today
 
-The capability registry currently holds twenty-four entries: twenty-three `[x]` and one
+The capability registry currently holds twenty-nine entries: twenty-eight `[x]` and one
 `[~]`. The workspace test suite passes; at the time of writing `cargo test --workspace` runs
-670 tests. Both numbers are a snapshot of a moving tree — the registry, not this page, is the
+851 tests. Both numbers are a snapshot of a moving tree — the registry, not this page, is the
 authority, and `docs/STATUS.md` is generated from it.
 
 The pipeline runs end to end. A Structured Text file is lexed, parsed, checked, compiled to
@@ -79,14 +80,9 @@ otherwise:
 
 ### Not started
 
-- **Multi-file projects.** `crates/salman-vm/src/project.rs` builds exactly one source file.
-  Node identity is allocated per parse, so merging units means renumbering, and salman says so
-  rather than quietly compiling only the first file.
-- **The project file.** There is no manifest format; the dialect and the source path are
-  command-line arguments.
+- **The project file.** There is no manifest format; the dialect and the source files are
+  command-line arguments. `salman test` therefore still takes exactly one source file.
 - **The formatter.** There is no `salman fmt`, and nothing renders an AST back to source.
-- **`AT %` located variables.** The address syntax parses and the process image exists, but
-  nothing binds one to the other; the compiler reports the binding as not implemented.
 - **Exponentiation.** The compiler reports `**` as not implemented rather than compiling it
   to something approximate.
 - **Fuzzing of the declarative test-file reader**, and of every decoder salman later grows.
@@ -109,8 +105,14 @@ which is still a placeholder.
 
 ## v0.2 — talk to something
 
-The first version that leaves the process. Everything here is future tense.
+The first version that leaves the process. Two items are done; the rest is future tense.
 
+- `[x]` **`AT %` located variables.** A variable declared `AT %QX0.0` **is** that location: it
+  has no slot, because a slot would be a copy, and a copy of an input is correct right up
+  until the moment it matters. This is the door every protocol added later comes through.
+- `[x]` **Several source files as one program.** `salman check` and `salman run` take a list
+  of files; a `PROGRAM` in one may call a `FUNCTION_BLOCK` in another. `salman test` still
+  takes one, which is a limit the project file removes.
 - A **Modbus client** and a **Modbus simulator**, so that a test can drive both ends without
   any hardware.
 - **I/O mapping**: binding a device's registers to `%I` and `%Q` in the process image, with

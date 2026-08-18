@@ -783,6 +783,29 @@ pub struct CompilationUnit {
 }
 
 impl CompilationUnit {
+    /// Joins units parsed from disjoint id ranges into one.
+    ///
+    /// Semantic analysis works on a single unit, because a name declared in one
+    /// file has to resolve against a POU declared in another. Joining is only
+    /// sound when the units were parsed with
+    /// [`parse_source_from`](crate::parse_source_from) so that no two share a
+    /// [`NodeId`]; overlapping ids would make two nodes index the same entry in
+    /// every side table downstream, which is a wrong answer rather than a
+    /// crash. The `file` of the result is the first unit's, and it is only a
+    /// label: every span carries its own file.
+    ///
+    /// Returns `None` if `units` is empty — there is nothing to check.
+    #[must_use]
+    pub fn join(units: Vec<Self>) -> Option<Self> {
+        let mut units = units.into_iter();
+        let mut first = units.next()?;
+        for unit in units {
+            first.node_count = first.node_count.max(unit.node_count);
+            first.items.extend(unit.items);
+        }
+        Some(first)
+    }
+
     /// Every POU in the unit, in source order.
     pub fn pous(&self) -> impl Iterator<Item = &Pou> {
         self.items.iter().filter_map(|item| match item {

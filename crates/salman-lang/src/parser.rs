@@ -116,6 +116,31 @@ pub fn parse(
     stream: &TokenStream,
     dialect: &Dialect,
 ) -> (CompilationUnit, Diagnostics) {
+    parse_from(file, source, stream, dialect, 0)
+}
+
+/// Parses one file, allocating node ids from `first_id` upwards.
+///
+/// A project spanning several files needs one id space across all of them,
+/// because every side table downstream — resolutions, folded constants,
+/// inferred types — is indexed by [`NodeId`]. Handing each file a disjoint
+/// range at parse time makes them disjoint by construction; renumbering an
+/// AST afterwards would mean walking every node and would be wrong the first
+/// time a node was missed.
+///
+/// [`node_count`](CompilationUnit::node_count) is the id after the last one
+/// allocated, not the number allocated here, so it still sizes a table indexed
+/// by absolute id.
+///
+/// See [`parse`] for what `source` has to be.
+#[must_use]
+pub fn parse_from(
+    file: FileId,
+    source: &str,
+    stream: &TokenStream,
+    dialect: &Dialect,
+    first_id: u32,
+) -> (CompilationUnit, Diagnostics) {
     let tokens = stream.tokens();
     let eof = tokens.last().copied().unwrap_or(Token {
         kind: TokenKind::Eof,
@@ -129,7 +154,7 @@ pub fn parse(
         pos: 0,
         dialect,
         diags: Diagnostics::new(),
-        next_id: 0,
+        next_id: first_id,
         depth: 0,
         fused: false,
     };
@@ -157,8 +182,21 @@ pub fn parse_source(
     source: &str,
     dialect: &Dialect,
 ) -> (CompilationUnit, Diagnostics) {
+    parse_source_from(file, source, dialect, 0)
+}
+
+/// Lexes and parses one source file, allocating node ids from `first_id`.
+///
+/// See [`parse_from`] for why a project needs this.
+#[must_use]
+pub fn parse_source_from(
+    file: FileId,
+    source: &str,
+    dialect: &Dialect,
+    first_id: u32,
+) -> (CompilationUnit, Diagnostics) {
     let (stream, mut diags) = lex(file, source, dialect);
-    let (unit, parse_diags) = parse(file, source, &stream, dialect);
+    let (unit, parse_diags) = parse_from(file, source, &stream, dialect, first_id);
     diags.extend(parse_diags);
     (unit, diags)
 }
@@ -3899,6 +3937,55 @@ mod tests {
             "an id fell outside node_count {}",
             unit.node_count
         );
+    }
+
+    #[test]
+    fn two_files_parsed_for_one_project_share_no_node_id() {
+        // The whole reason `parse_source_from` exists. Every side table
+        // downstream is a `Vec` indexed by node id, so two files that both
+        // started at zero would read and write each other's entries — the
+        // second file's expressions would take the first file's inferred types.
+        // That compiles and gives a wrong answer, which is worse than a crash.
+        let src = "PROGRAM Main\n\
+                   VAR Count : DINT := 0; END_VAR\n\
+                   IF Count > 3 THEN Count := Count + F(a, b); ELSE Count := 0; END_IF\n\
+                   END_PROGRAM\n";
+        let mut map = SourceMap::new();
+        let first_file = map.add("a.st", src).unwrap();
+        let second_file = map.add("b.st", src).unwrap();
+        let dialect = Dialect::generic();
+
+        let (first, _) = parse_source_from(first_file, src, &dialect, 0);
+        let (second, _) = parse_source_from(second_file, src, &dialect, first.node_count);
+
+        let mut ids = Vec::new();
+        for pou in first.pous().chain(second.pous()) {
+            collect_stmt_ids(&pou.body, &mut ids);
+        }
+        assert!(ids.len() > 20, "the walk found almost nothing: {ids:?}");
+        let count = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), count, "a node id was shared between two files");
+
+        // Identical text, so the second file allocates exactly as many ids as
+        // the first, starting where the first left off.
+        assert_eq!(second.node_count, first.node_count * 2);
+        assert!(
+            ids.iter().all(|id| *id < second.node_count),
+            "an id fell outside the joined node_count {}",
+            second.node_count
+        );
+
+        let joined = CompilationUnit::join(vec![first, second]).expect("two units");
+        assert_eq!(joined.items.len(), 2, "both files' items are in the join");
+    }
+
+    #[test]
+    fn joining_no_units_is_none_rather_than_an_empty_program() {
+        // An empty project has to be distinguishable from a project that failed
+        // to parse; the caller decides what to say about it.
+        assert!(CompilationUnit::join(Vec::new()).is_none());
     }
 
     #[test]
