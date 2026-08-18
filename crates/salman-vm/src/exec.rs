@@ -55,6 +55,32 @@ pub enum FaultKind {
     ConstantOutOfRange(u32),
     /// A directly represented address that could not be resolved.
     Address(String),
+    /// A value stored into a subrange-typed variable that its bounds exclude.
+    SubrangeViolation {
+        /// The variable being written.
+        name: String,
+        /// The value that was rejected.
+        ///
+        /// Wider than the bounds on purpose: a `ULINT` above `i64::MAX` is a
+        /// value every declarable subrange excludes, and reporting it as a
+        /// type error rather than as the violation it is would send a reader
+        /// looking for a fault that is not there.
+        value: i128,
+        /// The declared lower bound.
+        low: i64,
+        /// The declared upper bound, inclusive.
+        high: i64,
+    },
+    /// A value stored into an enumeration-typed variable that its declared
+    /// values do not include.
+    EnumViolation {
+        /// The variable being written.
+        name: String,
+        /// The value that was rejected.
+        value: i64,
+        /// The values the type declares, in declaration order.
+        permitted: Vec<i64>,
+    },
     /// An array subscript outside the declared bounds.
     ArrayIndexOutOfRange {
         /// The index that was used.
@@ -91,6 +117,30 @@ impl std::fmt::Display for FaultKind {
             Self::SlotOutOfRange(slot) => write!(f, "slot {slot} does not exist"),
             Self::ConstantOutOfRange(index) => write!(f, "constant {index} does not exist"),
             Self::Address(message) => f.write_str(message),
+            Self::SubrangeViolation {
+                name,
+                value,
+                low,
+                high,
+            } => write!(
+                f,
+                "{name} was given {value}, which its declared range {low}..{high} excludes"
+            ),
+            Self::EnumViolation {
+                name,
+                value,
+                permitted,
+            } => {
+                let list = permitted
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(
+                    f,
+                    "{name} was given {value}, which is not one of its declared values ({list})"
+                )
+            }
             Self::ArrayIndexOutOfRange { index, low, high } => {
                 write!(
                     f,
@@ -403,6 +453,84 @@ impl Exec<'_> {
                         return Err(fault(FaultKind::ArrayIndexOutOfRange { index, low, high }));
                     }
                 }
+                Op::CheckRange { low, high, name } => {
+                    let value = self.peek().map_err(fault)?.clone();
+                    let Some(number) = wide_integer(&value) else {
+                        return Err(fault(FaultKind::TypeMismatch {
+                            expected: ElementaryType::Dint,
+                            found: value.type_of(),
+                        }));
+                    };
+                    if number < i128::from(low) || number > i128::from(high) {
+                        let name = self
+                            .program
+                            .messages
+                            .get(name as usize)
+                            .cloned()
+                            .unwrap_or_else(|| "a subrange variable".to_string());
+                        return Err(fault(FaultKind::SubrangeViolation {
+                            name,
+                            value: number,
+                            low,
+                            high,
+                        }));
+                    }
+                }
+                Op::CheckEnum { set, name } => {
+                    let value = self.peek().map_err(fault)?.clone();
+                    let Some(number) = value.as_i64() else {
+                        return Err(fault(FaultKind::TypeMismatch {
+                            expected: ElementaryType::Dint,
+                            found: value.type_of(),
+                        }));
+                    };
+                    let permitted = self
+                        .program
+                        .enum_sets
+                        .get(set as usize)
+                        .map_or_else(Vec::new, |values| values.to_vec());
+                    if !permitted.contains(&number) {
+                        let name = self
+                            .program
+                            .messages
+                            .get(name as usize)
+                            .cloned()
+                            .unwrap_or_else(|| "an enumeration variable".to_string());
+                        return Err(fault(FaultKind::EnumViolation {
+                            name,
+                            value: number,
+                            permitted,
+                        }));
+                    }
+                }
+                // salman policy: `STRING[n]` and `WSTRING[n]` count **storage
+                // elements** — a byte for `STRING`, a 16-bit code unit for
+                // `WSTRING` — and truncation cuts at exactly `n` of them.
+                //
+                // salman holds a `STRING` as bytes and a `WSTRING` as code
+                // units precisely because it does not interpret their contents:
+                // real projects carry values that are not valid in any encoding
+                // salman could name, and re-encoding them on the way past would
+                // corrupt data (see `salman_core::value::Value::String`). A
+                // truncation that decoded the value in order to avoid splitting
+                // a UTF-8 sequence or a UTF-16 surrogate pair would be the one
+                // place that did interpret it, and would make the length of the
+                // result depend on the data: `WSTRING[4]` would hold four
+                // characters for some values and three for others.
+                Op::TruncateString { max } => {
+                    let value = self.pop().map_err(fault)?;
+                    let max = max as usize;
+                    let truncated = match value {
+                        Value::String(bytes) if bytes.len() > max => {
+                            Value::String(bytes.get(..max).unwrap_or(&[]).into())
+                        }
+                        Value::WString(units) if units.len() > max => {
+                            Value::WString(units.get(..max).unwrap_or(&[]).into())
+                        }
+                        other => other,
+                    };
+                    self.push(truncated).map_err(fault)?;
+                }
                 Op::Binary { op, ty } => {
                     let rhs = self.pop().map_err(fault)?;
                     let lhs = self.pop().map_err(fault)?;
@@ -522,6 +650,19 @@ fn binary(op: BinOp, ty: ElementaryType, lhs: &Value, rhs: &Value) -> Result<Val
         E::Real | E::Lreal => real_arith(op, ty, lhs, rhs),
         E::Time | E::LTime => duration_arith(op, ty, lhs, rhs),
         _ => Err(FaultKind::Unsupported(format!("{op:?} on {ty}"))),
+    }
+}
+
+/// The integer a value carries, wide enough for every integer type salman has.
+///
+/// `Value::as_i64` refuses a `ULINT` or `LWORD` above `i64::MAX` rather than
+/// wrapping, which is right for arithmetic and wrong for a bounds check: such
+/// a value is one every declarable subrange excludes, and it should be
+/// reported as the violation it is rather than as a type error.
+fn wide_integer(value: &Value) -> Option<i128> {
+    match value {
+        Value::Ulint(number) | Value::Lword(number) => Some(i128::from(*number)),
+        other => other.as_i64().map(i128::from),
     }
 }
 
@@ -942,6 +1083,8 @@ mod tests {
                 max_stack: 16,
             }],
             constants,
+            messages: Vec::new(),
+            enum_sets: Vec::new(),
             addresses,
             slot_types: slots.to_vec(),
             slot_names: (0..slots.len()).map(|i| format!("s{i}")).collect(),

@@ -68,10 +68,10 @@ footnote:
 - **Three stages can refuse a program, and they refuse different things.** A construct that
   parses is not thereby compiled, and a construct the compiler refuses is refused by name.
   See *What each stage refuses*, below.
-- **Three constructs are accepted without carrying their meaning.** A subrange and a
-  `STRING[n]` length are not enforced at run time, and `EN` is an ordinary input with no
-  enable semantics. They are named in their own section immediately below, because a wrong
-  answer is worse than a refusal and a reader should meet it before any table.
+- **No construct is accepted without carrying its meaning.** There were three — a subrange
+  bound, a `STRING[n]` length and `EN` — and all three are now implemented. The section that
+  named them is immediately below and is kept, empty of entries, because that category is the
+  one that matters most and a reader should be able to check whether it is occupied.
 
 So a row marked `[x]` in the *statements* table now means "this form parses, is type-checked,
 is compiled and runs, and a test in this repository says so". Where a row means less than
@@ -79,28 +79,136 @@ that, the row says which stage stops and what the diagnostic is called.
 
 ## Where salman accepts something and does not mean it
 
-Three constructs are accepted by every stage, run without a fault, and do not carry the
-meaning the standard gives them. None is a policy — a policy is a choice salman defends — and
-none is refused, so nothing tells a reader at the time. They are named here, before any table,
-because a wrong answer is worse than a refusal.
+Nothing, at present. This section existed because three constructs were accepted by every
+stage, ran without a fault, and did not carry the meaning the standard gives them. All three
+are implemented, and the section is kept — empty of entries but not deleted — because the
+category is the one that matters most and a reader should be able to find out whether it is
+occupied.
 
-**A subrange is not enforced at run time.** `Sub : INT (0..10);` is checked when the value
-assigned is a constant — `Sub := 50;` is refused as `E0404` — and not otherwise. Assign the
-same 50 through a variable and the subrange holds 50. The declared bounds are used for
-checking constants and for nothing else; there is no range check in the emitted code.
+What was here, and what each does now:
 
-**A `STRING[n]` maximum length is not enforced at run time either.** A literal too long for
-its target is refused (`sema.rs: a_string_literal_longer_than_its_target_is_refused`), but
-assigning a longer `STRING` variable into a shorter one copies the whole value, so a
-`STRING[4]` will hold ten characters and report them.
+**A subrange is enforced at run time.** `Level : INT (0..100);` is a promise about what the
+variable can hold, and it was previously checked only when the assigned value was a constant
+the checker could see. Assigning the same 200 through a variable succeeded and the subrange
+held 200. Every site that stores a value into a subrange-typed destination now emits a range
+check — the full list is enumerated below, under *Every site that stores a value into a
+declared destination*. A violation is a fault naming the variable, the value and the bounds —
+`Level was given 200, which its declared range 0..100 excludes`.
 
-**`EN` is an ordinary input.** IEC 61131-3:2013 Table 18 "Execution control graphically using
-EN and ENO" (Ed 3.0) makes `EN` the input that decides whether a call happens at all. salman
-implements none of that. A POU may declare a `VAR_INPUT` called `EN`, salman accepts it, and
-`F(EN := FALSE, N := 7)` calls `F` and returns 7. The name is not reserved and the semantics
-are not there. It is the sharpest of the three cases here: the other two declare a constraint
-salman does not enforce, while this one accepts a name that means something in the standard
-and gives it no meaning at all.
+*salman policy:* a violation is a **fault**, not a clamp. The standard does not say, and the
+implementations that check at all differ. A value outside its declared range is a bug, and
+continuing with a silently corrected one propagates it into whatever reads the variable next.
+Tests: `crates/salman-cli/tests/constraints.rs`,
+`a_subrange_bound_is_enforced_when_the_value_is_not_a_constant` and the six around it.
+
+**A `STRING[n]` maximum length is enforced.** Assigning a longer string used to copy the whole
+value, so a `STRING[4]` held ten characters and reported them. The target now receives the
+leading characters that fit. Truncation rather than a fault: IEC 61131-3 defines the result of
+a string assignment as the characters the target can hold, and there is no error to report.
+Tests: `assigning_a_longer_string_keeps_the_characters_that_fit`,
+`a_string_length_is_enforced_on_a_function_block_input`.
+
+**`EN` and `ENO` are implemented.** IEC 61131-3:2013 Table 18 "Execution control graphically
+using EN and ENO" (Ed 3.0) makes them part of the calling convention rather than something a
+POU declares: `EN` decides whether the call happens at all, and `ENO` reports whether it did.
+salman previously accepted a `VAR_INPUT` called `EN` and gave it no meaning, so
+`F(EN := FALSE, N := 7)` called `F`.
+
+Now: `EN` and `ENO` are available on every function and function block call without being
+declared; a call with `EN` false does not happen, and does not write its inputs either,
+because binding the inputs is part of the call; `ENO` is true when the call happened and false
+when it did not, and is true whenever `EN` is absent; and **no POU may declare a variable
+named `EN` or `ENO`** (`E0324`), because one name would then mean two things at a call site.
+Using `ENO` as an input or `EN` as an output is reported by name rather than as an unknown
+parameter, since `F(ENO := ok)` looks plausible and does the opposite of what it says.
+
+*salman policy:* `EN` on a call **whose result is used** is refused (`U0301`). With `EN` false
+there is no call and therefore no result, and salman will not invent one. Call it as a
+statement and read the result separately. Tests: `a_call_with_enable_false_does_not_happen_at_all`,
+`a_call_that_does_not_happen_does_not_write_its_inputs_either`,
+`enable_out_reports_whether_the_call_happened`, `a_variable_may_not_be_called_en_or_eno`,
+`enable_on_a_call_whose_result_is_used_is_refused_rather_than_invented`.
+
+### Every site that stores a value into a declared destination
+
+`Body::coerce` in `crates/salman-vm/src/compile.rs` describes itself as *the single place a
+value becomes a value of a declared type*, and the whole argument above rests on that being
+true: a promise kept at some assignment sites and not others is worse than one kept nowhere,
+because the gap is invisible. The sites were therefore enumerated from the code and each was
+made to prove itself. They are: an assignment statement, including one through a subscript
+and one into a global; a function block input; a function block output bound out with `=>`; a
+`VAR_IN_OUT` copied back, for functions and function blocks alike; a function argument, named
+and positional; a function's result assigned through its own name; and the `FOR` control
+variable at initialisation and at every increment. Each is covered by a test named after the
+property it proves, in `crates/salman-cli/tests/constraints.rs`.
+
+Four sites store a value and do **not** call `coerce`, and each is sound for a reason rather
+than by oversight:
+
+- **`copy_wide` and `copy_wide_from`**, which move a structure, an array or an instance slot
+  by slot. The checker admits an aggregate assignment only between one type and itself — an
+  aggregate has no elementary type, so nothing else is assignable to it — and salman interns
+  types by structure, so "itself" includes every element bound. There is no element such a
+  copy could carry that its destination's declaration excludes.
+- **The `FOR` loop's limit and step**, and **the `CASE` selector**, which are salman's own
+  temporaries. Nothing declares them, so they constrain nothing; the values that reach the
+  control variable are checked where they reach it.
+- **`ENO`**, which is written straight into its target. The checker admits nothing but a
+  `BOOL` there, and a `BOOL` has no subrange to violate and no length to exceed.
+
+Three things the audit found, and what they do now:
+
+**A declared initial value never reaches `coerce`** — it is written into the slot before the
+first scan — so it is checked in the checker instead, against the constraint its declared type
+carries (`E0404`). `Level : INT (0..100) := 200;` was already refused because the literal
+reports itself; `:= INT#200;`, `:= 150 + 50;` and `:= Big;` naming a `CONSTANT` were not, and
+started the variable outside its own range. `Level := 200;` a line later then faulted, on a
+variable already holding 200. The same check covers a global, a variable of a named subrange
+type, and a `VAR` inside a function block, whose initial value belongs to every instance and
+reaches memory through the layout rather than through any instruction.
+
+*salman policy:* an initial value too long for its `STRING[n]` is **refused**, where an
+assignment of one truncates. A declaration is not an assignment: it states how long the
+variable is, and an initial value contradicting it is a mistake worth reporting.
+
+**A value bound out of a call arrived with the wrong type.** The output and `VAR_IN_OUT`
+copy-back paths took the type the value already had from the destination rather than from the
+parameter it came out of, so `coerce` compared a type with itself, found no difference and
+emitted no conversion. An `INT` output bound into a `DINT` variable left an `INT` value in a
+`DINT` slot — right number, wrong type, and nothing says so until something reads it.
+
+**A `FOR` loop over exactly the range its control variable declares could not run.** The value
+that ends a `FOR` loop is one past its end by construction, so checking the incremented value
+after storing it faulted on `FOR I := 0 TO 3` over `I : INT (0..3)`. The candidate is now
+tested against the loop's limit before it is allowed to reach the control variable, and
+checked only when the body is about to be given it.
+
+*salman policy, and a visible consequence:* after a loop the control variable holds the last
+value the body was given rather than one past it. IEC 61131-3 does not define the value of a
+control variable after its loop; salman chose the one that is inside the variable's own
+declared range.
+
+Related, and part of the same defect: `BY` is a **step**, not a value of the control variable,
+and it was type-checked against the control variable's declared type. That refused
+`FOR I := 3 TO 0 BY -1;` over `I : INT (0..3)` — a descending loop over a non-negative
+subrange could not be written at all, although every value it gives the variable is inside the
+range. `BY` is now checked against the control variable's base type.
+
+**An enumeration was a subrange in all but name, and carried none of its meaning.** An
+enumeration is a base type and a **set** of legal values, and salman flattened it to the base
+type and enforced nothing: `Shade := 77;` on a three-value `Colour` compiled, ran and stored
+77. Both halves are closed. A value the checker can see is refused (`E0404`), and a value
+arriving through a variable faults at run time naming the variable, the value and the set —
+`Shade was given 77, which is not one of its declared values (0, 1, 2)`. The check is
+membership rather than bounds, because the values need not be contiguous: a range check over
+`(Low := 0, High := 2)` would accept the 1 that type does not have.
+
+**One parameter could be given an argument twice.** `A(EN := TRUE, EN := FALSE)` compiled, and
+the last argument won, so a reader saw a call enabled and salman skipped it. For `ENO` it was
+worse: `A(ENO => First, ENO => Second)` wrote `Second` and left `First` exactly as it was, a
+variable the engineer bound and nothing wrote. This was never special to `EN` and `ENO` — every
+named parameter had it — so it is refused for all of them (`E0325`) rather than for the two
+that made it visible.
 
 One smaller thing, true rather than wrong, that will still surprise: **`--record` splits its
 argument on commas**, so a multidimensional slot name such as `Main.G[1,1]` cannot be named on
@@ -958,6 +1066,78 @@ IEC 61131-3:2013 Table 43 "Standard bistable function blocks" (Ed 3.0). The full
 including which of the two published and mutually incompatible implementations salman copies,
 is in the section at the end of this page.
 `stdfb.rs: sema_is_the_only_block_salman_does_not_claim_is_standard`.
+
+### 23. What a subrange or an enumeration starts at when nothing initialises it
+
+**What salman does.** A subrange variable with no initialiser starts at its base type's default
+where its range holds that value, and otherwise at whichever declared bound is nearer it —
+`low` for a range wholly above, `high` for one wholly below. `Level : INT (10..20);` therefore
+starts at 10 and `Offset : INT (-20..-10);` at -10, while `Trim : INT (-5..5);` still starts at
+0. An enumeration with no initialiser starts at its **first declared value**.
+
+**Why a policy.** IEC 61131-3 gives every elementary type a default initial value and gives a
+subrange no rule of its own, so the base type's default is the only value on offer — and a
+subrange may exclude it. Before the bounds were enforced this was invisible. Once they are, a
+variable starting outside its own declared range is indefensible: reading it and writing it
+straight back faults, on a value salman itself chose. So salman keeps the standard's value
+wherever the declaration permits it and changes as little as possible where it does not.
+Choosing the nearer bound rather than always the lower one keeps a wholly negative range from
+starting at its most negative value, which no reading of the declaration suggests.
+
+For an enumeration the first declared value is both the widely documented rule and the only
+choice that is guaranteed to be a member of the set.
+
+`compile.rs: Compiler::declared_default`. Tests:
+`a_subrange_variable_never_starts_at_a_value_its_own_declaration_excludes`,
+`a_subrange_wholly_below_zero_starts_at_the_bound_nearest_zero`,
+`a_subrange_that_holds_zero_still_starts_at_the_elementary_default`,
+`an_enumeration_starts_at_its_first_declared_value`, and
+`reading_a_subranges_initial_value_and_writing_it_straight_back_does_not_fault`, which is the
+one that makes the choice mean something rather than being a number in a table.
+
+The policy is applied in three places, because a slot acquires its initial value in three:
+the load-time table for globals, program instances and function block instances; the
+re-initialisation a `FUNCTION` performs on every call, since a function keeps no state; and a
+function's result slot, so a function that assigns nothing does not hand its caller a value the
+return type excludes.
+
+### 24. A retained value is not re-checked when it is restored
+
+**What salman does.** A warm restart keeps a `RETAIN` variable's value and does not test it
+against the variable's declared constraint. A cold restart puts it back to the value policy 23
+chose.
+
+**Why a policy.** There is nothing to test. The only two ways a slot acquires a value are the
+initial value, which policy 23 keeps inside the declaration, and a store, which goes through
+`Body::coerce`. A warm restart moves no value across that boundary — it keeps one that was
+already checked when it was written. Re-checking on restore would cost a pass over memory to
+discover something already true, and would turn a forced value, which an engineer set
+deliberately, into a fault at the next restart.
+`a_retained_subrange_keeps_a_value_across_a_warm_restart_and_that_value_was_checked`.
+
+### 25. What `STRING[n]` and `WSTRING[n]` count, and where truncation cuts
+
+**What salman does.** `STRING[n]` is n **bytes** and `WSTRING[n]` is n **16-bit code units**,
+in the checker and at run time alike, and truncation cuts at exactly n of them — through a
+multi-byte UTF-8 sequence or a UTF-16 surrogate pair if that is where the cut falls.
+
+**Why a policy.** IEC `STRING` is a sequence of single-byte characters whose encoding the
+system sets, so a byte is a character and there is nothing to split. salman holds a `STRING` as
+bytes and a `WSTRING` as code units precisely because it does not interpret their contents:
+real projects carry values that are not valid in any encoding salman could name, and
+re-encoding them on the way past would corrupt data. A truncation that decoded the value in
+order to avoid splitting a sequence would be the one place that did interpret it, and would
+make the length of the result depend on the data — `WSTRING[4]` holding four characters for
+some values and three for others. A source literal containing a character outside ASCII
+therefore occupies more than one position, and it occupies the same number of positions in the
+checker as it does at run time, which is the part that has to agree.
+`exec.rs: Op::TruncateString`. Tests:
+`a_declared_string_length_counts_the_bytes_salman_stores`,
+`truncating_a_wide_string_cuts_at_the_declared_count_even_through_a_surrogate_pair`,
+`a_wide_string_is_truncated_by_code_units_not_by_bytes`,
+`a_string_of_exactly_the_declared_length_is_not_truncated`, and
+`a_string_with_no_declared_length_is_truncated_at_the_dialect_default`, which fixes the length
+of a `STRING` written without one at the dialect's 80.
 
 ---
 

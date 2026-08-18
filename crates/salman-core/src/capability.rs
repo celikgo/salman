@@ -346,6 +346,30 @@ pub static REGISTRY: &[Capability] = &[
                and DialectId does not contain one.",
     },
     Capability {
+        id: "lang.st.execution-control",
+        area: "Language",
+        title: "EN and ENO on every call, as part of the calling convention",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-cli/tests/constraints.rs",
+                test: "a_call_with_enable_false_does_not_happen_at_all",
+            },
+            Evidence {
+                file: "crates/salman-cli/tests/constraints.rs",
+                test: "a_call_that_does_not_happen_does_not_write_its_inputs_either",
+            },
+            Evidence {
+                file: "crates/salman-cli/tests/constraints.rs",
+                test: "a_variable_may_not_be_called_en_or_eno",
+            },
+        ],
+        note: "EN and ENO are not declared by a POU, so no POU may declare a variable of \
+               either name. EN on a call whose result is used is refused: with EN false there \
+               is no call and therefore no result, and salman will not invent one.",
+    },
+    Capability {
         id: "lang.st.lexer-fuzzing",
         area: "Language",
         title: "libFuzzer targets for the Structured Text front end, asserting its \
@@ -507,8 +531,35 @@ pub static REGISTRY: &[Capability] = &[
                 test: "a_constant_subscript_outside_the_declared_bounds_is_rejected_at_compile_time",
             },
         ],
-        note: "Exponentiation and AT %-located variables are reported as not implemented rather \
-               than compiled to something approximate.",
+        note: "Exponentiation, AT %-located variables and VAR_EXTERNAL are reported as not \
+               implemented rather than compiled to something approximate. Every value stored \
+               into a declared destination passes through one coercion point, so a subrange \
+               bound or a string length cannot be enforced at one site and forgotten at \
+               another.",
+    },
+    Capability {
+        id: "vm.declared-constraints",
+        area: "Runtime",
+        title: "Subrange bounds and string lengths enforced wherever a value is stored",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-cli/tests/constraints.rs",
+                test: "a_subrange_bound_is_enforced_when_the_value_is_not_a_constant",
+            },
+            Evidence {
+                file: "crates/salman-cli/tests/constraints.rs",
+                test: "a_subrange_is_enforced_on_a_function_block_input",
+            },
+            Evidence {
+                file: "crates/salman-cli/tests/constraints.rs",
+                test: "assigning_a_longer_string_keeps_the_characters_that_fit",
+            },
+        ],
+        note: "A subrange violation is a fault naming the variable, the value and the bounds; \
+               a string too long for its target keeps the characters that fit, which is what \
+               the standard defines. Both are salman decisions where the standard is silent.",
     },
     Capability {
         id: "vm.interpreter",

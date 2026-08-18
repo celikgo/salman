@@ -602,6 +602,27 @@ impl Checker<'_> {
         let init = self.declared_initial_value(decl, ty);
         let mut out = Vec::new();
         for (position, name) in decl.names.iter().enumerate() {
+            // EN and ENO belong to the calling convention, not to a POU. A
+            // variable of either name would shadow the execution control on
+            // every call to this POU, and the name would then mean two things.
+            if name.ident.eq_str("EN") || name.ident.eq_str("ENO") {
+                self.diags.push(
+                    Diagnostic::error(
+                        codes::E_RESERVED_PARAMETER_NAME,
+                        format!("`{name}` cannot be declared as a variable"),
+                    )
+                    .with_primary(name.span, "this name belongs to the calling convention")
+                    .with_note(
+                        "IEC 61131-3:2013 Table 18 \"Execution control graphically using EN and \
+                         ENO\" (Ed 3.0) makes EN and ENO available on every call without being \
+                         declared: EN decides whether the call happens, ENO reports whether it \
+                         did. salman implements them, so a variable of the same name would mean \
+                         two different things at one call site.",
+                    )
+                    .with_clause(clause::TABLE_EN_ENO),
+                );
+                continue;
+            }
             // `A, B AT %IX0.0 : BOOL;` would put two variables at one address,
             // so only a single-name declaration keeps the address.
             let address = if decl.names.len() == 1 {
@@ -641,6 +662,7 @@ impl Checker<'_> {
     /// Type-checks and folds a declaration's initialiser.
     fn declared_initial_value(&mut self, decl: &VarDecl, ty: TypeId) -> Option<Value> {
         let init = decl.init.as_ref()?;
+        let complaints = self.diags.len();
         let value_ty = self.expr(init, Some(ty));
         self.check_assignable(value_ty, ty, init.span, "this initial value");
         let value = self.fold(init)?;
@@ -648,10 +670,123 @@ impl Checker<'_> {
         // Folding produced something, but not something this type can hold.
         // The assignability check above has already said so.
         coerced.as_ref()?;
+        // Only when nothing above has complained: an untyped literal already
+        // reports its own subrange and length failures, and one mistake is
+        // worth one diagnostic.
+        if self.diags.len() == complaints
+            && let Some(value) = coerced.as_ref()
+        {
+            self.check_declared_constraint(value, ty, init.span);
+        }
         if let Some(slot) = self.const_values.get_mut(init.id.index()) {
             slot.clone_from(&coerced);
         }
         coerced
+    }
+
+    /// Checks a folded initial value against the constraint its declared type
+    /// carries.
+    ///
+    /// `Body::coerce` in the compiler is the single place a value becomes a
+    /// value of a declared type **at run time**, and a declared initial value
+    /// never reaches it: it is written straight into the slot before the first
+    /// scan. Without this, `Level : INT (0..100) := INT#200;` started outside
+    /// its own declared range and the run-time check that exists to catch
+    /// exactly that never saw the value — and `Level := 200;` a line later
+    /// faulted, on a variable already holding 200.
+    ///
+    /// A bare literal reports itself, in `integer_literal_type` and
+    /// `string_literal_type`, with a span on the literal. This catches
+    /// everything else that folds: a typed literal such as `INT#200`, an
+    /// arithmetic expression, and a `CONSTANT` named on the line above.
+    fn check_declared_constraint(&mut self, value: &Value, ty: TypeId, span: Span) {
+        enum Promise {
+            Range(i64, i64),
+            Length(u32),
+            OneOf(Vec<i64>),
+        }
+        let promise = match self.types.get(ty) {
+            TypeData::Subrange { low, high, .. } => Promise::Range(*low, *high),
+            TypeData::Str { max_len, .. } => Promise::Length(*max_len),
+            TypeData::Enum { values, .. } => {
+                Promise::OneOf(values.iter().map(|(_, value)| *value).collect())
+            }
+            _ => return,
+        };
+        match promise {
+            Promise::Range(low, high) => {
+                let Some(number) = value.as_i64() else {
+                    return;
+                };
+                if number < low || number > high {
+                    self.diags.push(
+                        Diagnostic::error(
+                            codes::E_LITERAL_DOES_NOT_FIT,
+                            format!("{number} is outside the subrange {low}..{high}"),
+                        )
+                        .with_primary(span, "this initial value is not one the subrange holds")
+                        .with_note(
+                            "A declared initial value is written into the variable before the \
+                             first scan, so no run-time check sees it. A variable that starts \
+                             outside its own declared range would fault on being assigned the \
+                             value it already holds.",
+                        )
+                        .with_clause(clause::USER_DEFINED_DATA_TYPES),
+                    );
+                }
+            }
+            Promise::Length(max_len) => {
+                let length = match value {
+                    Value::String(bytes) => bytes.len(),
+                    Value::WString(units) => units.len(),
+                    _ => return,
+                };
+                if length > max_len as usize {
+                    self.diags.push(
+                        Diagnostic::error(
+                            codes::E_LITERAL_DOES_NOT_FIT,
+                            format!(
+                                "this initial value is {length} characters long, and the target \
+                                 holds {max_len}"
+                            ),
+                        )
+                        .with_primary(span, "too long for its declared type")
+                        .with_note(
+                            "An assignment to a shorter string keeps the characters that fit. A \
+                             declaration is not an assignment: it says how long the variable is, \
+                             and an initial value that contradicts it is a mistake worth \
+                             reporting rather than quietly cutting.",
+                        )
+                        .with_clause(clause::CHARACTER_STRING_LITERALS),
+                    );
+                }
+            }
+            Promise::OneOf(permitted) => {
+                let Some(number) = value.as_i64() else {
+                    return;
+                };
+                if !permitted.contains(&number) {
+                    let list = permitted
+                        .iter()
+                        .map(i64::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.diags.push(
+                        Diagnostic::error(
+                            codes::E_LITERAL_DOES_NOT_FIT,
+                            format!("{number} is not one of the enumeration's values ({list})"),
+                        )
+                        .with_primary(span, "this initial value is not a value of this type")
+                        .with_note(
+                            "An enumeration is a base type and a set of legal values. Naming the \
+                             value — `Colour#Green`, or `Green` where the context settles the \
+                             type — says which one is meant and cannot be off by one.",
+                        )
+                        .with_clause(clause::USER_DEFINED_DATA_TYPES),
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -1321,17 +1456,50 @@ impl Checker<'_> {
                     self.literal_does_not_fit(e.span, value, target);
                     return expected;
                 }
-                if let TypeData::Subrange { low, high, .. } = *self.types.get(expected)
-                    && (value < i128::from(low) || value > i128::from(high))
-                {
-                    self.diags.push(
-                        Diagnostic::error(
-                            codes::E_LITERAL_DOES_NOT_FIT,
-                            format!("{value} is outside the subrange {low}..{high}"),
-                        )
-                        .with_primary(e.span, "this value is not one the subrange holds")
-                        .with_clause(clause::USER_DEFINED_DATA_TYPES),
-                    );
+                match self.types.get(expected) {
+                    TypeData::Subrange { low, high, .. } => {
+                        let (low, high) = (*low, *high);
+                        if value < i128::from(low) || value > i128::from(high) {
+                            self.diags.push(
+                                Diagnostic::error(
+                                    codes::E_LITERAL_DOES_NOT_FIT,
+                                    format!("{value} is outside the subrange {low}..{high}"),
+                                )
+                                .with_primary(e.span, "this value is not one the subrange holds")
+                                .with_clause(clause::USER_DEFINED_DATA_TYPES),
+                            );
+                        }
+                    }
+                    // An enumeration is a set of legal values, and a bare
+                    // integer in an enumeration context is only legal when it
+                    // is one of them. Without this, `Shade := 77;` on a
+                    // three-value `Colour` was accepted and stored 77.
+                    TypeData::Enum { values, .. } => {
+                        let permitted: Vec<i64> = values.iter().map(|(_, value)| *value).collect();
+                        if !permitted.contains(&(value as i64)) {
+                            let list = permitted
+                                .iter()
+                                .map(i64::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            self.diags.push(
+                                Diagnostic::error(
+                                    codes::E_LITERAL_DOES_NOT_FIT,
+                                    format!(
+                                        "{value} is not one of the enumeration's values ({list})"
+                                    ),
+                                )
+                                .with_primary(e.span, "this value is not a value of this type")
+                                .with_note(
+                                    "Naming the value — `Colour#Green`, or `Green` where the \
+                                     context settles the type — says which one is meant and \
+                                     cannot be off by one.",
+                                )
+                                .with_clause(clause::USER_DEFINED_DATA_TYPES),
+                            );
+                        }
+                    }
+                    _ => {}
                 }
                 return expected;
             }
@@ -1787,6 +1955,24 @@ impl Checker<'_> {
         }
     }
 
+    /// The type an *operand* inherits from a context that wants `ty`.
+    ///
+    /// A subrange's bounds constrain what one variable may hold. An operand of
+    /// an arithmetic expression is not that variable, so it inherits the width
+    /// and nothing else, and the result is judged against the declaration where
+    /// the value is known.
+    ///
+    /// An enumeration is **not** stripped, and the difference is deliberate: an
+    /// enumeration's values are its identity rather than a bound on it, and it
+    /// is what resolves an unqualified value name — strip it and `Shade =
+    /// Green` no longer knows what `Green` is.
+    fn value_type_of(&mut self, ty: TypeId) -> TypeId {
+        match *self.types.get(ty) {
+            TypeData::Subrange { base, .. } => self.types.elementary(base),
+            _ => ty,
+        }
+    }
+
     fn binary_expr(
         &mut self,
         e: &Expr,
@@ -1797,14 +1983,30 @@ impl Checker<'_> {
     ) -> TypeId {
         // A comparison's result type says nothing about its operands, so the
         // context's expectation is not passed into them.
-        let inherited = if op.is_comparison() { None } else { expected };
+        //
+        // Neither does a subrange bound or an enumeration's value set. Those
+        // constrain what the **result** may be, not what the operands may be:
+        // `V : INT (0..10) := 50 - 40;` is 10, which the range holds, and
+        // passing the subrange down reported the 50 and the 40 as out of range
+        // for a variable neither of them was ever going to be. Only the base
+        // type is inherited, which is what makes `Count + 1` keep `Count`'s
+        // width. The result is judged against the whole declaration by
+        // `check_declared_constraint`, where the value is known.
+        let inherited = if op.is_comparison() {
+            None
+        } else {
+            expected.map(|ty| self.value_type_of(ty))
+        };
         let left = self.expr(lhs, inherited);
         // The right operand is typed against the left, which is what makes
         // `Count + 1` keep `Count`'s type rather than promoting it to DINT.
+        // ... and by the same argument the left operand's own type is passed on
+        // for its width, not for its bounds: in `Level + 100` over
+        // `Level : INT (0..10)`, the 100 is not a value of `Level`'s type.
         let right_expectation = if self.types.is_error(left) {
             inherited
         } else {
-            Some(left)
+            Some(self.value_type_of(left))
         };
         let right = self.expr(rhs, right_expectation);
         if self.types.is_error(left) || self.types.is_error(right) {
@@ -2162,6 +2364,7 @@ impl Checker<'_> {
     /// block call" gives only the form that names each parameter, and there is
     /// no positional form to fall back on.
     fn check_instance_call(&mut self, ty: TypeId, args: &[Arg], span: Span) {
+        self.check_no_duplicate_arguments(args, span);
         let block = self.types.get(ty).clone();
         let name = self.types.describe(ty);
         for arg in args {
@@ -2183,7 +2386,9 @@ impl Checker<'_> {
                     );
                 }
                 Arg::Input { name: field, value } => {
-                    let expected = self.block_parameter(&block, field, true, span);
+                    let expected = self
+                        .execution_control(field, true, span)
+                        .or_else(|| self.block_parameter(&block, field, true, span));
                     match expected {
                         Some(target) => {
                             let value_ty = self.expr(value, Some(target));
@@ -2203,7 +2408,9 @@ impl Checker<'_> {
                     name: field,
                     target,
                 } => {
-                    let source = self.block_parameter(&block, field, false, span);
+                    let source = self
+                        .execution_control(field, false, span)
+                        .or_else(|| self.block_parameter(&block, field, false, span));
                     if let Some(target) = target {
                         let target_ty = self.assign_target(target);
                         if let Some(source) = source {
@@ -2218,6 +2425,104 @@ impl Checker<'_> {
                 }
             }
         }
+    }
+
+    /// Refuses a call that names one parameter twice.
+    ///
+    /// The compiler binds named arguments in order, so a repeated parameter
+    /// quietly kept the last one written. For `EN` that meant
+    /// `A(EN := TRUE, EN := FALSE)` skipping a call the reader can see enabled;
+    /// for `ENO` it was worse, because the first `ENO => Ok` was never written
+    /// at all and `Ok` held whatever it held before — a variable the engineer
+    /// bound, silently left alone.
+    ///
+    /// There is no reading of IEC 61131-3 under which one parameter takes two
+    /// arguments, so this is refused rather than given a rule.
+    fn check_no_duplicate_arguments(&mut self, args: &[Arg], span: Span) {
+        let mut seen: Vec<(String, Span)> = Vec::new();
+        let mut repeats: Vec<(String, Span, Span)> = Vec::new();
+        for arg in args {
+            let name = match arg {
+                Arg::Input { name, .. } | Arg::Output { name, .. } => name,
+                Arg::Positional(_) => continue,
+            };
+            match seen
+                .iter()
+                .find(|(seen, _)| seen.eq_ignore_ascii_case(name.as_str()))
+            {
+                Some((_, first)) => repeats.push((name.to_string(), name.span, *first)),
+                None => seen.push((name.as_str().to_string(), name.span)),
+            }
+        }
+        for (name, here, first) in repeats {
+            self.diags.push(
+                Diagnostic::error(
+                    codes::E_DUPLICATE_ARGUMENT,
+                    format!("`{name}` is given an argument twice in this call"),
+                )
+                .with_primary(here, "this parameter already has an argument")
+                .with_secondary(first, "it was given one here")
+                .with_secondary(span, "in this call")
+                .with_note(
+                    "One parameter takes one argument. Binding it twice has no meaning, and the \
+                     reading salman would otherwise fall into — the last one wins — makes the \
+                     first argument invisible.",
+                )
+                .with_clause(clause::TABLE_FUNCTION_CALL),
+            );
+        }
+    }
+
+    /// Whether a named call parameter is one of the two implicit
+    /// execution-control parameters, and which.
+    ///
+    /// IEC 61131-3:2013 Table 18 "Execution control graphically using EN and
+    /// ENO" (Ed 3.0) makes `EN` and `ENO` part of the **calling convention**
+    /// rather than something a POU declares. `EN` decides whether the call
+    /// happens at all; `ENO` reports whether it did. They are therefore
+    /// available on every function and function block call, and no POU may
+    /// declare a variable of either name.
+    ///
+    /// Reporting `EN` used as an output, or `ENO` as an input, by name matters:
+    /// `F(ENO := ok)` looks plausible and does the opposite of what it says.
+    fn execution_control(&mut self, name: &Name, input: bool, span: Span) -> Option<TypeId> {
+        let is_enable = name.ident.eq_str("EN");
+        let is_enable_out = name.ident.eq_str("ENO");
+        if !is_enable && !is_enable_out {
+            return None;
+        }
+        let bool_ty = self.types.elementary(ElementaryType::Bool);
+        if is_enable && !input {
+            self.diags.push(
+                Diagnostic::error(
+                    codes::E_UNKNOWN_PARAMETER,
+                    "`EN` is an input, not an output",
+                )
+                .with_primary(
+                    name.span,
+                    "write `EN := ...` to decide whether the call happens",
+                )
+                .with_secondary(span, "in this call")
+                .with_clause(clause::TABLE_EN_ENO),
+            );
+            return Some(bool_ty);
+        }
+        if is_enable_out && input {
+            self.diags.push(
+                Diagnostic::error(
+                    codes::E_UNKNOWN_PARAMETER,
+                    "`ENO` is an output, not an input",
+                )
+                .with_primary(
+                    name.span,
+                    "write `ENO => ...` to read whether the call happened",
+                )
+                .with_secondary(span, "in this call")
+                .with_clause(clause::TABLE_EN_ENO),
+            );
+            return Some(bool_ty);
+        }
+        Some(bool_ty)
     }
 
     /// The type of one named parameter of a function block instance.
@@ -2307,6 +2612,7 @@ impl Checker<'_> {
     /// is not legal is mixing them in one call, because then nothing says which
     /// position the named ones occupy.
     fn check_arguments(&mut self, formals: &[Formal], args: &[Arg], span: Span, require_all: bool) {
+        self.check_no_duplicate_arguments(args, span);
         let positional = args
             .iter()
             .filter(|a| matches!(a, Arg::Positional(_)))
@@ -2383,6 +2689,11 @@ impl Checker<'_> {
                     }
                 }
                 Arg::Input { name, value } => {
+                    if let Some(ty) = self.execution_control(name, true, span) {
+                        let value_ty = self.expr(value, Some(ty));
+                        self.check_assignable(value_ty, ty, value.span, "the parameter `EN`");
+                        continue;
+                    }
                     let formal = formals
                         .iter()
                         .find(|f| f.input && f.name.eq_ignore_ascii_case(name.as_str()))
@@ -2402,6 +2713,13 @@ impl Checker<'_> {
                     }
                 }
                 Arg::Output { name, target } => {
+                    if let Some(ty) = self.execution_control(name, false, span) {
+                        if let Some(target) = target {
+                            let target_ty = self.assign_target(target);
+                            self.check_assignable(ty, target_ty, target.span, "the output `ENO`");
+                        }
+                        continue;
+                    }
                     let formal = formals
                         .iter()
                         .find(|f| !f.input && f.name.eq_ignore_ascii_case(name.as_str()))
@@ -3033,15 +3351,25 @@ impl Checker<'_> {
         body: &[Stmt],
     ) {
         let control = self.control_variable(stmt, variable);
-        for (expr, what) in [
-            Some((from, "FOR ... :=")),
-            Some((to, "TO")),
-            by.map(|b| (b, "BY")),
+        // `BY` is a **step**, not a value of the control variable, so it is
+        // checked against the control variable's base type rather than against
+        // its declared one. Checking it against the declared type refused
+        // `FOR I := 3 TO 0 BY -1;` over `I : INT (0..3)` because -1 is outside
+        // 0..3 — a descending loop over a subrange could not be written at all,
+        // although every value it gives the control variable is in range.
+        let step_ty = control
+            .and_then(|ty| self.types.as_elementary(ty))
+            .map(|base| self.types.elementary(base))
+            .or(control);
+        for (expr, what, expected) in [
+            Some((from, "FOR ... :=", control)),
+            Some((to, "TO", control)),
+            by.map(|b| (b, "BY", step_ty)),
         ]
         .into_iter()
         .flatten()
         {
-            let ty = self.expr(expr, control);
+            let ty = self.expr(expr, expected);
             let integer = self
                 .types
                 .as_elementary(ty)

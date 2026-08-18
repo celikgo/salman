@@ -91,6 +91,8 @@ pub fn compile(
         },
         diags: Diagnostics::new(),
         constants: Vec::new(),
+        messages: Vec::new(),
+        enum_sets: Vec::new(),
         addresses: Vec::new(),
         layouts: Vec::new(),
         slot_types: Vec::new(),
@@ -122,6 +124,8 @@ struct Compiler<'a> {
     widening: BoolWidening,
     diags: Diagnostics,
     constants: Vec<Value>,
+    messages: Vec<String>,
+    enum_sets: Vec<Box<[i64]>>,
     addresses: Vec<DirectAddress>,
     layouts: Vec<PouLayout>,
     slot_types: Vec<ElementaryType>,
@@ -217,6 +221,8 @@ impl Compiler<'_> {
             program: Program {
                 routines: routine_list,
                 constants: std::mem::take(&mut self.constants),
+                messages: std::mem::take(&mut self.messages),
+                enum_sets: std::mem::take(&mut self.enum_sets),
                 addresses: std::mem::take(&mut self.addresses),
                 slot_types: std::mem::take(&mut self.slot_types),
                 slot_names: std::mem::take(&mut self.slot_names),
@@ -501,8 +507,94 @@ impl Compiler<'_> {
                     }
                     _ => ElementaryType::Dint,
                 };
+                let slot = self.slot_types.len() as u32;
                 self.push_slot(prefix, elementary, persistence);
+                // A subrange or an enumeration whose default is not the
+                // elementary default has to say so here: `Memory` initialises a
+                // slot from its elementary type, which knows nothing about the
+                // declaration. A declared `:=` initialiser is pushed after this
+                // by the caller and wins, because `set_initial` is applied in
+                // order.
+                if let Some(value) = self.declared_default(ty) {
+                    self.initial.push((slot, value));
+                }
             }
+        }
+    }
+
+    /// The value a variable of `ty` starts at when its declaration gives none,
+    /// where that is not simply the elementary type's default.
+    ///
+    /// salman policy: **a variable never starts at a value its own declaration
+    /// excludes.** IEC 61131-3 gives every elementary type a default initial
+    /// value, and gives a subrange no rule of its own — so `Level : INT
+    /// (10..20);` with no initialiser would start at the `INT` default of 0,
+    /// which its declared range excludes. A variable that violates its own
+    /// declaration from the first scan is indefensible once the bound is
+    /// enforced at all: reading it and writing it straight back would fault.
+    ///
+    /// So a subrange starts at the elementary default when its range holds it,
+    /// and otherwise at whichever declared bound is nearer that default —
+    /// `low` for a range wholly above it, `high` for one wholly below. That
+    /// keeps the standard's value wherever the declaration permits it and
+    /// changes as little as possible where it does not.
+    ///
+    /// An enumeration starts at its **first declared value**, which is both the
+    /// widely documented rule and the only choice that is always a member of
+    /// the set.
+    fn declared_default(&self, ty: TypeId) -> Option<Value> {
+        match self.checked.types.get(ty) {
+            TypeData::Subrange { base, low, high } => {
+                let default = base.default_value().as_i64().unwrap_or(0);
+                let chosen = if default < *low {
+                    *low
+                } else if default > *high {
+                    *high
+                } else {
+                    return None;
+                };
+                Some(integer_value(i128::from(chosen), *base))
+            }
+            TypeData::Enum { base, values, .. } => {
+                let (_, first) = values.first()?;
+                if *first == base.default_value().as_i64().unwrap_or(0) {
+                    return None;
+                }
+                Some(integer_value(i128::from(*first), *base))
+            }
+            _ => None,
+        }
+    }
+
+    /// The declared default of every slot a value of `ty` occupies, in slot
+    /// order, mirroring the traversal [`Compiler::emit_slots`] uses.
+    ///
+    /// `None` where the elementary default is already what the declaration
+    /// permits. A `FUNCTION`'s frame is re-initialised on every call and cannot
+    /// read the `initial` table, which belongs to load time, so it needs this.
+    fn declared_defaults(&self, ty: TypeId, depth: u32, out: &mut Vec<Option<Value>>) {
+        if depth > 16 {
+            out.push(None);
+            return;
+        }
+        match self.checked.types.get(ty).clone() {
+            TypeData::Array { element, dims } => {
+                let total: u64 = dims.iter().filter_map(|d| d.len()).product();
+                for _ in 0..total {
+                    self.declared_defaults(element, depth + 1, out);
+                }
+            }
+            TypeData::Struct { fields, .. } => {
+                for field in &fields {
+                    self.declared_defaults(field.ty, depth + 1, out);
+                }
+            }
+            TypeData::FunctionBlock { .. } => {
+                for _ in 0..self.slot_size(ty, depth) {
+                    out.push(None);
+                }
+            }
+            _ => out.push(self.declared_default(ty)),
         }
     }
 
@@ -749,7 +841,9 @@ impl Compiler<'_> {
     }
 }
 
-/// Two temporary slots per `FOR` statement: its limit and its step.
+/// Three temporary slots per `FOR` statement: its limit, its step, and the
+/// candidate the increment produces before the loop decides whether it wants
+/// it.
 ///
 /// salman policy: `TO` and `BY` are evaluated exactly once, at loop entry.
 /// IEC 61131-3 does not say whether they are re-evaluated, and no public source
@@ -759,7 +853,7 @@ fn count_loop_temps(body: &[Stmt]) -> u32 {
     let mut total = 0u32;
     for statement in body {
         total = total.saturating_add(match &statement.kind {
-            StmtKind::For { body, .. } => 2 + count_loop_temps(body),
+            StmtKind::For { body, .. } => 3 + count_loop_temps(body),
             StmtKind::While { body, .. } | StmtKind::Repeat { body, .. } => count_loop_temps(body),
             StmtKind::If {
                 branches,
@@ -868,6 +962,28 @@ impl Compiler<'_> {
             }
             _ => None,
         }
+    }
+
+    /// Interns a name used in a runtime message.
+    fn message(&mut self, text: &str) -> u32 {
+        if let Some(index) = self.messages.iter().position(|existing| existing == text) {
+            return index as u32;
+        }
+        self.messages.push(text.to_string());
+        (self.messages.len() - 1) as u32
+    }
+
+    /// Interns the permitted values of one enumeration.
+    fn enum_set(&mut self, values: Box<[i64]>) -> u32 {
+        if let Some(index) = self
+            .enum_sets
+            .iter()
+            .position(|existing| *existing == values)
+        {
+            return index as u32;
+        }
+        self.enum_sets.push(values);
+        (self.enum_sets.len() - 1) as u32
     }
 
     fn constant(&mut self, value: Value) -> u32 {
@@ -979,6 +1095,81 @@ impl Body<'_, '_> {
     }
 
     // -- expressions -----------------------------------------------------
+
+    /// Emits everything that has to happen for the value on top of the stack to
+    /// become a value of `target`: the conversion, and any constraint the
+    /// target's declared type carries.
+    ///
+    /// **This is the single place a value becomes a value of a declared type.**
+    /// Every site that stores one goes through here, which is the point: a
+    /// subrange bound and a string length are promises made in a declaration,
+    /// and a promise enforced at some assignment sites and not others is worse
+    /// than one enforced nowhere, because the gap is invisible.
+    ///
+    /// `name` is the declared name of what is being written, for the runtime
+    /// message. It is the variable's own name rather than an instance path,
+    /// because the same check runs for every instance of a function block.
+    fn coerce(&mut self, target: Option<TypeId>, value: Option<ElementaryType>, name: &str) {
+        let Some(target) = target else {
+            return;
+        };
+        // The conversion comes **first**, so the bound is checked against the
+        // value that is actually stored rather than against the one the source
+        // expression produced. That ordering is only sound because every
+        // implicit conversion salman performs is value-preserving: IEC
+        // 61131-3:2013 Figure 12 "Supported implicit type conversions" (Ed 3.0)
+        // is a widening graph, and the checker refuses a narrowing assignment
+        // by name (`DINT` into `SINT (0..100)` is `E0401`, not a truncation to
+        // 44 that happens to land inside the range). If salman ever gains an
+        // implicit conversion that can change a value, this order stops being
+        // defensible and the check has to move in front of it.
+        let want = self.compiler.checked.types.as_elementary(target);
+        if let (Some(want), Some(have)) = (want, value)
+            && want != have
+        {
+            self.emit(Op::Convert { to: want });
+        }
+        match self.compiler.checked.types.get(target).clone() {
+            // `Level : INT (0..100);` is a promise about what the variable can
+            // hold. The checker refuses `Level := 200;` because it can see the
+            // constant; only this makes the same 200 through a variable fail.
+            TypeData::Subrange { low, high, .. } => {
+                let name = self.compiler.message(name);
+                self.emit(Op::CheckRange { low, high, name });
+            }
+            // An enumeration is a base type and a set of legal values, which is
+            // a subrange in all but name, and it gets the same treatment for
+            // the same reason. It is not a range check: the values need not be
+            // contiguous, and `Colour : (Red := 0, Blue := 2)` must refuse 1.
+            TypeData::Enum { values, .. } => {
+                let permitted: Box<[i64]> = values.iter().map(|(_, value)| *value).collect();
+                let set = self.compiler.enum_set(permitted);
+                let name = self.compiler.message(name);
+                self.emit(Op::CheckEnum { set, name });
+            }
+            // `STRING[4]` means at most four characters. IEC 61131-3 gives the
+            // target the leading characters that fit rather than refusing the
+            // assignment, so this truncates rather than faulting.
+            TypeData::Str { max_len, .. } => {
+                self.emit(Op::TruncateString { max: max_len });
+            }
+            _ => {}
+        }
+    }
+
+    /// The declared name of an assignment target, for a runtime message.
+    fn target_name(expr: &Expr) -> String {
+        match &expr.kind {
+            ExprKind::Var(name) => name.as_str().to_string(),
+            ExprKind::Paren(inner) => Self::target_name(inner),
+            ExprKind::Member { base, field } => {
+                format!("{}.{}", Self::target_name(base), field.as_str())
+            }
+            ExprKind::Index { base, .. } => format!("{}[..]", Self::target_name(base)),
+            ExprKind::Direct(address) => address.to_string(),
+            _ => "a variable".to_string(),
+        }
+    }
 
     fn expr(&mut self, expr: &Expr) {
         match &expr.kind {
@@ -1291,17 +1482,34 @@ impl Body<'_, '_> {
                 continue;
             };
             let width = self.compiler.slot_size(symbol.ty, 0);
+            let mut declared_defaults = Vec::new();
+            self.compiler
+                .declared_defaults(symbol.ty, 0, &mut declared_defaults);
             for step in 0..width {
                 let slot = offset.saturating_add(step);
                 let declared = if step == 0 { symbol.init.clone() } else { None };
-                let value = declared.unwrap_or_else(|| self.default_of(base, slot));
+                // A subrange or an enumeration whose declaration excludes the
+                // elementary default gets the declaration's own default, so a
+                // function's local starts where its type permits on every call
+                // rather than at a value the next read of it would fault on.
+                let value = declared
+                    .or_else(|| declared_defaults.get(step as usize).cloned().flatten())
+                    .unwrap_or_else(|| self.default_of(base, slot));
                 let index = self.compiler.constant(value);
                 self.emit(Op::Const(index));
                 self.emit(Op::StoreLocal(slot));
             }
         }
         if let Some(result) = layout.result {
-            let value = self.default_of(base, result);
+            let return_type = self
+                .compiler
+                .checked
+                .pous
+                .get(pou as usize)
+                .and_then(|p| p.return_type);
+            let value = return_type
+                .and_then(|ty| self.compiler.declared_default(ty))
+                .unwrap_or_else(|| self.default_of(base, result));
             let index = self.compiler.constant(value);
             self.emit(Op::Const(index));
             self.emit(Op::StoreLocal(result));
@@ -1338,6 +1546,23 @@ impl Body<'_, '_> {
     /// the checker permits an aggregate assignment only between one type and
     /// itself, and types are interned by structure — so slot `k` of the source
     /// is slot `k` of the target.
+    ///
+    /// # Why this does not call [`Body::coerce`], and why that is sound
+    ///
+    /// This is the one place a value is stored into a declared destination
+    /// without going through `coerce`, so it owes an argument. Slot `k` of both
+    /// sides has the **same declared type**, so there is no conversion to
+    /// perform; and slot `k` of the source already satisfies that type's
+    /// constraints, because the only two ways a slot acquires a value are its
+    /// initial value — which
+    /// [`Compiler::declared_default`] keeps inside the declaration — and a
+    /// scalar store, which does go through `coerce`. Re-checking here would
+    /// therefore cost a check per slot of every structure copy to discover
+    /// something already true.
+    ///
+    /// That argument is an induction, and it breaks the moment either premise
+    /// does. `an_aggregate_copy_cannot_carry_a_value_its_element_type_excludes`
+    /// in `crates/salman-cli/tests/constraints.rs` is what holds it up.
     fn copy_wide(&mut self, destination: Anchor, source: Anchor, width: u32) {
         for offset in 0..width {
             self.load(anchor_place(source, offset));
@@ -1359,8 +1584,102 @@ impl Body<'_, '_> {
 
     // -- calls -----------------------------------------------------------
 
-    /// Compiles a call. `want_value` is true when the result is used.
+    /// The `EN` and `ENO` arguments of a call, if it has them.
+    ///
+    /// IEC 61131-3:2013 Table 18 "Execution control graphically using EN and
+    /// ENO" (Ed 3.0): `EN` decides whether the call happens at all, and `ENO`
+    /// reports whether it did. Neither is declared by the POU being called, so
+    /// they are pulled out of the argument list before anything else looks at
+    /// it.
+    fn execution_control(args: &[Arg]) -> (Option<&Expr>, Option<&Expr>) {
+        let mut enable = None;
+        let mut enable_out = None;
+        for arg in args {
+            match arg {
+                Arg::Input { name, value } if name.ident.eq_str("EN") => enable = Some(value),
+                Arg::Output { name, target } if name.ident.eq_str("ENO") => {
+                    enable_out = target.as_ref();
+                }
+                _ => {}
+            }
+        }
+        (enable, enable_out)
+    }
+
+    /// Whether an argument is one of the execution-control parameters, which
+    /// the call body must not try to bind as an ordinary one.
+    fn is_execution_control(arg: &Arg) -> bool {
+        match arg {
+            Arg::Input { name, .. } | Arg::Output { name, .. } => {
+                name.ident.eq_str("EN") || name.ident.eq_str("ENO")
+            }
+            Arg::Positional(_) => false,
+        }
+    }
+
+    /// Compiles a call, honouring `EN` and `ENO`. `want_value` is true when
+    /// the result is used.
+    ///
+    /// With `EN` present the whole call — binding its inputs included — sits
+    /// inside a conditional, because a call that does not happen does not
+    /// write its inputs either.
     fn call(&mut self, expr: &Expr, want_value: bool) {
+        let ExprKind::Call { args, .. } = &expr.kind else {
+            return;
+        };
+        let (enable, enable_out) = Self::execution_control(args);
+
+        let Some(enable) = enable else {
+            self.call_body(expr, want_value);
+            // Without EN the call always happens, so ENO is simply true.
+            if let Some(target) = enable_out {
+                self.set_bool(target, true);
+            }
+            return;
+        };
+
+        if want_value {
+            // A function's result is the value of the expression. With EN false
+            // there is no call and therefore no result, and salman will not
+            // invent one.
+            self.unsupported(
+                expr.span,
+                "`EN` on a call whose result is used; there would be no value when the call \
+                 does not happen. Call it as a statement and read the result separately",
+            );
+            return;
+        }
+
+        self.expr(enable);
+        let skip = self.emit_patch(Op::JumpIfFalse(0));
+        self.call_body(expr, want_value);
+        if let Some(target) = enable_out {
+            self.set_bool(target, true);
+        }
+        let end = self.emit_patch(Op::Jump(0));
+        self.patch_to_here(skip);
+        if let Some(target) = enable_out {
+            self.set_bool(target, false);
+        }
+        self.patch_to_here(end);
+    }
+
+    /// Stores a boolean constant into a place.
+    fn set_bool(&mut self, target: &Expr, value: bool) {
+        let Some(place) = self.place(target) else {
+            self.error(
+                target.span,
+                "this cannot be assigned to",
+                "salman could not resolve this to a variable",
+            );
+            return;
+        };
+        let index = self.compiler.constant(Value::Bool(value));
+        self.emit(Op::Const(index));
+        self.store(place);
+    }
+
+    fn call_body(&mut self, expr: &Expr, want_value: bool) {
         let ExprKind::Call { callee, args } = &expr.kind else {
             return;
         };
@@ -1379,17 +1698,32 @@ impl Body<'_, '_> {
                 );
                 return;
             };
-            let mut outputs: Vec<(u32, &Expr)> = Vec::new();
+            // Each records the slot the value comes out of, the elementary
+            // type it comes out **as**, and where it goes. The source type is
+            // the block's, not the caller's: taking it from the destination —
+            // which is what this used to do — meant `coerce` compared a type
+            // with itself, saw no difference, and emitted no conversion, so an
+            // `INT` output bound into a `DINT` variable left an `INT` value in
+            // a `DINT` slot.
+            let mut outputs: Vec<(u32, Option<ElementaryType>, &Expr)> = Vec::new();
             // A VAR_IN_OUT is written at the call site like an input; salman
             // passes it by value and copies it back after the call, which is
             // what these record.
-            let mut in_outs: Vec<(u32, &Expr)> = Vec::new();
+            let mut in_outs: Vec<(u32, Option<ElementaryType>, &Expr)> = Vec::new();
             for arg in args {
+                // EN and ENO are the calling convention's, not the block's;
+                // `call` has already dealt with them.
+                if Self::is_execution_control(arg) {
+                    continue;
+                }
                 match arg {
                     Arg::Input { name, value } => {
                         let Some(offset) = self.field_offset(ty, name.as_str()) else {
                             continue;
                         };
+                        let field = self
+                            .field_type_id(ty, name.as_str())
+                            .and_then(|t| self.compiler.checked.types.as_elementary(t));
                         let width = self.width(value);
                         if width > 1 {
                             self.copy_wide_from(
@@ -1400,25 +1734,25 @@ impl Body<'_, '_> {
                             );
                         } else {
                             self.expr(value);
-                            let target = self.field_type(ty, name.as_str());
+                            let declared = self.field_type_id(ty, name.as_str());
                             let source = self.elementary(value);
-                            if let (Some(target), Some(source)) = (target, source)
-                                && target != source
-                            {
-                                self.emit(Op::Convert { to: target });
-                            }
+                            let label = name.as_str().to_string();
+                            self.coerce(declared, source, &label);
                             self.store(anchor_place(anchor, offset));
                         }
                         if self.field_section(ty, name.as_str()) == Some(VarSection::InOut) {
-                            in_outs.push((offset, value));
+                            in_outs.push((offset, field, value));
                         }
                     }
                     Arg::Output { name, target } => {
                         let Some(offset) = self.field_offset(ty, name.as_str()) else {
                             continue;
                         };
+                        let field = self
+                            .field_type_id(ty, name.as_str())
+                            .and_then(|t| self.compiler.checked.types.as_elementary(t));
                         if let Some(target) = target {
-                            outputs.push((offset, target));
+                            outputs.push((offset, field, target));
                         }
                     }
                     Arg::Positional(value) => {
@@ -1456,7 +1790,7 @@ impl Body<'_, '_> {
                 ),
             }
 
-            for (offset, target) in outputs.into_iter().chain(in_outs) {
+            for (offset, source, target) in outputs.into_iter().chain(in_outs) {
                 let width = self.width(target);
                 if width > 1 {
                     let Some(destination) = self.anchor(target) else {
@@ -1474,6 +1808,13 @@ impl Body<'_, '_> {
                     continue;
                 };
                 self.load(anchor_place(anchor, offset));
+                // The value is coming *out* of the block into a variable the
+                // caller declared, so it is the caller's declaration whose
+                // constraints apply — and the block's field whose type the
+                // value currently has.
+                let declared = self.compiler.checked.type_of(target.id);
+                let name = Self::target_name(target);
+                self.coerce(declared, source, &name);
                 self.store(place);
             }
 
@@ -1506,7 +1847,9 @@ impl Body<'_, '_> {
         // must be the same list the checker counted its arguments against —
         // which includes VAR_IN_OUT — or an argument written for one parameter
         // lands in another, or in nothing at all.
-        let inputs: Vec<(u32, ElementaryType, VarSection)> = self
+        // The declared TypeId, not the flattened elementary type: flattening
+        // is exactly what loses a subrange bound or a string length.
+        let inputs: Vec<(u32, TypeId, VarSection, String)> = self
             .compiler
             .checked
             .pous
@@ -1518,37 +1861,52 @@ impl Body<'_, '_> {
                     .filter(|(_, s)| matches!(s.section, VarSection::Input | VarSection::InOut))
                     .filter_map(|(i, s)| {
                         let offset = self.compiler.layouts.get(pou as usize)?.offsets.get(i)?;
-                        Some((*offset, self.compiler.slot_type(s.ty), s.section))
+                        Some((*offset, s.ty, s.section, s.name.as_str().to_string()))
                     })
                     .collect()
             })
             .unwrap_or_default();
 
-        let mut in_outs: Vec<(u32, &Expr)> = Vec::new();
+        // The slot the value comes back out of, the elementary type the
+        // parameter holds it as, and the caller's variable it goes into.
+        let mut in_outs: Vec<(u32, Option<ElementaryType>, &Expr)> = Vec::new();
         let mut positional = 0usize;
         for arg in args {
+            // EN and ENO are the calling convention's, not the function's.
+            if Self::is_execution_control(arg) {
+                continue;
+            }
             match arg {
                 Arg::Positional(value) => {
-                    let Some((offset, ty, section)) = inputs.get(positional).copied() else {
+                    let Some((offset, ty, section, name)) = inputs.get(positional).cloned() else {
                         positional += 1;
                         continue;
                     };
                     positional += 1;
-                    self.pass_to_function(base, offset, ty, value);
+                    self.pass_to_function(base, offset, ty, &name, value);
                     if section == VarSection::InOut {
-                        in_outs.push((offset, value));
+                        in_outs.push((
+                            offset,
+                            self.compiler.checked.types.as_elementary(ty),
+                            value,
+                        ));
                     }
                 }
                 Arg::Input { name, value } => {
                     let Some(offset) = self.function_input_offset(pou, name.as_str()) else {
                         continue;
                     };
-                    let ty = self
-                        .function_input_type(pou, name.as_str())
-                        .unwrap_or(ElementaryType::Dint);
-                    self.pass_to_function(base, offset, ty, value);
+                    let Some(ty) = self.function_input_type_id(pou, name.as_str()) else {
+                        continue;
+                    };
+                    let label = name.as_str().to_string();
+                    self.pass_to_function(base, offset, ty, &label, value);
                     if self.function_input_section(pou, name.as_str()) == Some(VarSection::InOut) {
-                        in_outs.push((offset, value));
+                        in_outs.push((
+                            offset,
+                            self.compiler.checked.types.as_elementary(ty),
+                            value,
+                        ));
                     }
                 }
                 Arg::Output { name, .. } => {
@@ -1563,9 +1921,9 @@ impl Body<'_, '_> {
         self.emit(Op::Call { routine, base });
 
         // A VAR_IN_OUT is copied back into whatever the caller named.
-        for (offset, target) in in_outs {
+        for (offset, source, target) in in_outs {
             let width = self.width(target);
-            let source = Anchor::Global(base.saturating_add(offset));
+            let frame = Anchor::Global(base.saturating_add(offset));
             if width > 1 {
                 let Some(destination) = self.anchor(target) else {
                     self.unsupported(
@@ -1574,13 +1932,16 @@ impl Body<'_, '_> {
                     );
                     continue;
                 };
-                self.copy_wide(destination, source, width);
+                self.copy_wide(destination, frame, width);
                 continue;
             }
             let Some(place) = self.place(target) else {
                 continue;
             };
-            self.load(anchor_place(source, 0));
+            self.load(anchor_place(frame, 0));
+            let declared = self.compiler.checked.type_of(target.id);
+            let name = Self::target_name(target);
+            self.coerce(declared, source, &name);
             self.store(place);
         }
 
@@ -1596,7 +1957,7 @@ impl Body<'_, '_> {
     }
 
     /// Stores one argument into a function's static frame.
-    fn pass_to_function(&mut self, base: u32, offset: u32, ty: ElementaryType, value: &Expr) {
+    fn pass_to_function(&mut self, base: u32, offset: u32, ty: TypeId, name: &str, value: &Expr) {
         let width = self.width(value);
         if width > 1 {
             self.copy_wide_from(
@@ -1608,9 +1969,8 @@ impl Body<'_, '_> {
             return;
         }
         self.expr(value);
-        if self.elementary(value) != Some(ty) {
-            self.emit(Op::Convert { to: ty });
-        }
+        let source = self.elementary(value);
+        self.coerce(Some(ty), source, name);
         self.emit(Op::StoreSlot(base.saturating_add(offset)));
     }
 
@@ -1631,21 +1991,28 @@ impl Body<'_, '_> {
         }
     }
 
-    fn field_type(&self, ty: TypeId, name: &str) -> Option<ElementaryType> {
+    /// The **declared** type of a function block field, keeping any subrange or
+    /// string length the declaration carried.
+    ///
+    /// `field_type` flattens to an elementary type, which is what the
+    /// interpreter's instructions need and is exactly what loses the constraint.
+    fn field_type_id(&self, ty: TypeId, name: &str) -> Option<TypeId> {
         match self.compiler.checked.types.get(ty) {
             TypeData::FunctionBlock {
                 native: Some(block),
                 ..
-            } => stdlib::layout(*block)
-                .iter()
-                .find(|f| f.name.eq_ignore_ascii_case(name))
-                .map(|f| f.ty),
+            } => {
+                let field = stdlib::layout(*block)
+                    .iter()
+                    .find(|f| f.name.eq_ignore_ascii_case(name))?;
+                Some(self.compiler.checked.types.elementary(field.ty))
+            }
             TypeData::FunctionBlock {
                 pou: Some(index), ..
             } => {
                 let pou = self.compiler.checked.pous.get(*index as usize)?;
                 let (_, symbol) = pou.symbol(name)?;
-                Some(self.compiler.slot_type(symbol.ty))
+                Some(symbol.ty)
             }
             _ => None,
         }
@@ -1684,10 +2051,12 @@ impl Body<'_, '_> {
             .copied()
     }
 
-    fn function_input_type(&self, pou: u32, name: &str) -> Option<ElementaryType> {
+    /// The **declared** type of a function parameter, keeping any subrange or
+    /// string length.
+    fn function_input_type_id(&self, pou: u32, name: &str) -> Option<TypeId> {
         let symbols = self.compiler.checked.pous.get(pou as usize)?;
         let (_, symbol) = symbols.symbol(name)?;
-        Some(self.compiler.slot_type(symbol.ty))
+        Some(symbol.ty)
     }
 
     // -- statements ------------------------------------------------------
@@ -1733,13 +2102,10 @@ impl Body<'_, '_> {
                     return;
                 };
                 self.expr(value);
-                let want = self.elementary(target);
+                let declared = self.compiler.checked.type_of(target.id);
                 let have = self.elementary(value);
-                if let (Some(want), Some(have)) = (want, have)
-                    && want != have
-                {
-                    self.emit(Op::Convert { to: want });
-                }
+                let name = Self::target_name(target);
+                self.coerce(declared, have, &name);
                 self.store(place);
             }
             StmtKind::AssignAttempt { .. } => {
@@ -1932,11 +2298,26 @@ impl Body<'_, '_> {
 
         let limit = self.temp();
         let step = self.temp();
+        // Where the next value goes before anything decides whether the loop
+        // wants it. See the loop shape below.
+        let next = self.temp();
+
+        // The control variable's own declaration governs its initial value.
+        // The limit, the step and the candidate are salman's temporaries, of
+        // the control variable's base type, and carry no constraint of their
+        // own.
+        let declared = self
+            .compiler
+            .checked
+            .pous
+            .get(self.pou as usize)
+            .and_then(|p| p.symbol(variable.as_str()))
+            .map(|(_, s)| s.ty);
+        let label = variable.as_str().to_string();
 
         self.expr(from);
-        if self.elementary(from) != Some(ty) {
-            self.emit(Op::Convert { to: ty });
-        }
+        let source = self.elementary(from);
+        self.coerce(declared, source, &label);
         self.emit(Op::StoreLocal(control));
 
         self.expr(to);
@@ -1956,36 +2337,28 @@ impl Body<'_, '_> {
         }
         self.emit(Op::StoreLocal(step));
 
-        let top = self.here();
-        // (step >= 0 AND control <= limit) OR (step < 0 AND control >= limit)
-        let zero = self.compiler.constant(integer_value(0, ty));
-        self.emit(Op::LoadLocal(step));
-        self.emit(Op::Const(zero));
-        self.emit(Op::Binary { op: BinOp::Ge, ty });
-        self.emit(Op::LoadLocal(control));
-        self.emit(Op::LoadLocal(limit));
-        self.emit(Op::Binary { op: BinOp::Le, ty });
-        self.emit(Op::Binary {
-            op: BinOp::And,
-            ty: ElementaryType::Bool,
-        });
-
-        self.emit(Op::LoadLocal(step));
-        self.emit(Op::Const(zero));
-        self.emit(Op::Binary { op: BinOp::Lt, ty });
-        self.emit(Op::LoadLocal(control));
-        self.emit(Op::LoadLocal(limit));
-        self.emit(Op::Binary { op: BinOp::Ge, ty });
-        self.emit(Op::Binary {
-            op: BinOp::And,
-            ty: ElementaryType::Bool,
-        });
-
-        self.emit(Op::Binary {
-            op: BinOp::Or,
-            ty: ElementaryType::Bool,
-        });
-        let exit = self.emit_patch(Op::JumpIfFalse(0));
+        // The test guards the value **before** it reaches the control
+        // variable, which is why it is emitted twice: once on the initial
+        // value and once on each candidate the increment produces.
+        //
+        //     control := from            (checked: the body will see it)
+        //     if not wanted -> exit
+        //   body:
+        //     <body>
+        //     next := control + step
+        //     if not wanted -> exit      (the sentinel stops here)
+        //     control := next            (checked: the body will see it)
+        //     jump body
+        //
+        // Storing the incremented value first and checking it afterwards —
+        // which is what this used to do — faulted on `FOR I := 0 TO 3` over
+        // `I : INT (0..3)`: the value that ends the loop is one past its end
+        // by construction, so an ordinary loop over exactly the range its
+        // control variable declares could not run. Nothing reads that value,
+        // and after this loop the control variable holds the last value the
+        // body was given rather than one past it.
+        let entry = self.emit_loop_test(control, limit, step, ty);
+        let body_start = self.here();
 
         self.loops.push(LoopFrame::default());
         self.statements(body);
@@ -1998,14 +2371,63 @@ impl Body<'_, '_> {
         self.emit(Op::LoadLocal(control));
         self.emit(Op::LoadLocal(step));
         self.emit(Op::Binary { op: BinOp::Add, ty });
+        self.emit(Op::StoreLocal(next));
+        let stepped = self.emit_loop_test(next, limit, step, ty);
+        // The increment writes the control variable, so its declared range
+        // applies here too: a loop whose step carries it past the end of a
+        // subrange it will still be used within is exactly what a bound exists
+        // to catch.
+        self.emit(Op::LoadLocal(next));
+        self.coerce(declared, Some(ty), &label);
         self.emit(Op::StoreLocal(control));
-        self.emit(Op::Jump(top));
+        self.emit(Op::Jump(body_start));
 
-        self.patch_to_here(exit);
+        self.patch_to_here(entry);
+        self.patch_to_here(stepped);
         for jump in frame.exits {
             self.patch_to_here(jump);
         }
         let _ = statement;
+    }
+
+    /// Emits `(step >= 0 AND candidate <= limit) OR (step < 0 AND candidate >=
+    /// limit)` and a jump taken when the loop does **not** want `candidate`,
+    /// returning that jump for patching.
+    fn emit_loop_test(
+        &mut self,
+        candidate: u32,
+        limit: u32,
+        step: u32,
+        ty: ElementaryType,
+    ) -> usize {
+        let zero = self.compiler.constant(integer_value(0, ty));
+        self.emit(Op::LoadLocal(step));
+        self.emit(Op::Const(zero));
+        self.emit(Op::Binary { op: BinOp::Ge, ty });
+        self.emit(Op::LoadLocal(candidate));
+        self.emit(Op::LoadLocal(limit));
+        self.emit(Op::Binary { op: BinOp::Le, ty });
+        self.emit(Op::Binary {
+            op: BinOp::And,
+            ty: ElementaryType::Bool,
+        });
+
+        self.emit(Op::LoadLocal(step));
+        self.emit(Op::Const(zero));
+        self.emit(Op::Binary { op: BinOp::Lt, ty });
+        self.emit(Op::LoadLocal(candidate));
+        self.emit(Op::LoadLocal(limit));
+        self.emit(Op::Binary { op: BinOp::Ge, ty });
+        self.emit(Op::Binary {
+            op: BinOp::And,
+            ty: ElementaryType::Bool,
+        });
+
+        self.emit(Op::Binary {
+            op: BinOp::Or,
+            ty: ElementaryType::Bool,
+        });
+        self.emit_patch(Op::JumpIfFalse(0))
     }
 }
 
@@ -2078,6 +2500,9 @@ const fn stack_delta(op: Op) -> i64 {
         | Op::Unary { .. }
         | Op::Convert { .. }
         | Op::BoundsCheck { .. }
+        | Op::CheckRange { .. }
+        | Op::CheckEnum { .. }
+        | Op::TruncateString { .. }
         | Op::Jump(_)
         | Op::Call { .. }
         | Op::CallLocal { .. }

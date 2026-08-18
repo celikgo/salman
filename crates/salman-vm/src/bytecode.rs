@@ -166,6 +166,45 @@ pub enum Op {
         /// Its declared upper bound, inclusive.
         high: i64,
     },
+    /// Checks that the integer on top of the stack lies inside a subrange
+    /// type's declared bounds, leaving it there.
+    ///
+    /// A declaration like `Level : INT (0..100);` is a promise about what the
+    /// variable can hold. Without this, the promise is decoration: the checker
+    /// refuses `Level := 200;` because it can see the constant, and assigning
+    /// the same 200 through a variable succeeds. Emitted wherever a value is
+    /// stored into a subrange-typed destination.
+    CheckRange {
+        /// Lowest permitted value.
+        low: i64,
+        /// Highest permitted value, inclusive.
+        high: i64,
+        /// The variable being written, for the message.
+        name: u32,
+    },
+    /// Checks that the integer on top of the stack is one of an enumeration's
+    /// declared values, leaving it there.
+    ///
+    /// An enumeration is a base type and a **set** of legal values, which is a
+    /// subrange in all but name — except that the set need not be contiguous,
+    /// so a range check would accept `Colour#Red := 1` in a type whose values
+    /// are 0 and 2. The set is carried in [`Program::enum_sets`].
+    CheckEnum {
+        /// Index into [`Program::enum_sets`] of the permitted values.
+        set: u32,
+        /// The variable being written, for the message.
+        name: u32,
+    },
+    /// Truncates the string on top of the stack to a declared maximum length.
+    ///
+    /// `STRING[4]` means at most four characters. Assigning a longer string is
+    /// not an error — IEC 61131-3 gives the target the leading characters that
+    /// fit — but it is not a copy either, and without this the target simply
+    /// held whatever it was given.
+    TruncateString {
+        /// The declared maximum length, in characters.
+        max: u32,
+    },
     /// Applies a binary operation to the two values on top of the stack.
     Binary {
         /// Which operation.
@@ -246,6 +285,16 @@ pub struct Program {
     pub routines: Vec<Routine>,
     /// Constants referenced by [`Op::Const`].
     pub constants: Vec<Value>,
+    /// Names referenced by runtime checks that have something to say about a
+    /// particular variable, such as [`Op::CheckRange`].
+    ///
+    /// Separate from `slot_names` because a check inside a function block runs
+    /// for every instance, and the message wants the variable's declared name
+    /// rather than one instance's path.
+    pub messages: Vec<String>,
+    /// The permitted values of each enumeration referenced by
+    /// [`Op::CheckEnum`], in declaration order.
+    pub enum_sets: Vec<Box<[i64]>>,
     /// Directly represented addresses referenced by the address instructions.
     pub addresses: Vec<DirectAddress>,
     /// The type of every slot, in slot order.
@@ -263,6 +312,8 @@ impl Program {
         Self {
             routines: Vec::new(),
             constants: Vec::new(),
+            messages: Vec::new(),
+            enum_sets: Vec::new(),
             addresses: Vec::new(),
             slot_types: Vec::new(),
             slot_names: Vec::new(),

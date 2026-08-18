@@ -126,6 +126,10 @@ pub const E_BAD_CONFIGURATION: DiagCode = DiagCode("E0321");
 pub const E_MIXED_ARGUMENT_FORMS: DiagCode = DiagCode("E0322");
 /// Field access on a type that has no fields.
 pub const E_NOT_AN_AGGREGATE: DiagCode = DiagCode("E0323");
+/// A variable declared with a name the calling convention reserves: `EN`, `ENO`.
+pub const E_RESERVED_PARAMETER_NAME: DiagCode = DiagCode("E0324");
+/// One parameter given an argument twice in the same call.
+pub const E_DUPLICATE_ARGUMENT: DiagCode = DiagCode("E0325");
 
 /// A value that cannot be assigned to a target of the type it was given.
 pub const E_TYPE_MISMATCH: DiagCode = DiagCode("E0401");
@@ -227,6 +231,8 @@ mod tests {
             E_NOT_WRITABLE,
             E_NOT_CALLABLE,
             E_POSITIONAL_FUNCTION_BLOCK_ARGUMENT,
+            E_RESERVED_PARAMETER_NAME,
+            E_DUPLICATE_ARGUMENT,
             E_UNKNOWN_PARAMETER,
             E_WRONG_ARGUMENT_COUNT,
             E_FUNCTION_BLOCK_HAS_NO_VALUE,
