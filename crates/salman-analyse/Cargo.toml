@@ -12,6 +12,7 @@ salman-core.workspace = true
 salman-capture.workspace = true
 salman-findings.workspace = true
 salman-modbus.workspace = true
+salman-vm.workspace = true
 
 [lints]
 workspace = true

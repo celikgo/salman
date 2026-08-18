@@ -466,6 +466,38 @@ pub static REGISTRY: &[Capability] = &[
                findings ship, four of which are salman describing its own limits.",
     },
     Capability {
+        id: "io.findings.timeline",
+        area: "Diagnostics",
+        title: "A capture and a scan trace on one time axis",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-analyse/tests/timeline.rs",
+                test: "a_wire_event_is_labelled_with_the_scan_that_acted_on_it",
+            },
+            Evidence {
+                file: "crates/salman-analyse/tests/timeline.rs",
+                test: "moving_the_alignment_moves_which_scan_saw_the_event",
+            },
+            Evidence {
+                file: "crates/salman-analyse/tests/timeline.rs",
+                test: "a_finding_about_the_whole_capture_is_left_off_the_axis",
+            },
+        ],
+        note: "A control problem is rarely visible in either alone: the trace says the \
+               program decided something and the capture says the device was asked \
+               something, and the question is which came first. Every wire event is \
+               labelled with the scan that saw it. The alignment between the virtual scan \
+               clock and the capture's wall clock is a **required argument** and salman will \
+               not infer one — two runs of the same program produce identical traces and the \
+               same traffic captured twice produces different timestamps, so a guess would \
+               shift every event by a constant and leave every ordering plausible and every \
+               conclusion wrong. A test asserts that moving the alignment changes which scan \
+               saw an event, which is why it cannot be guessed. Nothing on the command line \
+               builds one yet.",
+    },
+    Capability {
         id: "io.located-variables",
         area: "Runtime",
         title: "AT %IX0.0 binds a variable to the process image, with no copy",

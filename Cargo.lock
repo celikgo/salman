@@ -162,6 +162,7 @@ dependencies = [
  "salman-core",
  "salman-findings",
  "salman-modbus",
+ "salman-vm",
 ]
 
 [[package]]

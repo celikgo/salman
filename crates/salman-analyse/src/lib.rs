@@ -24,5 +24,7 @@
 //! them.
 
 pub mod modbus;
+pub mod timeline;
 
 pub use modbus::{Analysis, Options, analyse_capture};
+pub use timeline::{Alignment, Entry, Event, Timeline};

@@ -128,8 +128,11 @@ The first version that leaves the process. Two items are done; the rest is futur
 - `[x]` **Capture and decode**: reading a pcap file, decoding Ethernet, VLAN, IPv4, IPv6 and
   TCP out of it, reassembling the byte streams, and framing Modbus out of those — the same
   decoder that runs on a live socket, unable to tell which it is on. `salman capture` reads
-  one. **The timeline is not done**: nothing yet puts a capture and a scan trace on the same
-  time axis, which is the half that makes a control problem visible.
+  one. The **timeline** merges a capture and a scan trace onto one axis and labels every wire
+  event with the scan that saw it — the half that makes a control problem visible. Its
+  alignment between the virtual scan clock and the capture's wall clock is a required
+  argument, because salman cannot infer one and a guess would leave every ordering plausible
+  and every conclusion wrong. Nothing on the command line builds one yet.
 - `[x]` **The first diagnostics**: findings that carry evidence, say how sure salman is, and
   say *why* when they are not an assertion of fault. Eleven ship, four of which are salman
   describing its own limits.
