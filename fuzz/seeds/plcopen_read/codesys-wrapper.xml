@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<project xmlns="http://www.plcopen.org/xml/tc6_0201">
+  <fileHeader companyName="V" productName="P" productVersion="1" creationDateTime="2026-01-01T00:00:00"/>
+  <contentHeader name="C"><coordinateInfo><fbd><scaling x="1" y="1"/></fbd><ld><scaling x="1" y="1"/></ld><sfc><scaling x="1" y="1"/></sfc></coordinateInfo></contentHeader>
+  <types><dataTypes/><pous>
+    <pou name="Main" pouType="program">
+      <interface><localVars><variable name="X"><type><INT/></type></variable></localVars></interface>
+      <body><ST><xhtml xmlns="http://www.w3.org/1999/xhtml">X := X + 1;</xhtml></ST></body>
+    </pou>
+  </pous></types>
+  <instances><configurations/></instances>
+</project>

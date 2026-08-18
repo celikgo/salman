@@ -782,8 +782,10 @@ pub static REGISTRY: &[Capability] = &[
                accepts any single element in the XHTML namespace. A body in a language \
                salman does not read is named rather than dropped, because a file that \
                quietly lost half its program would compile and be wrong. Verified against a \
-               real CODESYS V3.5 export that PLCopen itself publishes. Nothing writes \
-               PLCopen XML yet, and there is no compatibility matrix — see \
+               real CODESYS V3.5 export that PLCopen itself publishes, and fuzzed with a \
+               target that asserts every POU read appears in the rendering and no unread \
+               body goes missing between the model and the report. Nothing writes PLCopen \
+               XML yet, and there is no compatibility matrix — see \
                docs/adr/ADR-0003-plcopen-xml-canonical.md.",
     },
     Capability {
@@ -862,8 +864,8 @@ pub static REGISTRY: &[Capability] = &[
         status: Status::ImplementedUntested,
         milestone: "v0.1",
         evidence: &[],
-        note: "Six of the nine targets in fuzz/fuzz_targets; the other three cover the Modbus \
-               decoders and have their own entry. Four cover the lexer: valid UTF-8, raw bytes \
+        note: "Six of the thirteen targets in fuzz/fuzz_targets; the others cover the Modbus \
+               decoders, the capture path and the PLCopen reader, and have their own entries. Four cover the lexer: valid UTF-8, raw bytes \
                decoded the way the loader will decode them, the strict dialect, and a \
                differential run of both dialects. One covers the parser, and one covers \
                lexing, parsing and semantic analysis together. Each asserts what must hold \

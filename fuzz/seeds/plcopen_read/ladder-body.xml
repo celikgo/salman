@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<project xmlns="http://www.plcopen.org/xml/tc6_0201">
+  <fileHeader companyName="V" productName="P" productVersion="1" creationDateTime="2026-01-01T00:00:00"/>
+  <contentHeader name="C"/>
+  <types><dataTypes/><pous>
+    <pou name="Rungs" pouType="program">
+      <interface/>
+      <body><LD><leftPowerRail localId="1" height="20" width="10"><position x="0" y="0"/></leftPowerRail></LD></body>
+    </pou>
+  </pous></types>
+  <instances><configurations/></instances>
+</project>

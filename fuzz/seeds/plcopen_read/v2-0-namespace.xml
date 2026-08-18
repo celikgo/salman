@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<project xmlns="http://www.plcopen.org/xml/tc6_0200">
+  <fileHeader companyName="" productName="CODESYS" productVersion="V3.5" creationDateTime="2022-10-04T11:36:41"/>
+  <contentHeader name="Library"><Comment>capital C, and genuinely in the schema</Comment></contentHeader>
+  <types><dataTypes/><pous>
+    <pou name="P" pouType="functionBlock">
+      <interface><inputVars><variable name="In"><type><derived name="Axis"/></type></variable></inputVars></interface>
+      <body><ST><xhtml xmlns="http://www.w3.org/1999/xhtml">;</xhtml></ST></body>
+    </pou>
+  </pous></types>
+  <instances><configurations/></instances>
+</project>
