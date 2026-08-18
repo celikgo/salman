@@ -169,7 +169,9 @@ compiler and a deterministic scan runtime. All ten IEC standard function blocks.
 Cyclic, event and freewheeling tasks with a correct process image, and `AT %`
 variables bound to it with no copy. Several source files build as one program.
 Modbus TCP and RTU framing, a client, and a simulator to point it at — with
-every write gated by the posture model. A project file that binds a device's
+every write gated by the posture model. Reading a packet capture and saying
+what happened on it, with findings that carry their evidence and say how sure
+salman is. A project file that binds a device's
 registers to `%I` and `%Q`, so a program reads a real device through the
 process image. salman **reads** live equipment and will not drive its outputs;
 see [`docs/adr/ADR-0014-salman-does-not-drive-a-plant.md`](docs/adr/ADR-0014-salman-does-not-drive-a-plant.md).
@@ -178,8 +180,9 @@ exit code. Two dialect profiles.
 
 **Not written:** every graphical language, Instruction List, the Edition 3
 object-oriented extensions, references, most of the standard function library,
-every protocol except Modbus, capture and decode of recorded traffic, every
-importer, the network model, the desktop application and the AI layer. Meeting one of these in source produces a message naming what is
+every protocol except Modbus, the timeline that would put a capture and a scan
+trace on one axis, every importer, the network model, the desktop application
+and the AI layer. Meeting one of these in source produces a message naming what is
 missing, not a confusing failure.
 
 ---

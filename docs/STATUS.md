@@ -13,6 +13,12 @@ A capability is only marked *implemented and tested* if it names tests that exis
 | `[x]` | Seeded xoshiro256++ generator, pinned and recorded in every trace header | implemented and tested | v0.1 | Written out in-crate rather than taken from rand, whose StdRng and SmallRng are documented as non-portable. Not cryptographic: never use it for a key or a token. |
 | `[x]` | In-crate SHA-256 fingerprint of simulation traces, with NIST known-answer tests | implemented and tested | v0.1 | A content fingerprint, not a security primitive: not constant-time, and not to be used where an attacker picks the input and the comparison is secret. Written in-crate so there is no runtime CPU-feature dispatch and no C toolchain. |
 
+## Diagnostics
+
+| | Capability | Status | Milestone | Notes |
+|---|---|---|---|---|
+| `[x]` | Findings that say how sure salman is, and why, with the evidence attached | implemented and tested | v0.2 | Three axes rather than one severity: what kind of claim, how bad, and what sort of thing was observed. Two rules hold by construction rather than by convention — only an assertion of fault takes a severity, and everything else must name a reason from a closed list with no free-text escape. A `Pass` is a real answer, because without one a report cannot distinguish nothing being wrong from salman not having looked. Confidence is first-class, which is why SARIF is an export and not the model: that schema cannot express it. Eleven findings ship, four of which are salman describing its own limits. |
+
 ## Language
 
 | | Capability | Status | Milestone | Notes |

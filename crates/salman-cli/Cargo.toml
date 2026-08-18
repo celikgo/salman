@@ -16,6 +16,9 @@ salman-core.workspace = true
 salman-lang.workspace = true
 salman-vm.workspace = true
 salman-test.workspace = true
+salman-analyse.workspace = true
+salman-modbus.workspace = true
+salman-project.workspace = true
 clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 
 [lints]

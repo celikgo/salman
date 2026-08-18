@@ -86,6 +86,22 @@ enum Command {
         #[arg(long, default_value = "generic")]
         dialect: String,
     },
+    /// Read a packet capture and say what happened on it.
+    Capture {
+        /// The capture file, in classic pcap format.
+        path: PathBuf,
+        /// The TCP port Modbus is on.
+        #[arg(long, default_value_t = salman_modbus::limits::TCP_PORT)]
+        modbus_port: u16,
+        /// Print every finding, including the ones that say nothing is wrong.
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Read a project file and check what it says.
+    Project {
+        /// The project file, in YAML.
+        path: PathBuf,
+    },
     /// Run declarative tests against a source file.
     Test {
         /// The Structured Text file.
@@ -154,6 +170,12 @@ fn run(cli: Cli) -> Result<u8, String> {
             trace.as_deref(),
             &dialect,
         ),
+        Command::Capture {
+            path,
+            modbus_port,
+            verbose,
+        } => read_capture(&path, modbus_port, verbose),
+        Command::Project { path } => check_project(&path),
         Command::Test {
             path,
             tests,
@@ -318,6 +340,110 @@ fn run_program(
     } else {
         0
     })
+}
+
+/// Reads a capture and prints what salman is willing to say about it.
+///
+/// Findings that assert a fault are always printed. The rest — the ones that
+/// say a check passed, or that salman could not tell — are printed with
+/// `--verbose`, because they are the difference between "nothing is wrong
+/// here" and "salman did not look" and a reader who wants that distinction
+/// should be able to have it.
+fn read_capture(path: &Path, modbus_port: u16, verbose: bool) -> Result<u8, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let options = salman_analyse::modbus::Options { port: modbus_port };
+    let analysis = salman_analyse::modbus::analyse_capture(&name, &bytes, options)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+
+    let mut shown = 0;
+    for finding in &analysis.findings {
+        if !verbose && !finding.kind.asserts_a_fault() {
+            continue;
+        }
+        println!("{finding}");
+        println!();
+        shown += 1;
+    }
+
+    println!(
+        "{}: {} frames, {} Modbus units, {} transactions paired",
+        path.display(),
+        analysis.frames,
+        analysis.adus,
+        analysis.paired
+    );
+    let faults = analysis
+        .findings
+        .iter()
+        .filter(|f| f.kind.asserts_a_fault())
+        .count();
+    let quiet = analysis.findings.len() - faults;
+    if faults == 0 {
+        println!("no faults found");
+    } else {
+        println!(
+            "{faults} finding{} of fault",
+            if faults == 1 { "" } else { "s" }
+        );
+    }
+    if quiet > 0 && !verbose {
+        // Saying how many were held back, because a report that silently omits
+        // "salman could not tell" reads as "salman checked and it was fine".
+        println!(
+            "{quiet} further finding{} — passes, and things salman could not \
+             determine — not shown; add --verbose",
+            if quiet == 1 { "" } else { "s" }
+        );
+    }
+    let _ = shown;
+    Ok(if faults == 0 { 0 } else { EXIT_PROBLEM })
+}
+
+/// Reads a project file and reports everything wrong with it.
+fn check_project(path: &Path) -> Result<u8, String> {
+    let text = read(path)?;
+    match salman_project::spec::Project::parse(&text, salman_vm::compile::IMAGE_BYTES) {
+        Ok(project) => {
+            println!(
+                "{}: {} source file{}, {} device{}, {} mapping{}",
+                path.display(),
+                project.sources.len(),
+                if project.sources.len() == 1 { "" } else { "s" },
+                project.devices.len(),
+                if project.devices.len() == 1 { "" } else { "s" },
+                project.mappings().count(),
+                if project.mappings().count() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+            );
+            for (device, mapping) in project.mappings() {
+                let direction = mapping
+                    .direction()
+                    .map_or_else(|_| "?".to_string(), |d| d.to_string());
+                println!(
+                    "  {}: {} {} from {} -> {} ({direction})",
+                    device.name,
+                    mapping.count,
+                    mapping.table.name(),
+                    mapping.device_start,
+                    mapping.image,
+                );
+            }
+            Ok(0)
+        }
+        Err(error) => {
+            for problem in error.problems() {
+                println!("error: {problem}");
+            }
+            Ok(EXIT_PROBLEM)
+        }
+    }
 }
 
 fn run_tests(

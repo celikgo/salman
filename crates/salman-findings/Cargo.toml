@@ -1,0 +1,14 @@
+[package]
+name = "salman-findings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Claims salman makes about decoded bytes, with the evidence for each"
+
+[dependencies]
+salman-core.workspace = true
+
+[lints]
+workspace = true

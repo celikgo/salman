@@ -433,6 +433,39 @@ pub static REGISTRY: &[Capability] = &[
                operating systems differ and the difference is what evasion exploits.",
     },
     Capability {
+        id: "io.findings",
+        area: "Diagnostics",
+        title: "Findings that say how sure salman is, and why, with the evidence attached",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-findings/tests/model.rs",
+                test: "only_an_assertion_of_fault_carries_a_severity",
+            },
+            Evidence {
+                file: "crates/salman-findings/tests/model.rs",
+                test: "anything_that_is_not_an_assertion_of_fault_says_why",
+            },
+            Evidence {
+                file: "crates/salman-analyse/tests/capture.rs",
+                test: "a_request_nobody_answered_says_it_cannot_tell_which_happened",
+            },
+            Evidence {
+                file: "crates/salman-analyse/tests/capture.rs",
+                test: "a_stream_that_never_framed_says_it_is_not_modbus_rather_than_that_modbus_broke",
+            },
+        ],
+        note: "Three axes rather than one severity: what kind of claim, how bad, and what \
+               sort of thing was observed. Two rules hold by construction rather than by \
+               convention — only an assertion of fault takes a severity, and everything else \
+               must name a reason from a closed list with no free-text escape. A `Pass` is a \
+               real answer, because without one a report cannot distinguish nothing being \
+               wrong from salman not having looked. Confidence is first-class, which is why \
+               SARIF is an export and not the model: that schema cannot express it. Eleven \
+               findings ship, four of which are salman describing its own limits.",
+    },
+    Capability {
         id: "io.located-variables",
         area: "Runtime",
         title: "AT %IX0.0 binds a variable to the process image, with no copy",

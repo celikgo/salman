@@ -59,8 +59,9 @@ footnote:
   manifest. `salman test` still takes one source file. Nothing imports and nothing namespaces:
   every declaration in a project is visible to every other, and a name declared twice is a
   duplicate.
-- **Five subcommands**: `version`, `status`, `check`, `run` and `test`. There is no formatter,
-  no language server, no debugger, no project file and no graphical interface.
+- **Seven subcommands**: `version`, `status`, `check`, `run`, `test`, `capture` and
+  `project`. There is no formatter, no language server, no debugger and no graphical
+  interface.
 - **Not one standard *function* is implemented.** No `*_TO_*` conversions, no `ABS`, no
   `SQRT`, no `SEL`/`MAX`/`MIN`/`LIMIT`/`MUX`, no shifts or rotates, no string functions. The
   ten standard function *blocks* are all there; the function library is not started. A
