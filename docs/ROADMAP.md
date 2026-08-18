@@ -80,8 +80,9 @@ otherwise:
 
 ### Not started
 
-- **The project file.** There is no manifest format; the dialect and the source files are
-  command-line arguments. `salman test` therefore still takes exactly one source file.
+- **A command line that reads the project file.** The format exists and is checked
+  (`crates/salman-project`), and no subcommand takes one yet: `salman check` and `salman run`
+  still take a list of source files, and `salman test` takes exactly one.
 - **The formatter.** There is no `salman fmt`, and nothing renders an AST back to source.
 - **Exponentiation.** The compiler reports `**` as not implemented rather than compiling it
   to something approximate.
@@ -117,8 +118,12 @@ The first version that leaves the process. Two items are done; the rest is futur
   without any hardware. The wire format, both framings, the server's data model, the client
   and the simulator are all in the tree, and every write goes through the posture model.
   Nothing reads or writes a serial port yet.
-- **I/O mapping**: binding a device's registers to `%I` and `%Q` in the process image, with
-  the mapping declared in the project file rather than in code.
+- `[x]` **I/O mapping**: binding a device's registers to `%I` and `%Q` in the process image,
+  with the mapping declared in the project file rather than in code. Inputs are read before
+  the scan latches and outputs written after it publishes. Output mappings run against a
+  simulated device only — salman reads live equipment and does not drive it, which is
+  `docs/adr/ADR-0014-salman-does-not-drive-a-plant.md` and is not a setting. Nothing on the
+  command line runs a link yet.
 - **Capture, decode and timeline**: recording traffic, decoding it, and putting it on the
   same time axis as the scan trace, because a control problem is almost never visible in
   either alone.

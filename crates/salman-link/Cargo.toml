@@ -1,0 +1,22 @@
+[package]
+name = "salman-link"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Running a project's IO mappings against a device, at the scan boundaries"
+
+[dependencies]
+salman-core.workspace = true
+salman-lang.workspace = true
+salman-vm.workspace = true
+salman-modbus.workspace = true
+salman-modbus-net.workspace = true
+salman-project.workspace = true
+
+[dev-dependencies]
+salman-test.workspace = true
+
+[lints]
+workspace = true

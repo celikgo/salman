@@ -177,6 +177,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "salman-link"
+version = "0.0.1"
+dependencies = [
+ "salman-core",
+ "salman-lang",
+ "salman-modbus",
+ "salman-modbus-net",
+ "salman-project",
+ "salman-test",
+ "salman-vm",
+]
+
+[[package]]
 name = "salman-modbus"
 version = "0.0.1"
 dependencies = [

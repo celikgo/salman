@@ -166,6 +166,37 @@ impl Client {
         self.exchange(unit, request)
     }
 
+    /// Issues a write to a device salman is simulating.
+    ///
+    /// This is `Effect::WriteSimulated`, not `Effect::WriteLiveDevice`, and so
+    /// it needs no confirmation: nothing on the other end is real. It exists
+    /// for the IO-mapping link, which writes a program's outputs every scan
+    /// and could not ask a person about each one.
+    ///
+    /// **The caller is responsible for knowing that the peer is simulated.**
+    /// There is nothing in a socket that says so, which is exactly why
+    /// `salman_link::Link` takes it as an explicit `Peer` and refuses to run
+    /// output mappings against a live one. Nothing here can check it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::NotAWrite`] if given a read, and the transport
+    /// and decoding errors otherwise. There is no posture check here because
+    /// there is no posture that forbids simulation once salman is doing any:
+    /// the check belongs where the peer is known to be simulated.
+    pub fn write_simulated(
+        &mut self,
+        unit: u8,
+        request: &Request,
+    ) -> Result<Response, ClientError> {
+        if !request.is_write() {
+            return Err(ClientError::NotAWrite {
+                function: request.function().0,
+            });
+        }
+        self.exchange(unit, request)
+    }
+
     /// Sends one request and waits for the response that answers it.
     fn exchange(&mut self, unit: u8, request: &Request) -> Result<Response, ClientError> {
         let transaction = self.allocate_transaction();

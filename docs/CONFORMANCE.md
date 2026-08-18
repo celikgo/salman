@@ -753,9 +753,11 @@ of the implementation.
   `VAR_CONFIG` instance path is refused by name.
 - **A formatter, a language server, a project file, a GUI, a network model, a plant model,
   any importer, any AI layer, and every protocol except Modbus.** None of these has any code
-  in this repository. Modbus does: `crates/salman-modbus` decodes and encodes it, and
-  `crates/salman-modbus-net` has a client and a simulator. Nothing yet maps a device's
-  registers onto the process image, and nothing reads a capture file. See `docs/ROADMAP.md` for when each is intended. The declarative test harness,
+  in this repository, except that the project file exists as a format
+  (`crates/salman-project`) that no subcommand reads yet. Modbus does: `crates/salman-modbus`
+  decodes and encodes it, `crates/salman-modbus-net` has a client and a simulator, and
+  `crates/salman-link` binds a device's registers to the process image. Nothing reads a
+  capture file. See `docs/ROADMAP.md` for when each is intended. The declarative test harness,
   which an earlier version of this list said did not exist, does: it is `salman-test`, it is
   driven by `salman test`, and the worked example depends on it.
 

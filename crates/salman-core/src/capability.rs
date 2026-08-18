@@ -389,6 +389,35 @@ pub static REGISTRY: &[Capability] = &[
                mapping: this reads and checks one.",
     },
     Capability {
+        id: "io.mapping-runs",
+        area: "Protocols",
+        title: "A program reads a device's registers through the process image",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-link/tests/end_to_end.rs",
+                test: "a_program_reads_a_register_from_a_device_through_the_process_image",
+            },
+            Evidence {
+                file: "crates/salman-link/tests/end_to_end.rs",
+                test: "an_input_that_changes_during_a_scan_is_not_seen_until_the_next_poll",
+            },
+            Evidence {
+                file: "crates/salman-link/tests/end_to_end.rs",
+                test: "a_link_to_a_live_device_refuses_output_mappings_when_it_is_built",
+            },
+        ],
+        note: "Inputs are read before the scan latches and outputs written after it \
+               publishes, so the program sees one frozen picture of the world for the whole \
+               scan. Output mappings run against a **simulated** device only: against live \
+               equipment salman reads and will not write, because a tool that writes a \
+               plant's outputs every scan is a controller and salman has no watchdog, no \
+               failsafe state and no safety assessment. No setting enables it; see \
+               docs/adr/ADR-0014-salman-does-not-drive-a-plant.md. Nothing on the command \
+               line runs a link yet.",
+    },
+    Capability {
         id: "io.modbus.client-and-simulator",
         area: "Protocols",
         title: "A Modbus TCP client and a simulator, over real sockets, with writes gated",
