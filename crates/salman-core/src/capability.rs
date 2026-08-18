@@ -122,11 +122,25 @@ pub static REGISTRY: &[Capability] = &[
         title: "IEC clause citation registry with explicit provenance",
         status: Status::ImplementedTested,
         milestone: "v0.1",
-        evidence: &[Evidence {
-            file: "crates/salman-core/src/clause.rs",
-            test: "citation_display_flags_unconfirmed_numbers_so_a_reader_cannot_miss_it",
-        }],
-        note: "No clauses are cited yet; the mechanism and its honesty rules are in place.",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-core/src/clause.rs",
+                test: "citation_display_flags_unconfirmed_numbers_so_a_reader_cannot_miss_it",
+            },
+            Evidence {
+                file: "crates/salman-core/src/clause.rs",
+                test: "no_clause_number_goes_deeper_than_the_three_levels_the_contents_publish",
+            },
+            Evidence {
+                file: "crates/salman-core/src/clause.rs",
+                test: "the_committed_citation_document_matches_what_the_registry_renders",
+            },
+        ],
+        note: "43 citations are registered — 22 clauses, 18 tables and 3 figures of \
+               IEC 61131-3:2013 (Edition 3.0) — each with a number cross-checked against a \
+               public source and a requirement paraphrased in salman's own words. \
+               docs/IEC_CITATIONS.md is generated from the registry and cannot drift from it. \
+               A citation being registered does not mean the behaviour it names is implemented.",
     },
     Capability {
         id: "core.deterministic-rng",
@@ -311,6 +325,24 @@ pub static REGISTRY: &[Capability] = &[
         }],
         note: "The root VERSION file and Cargo's version cannot disagree: the mismatch \
                is a compile error, not a CI job.",
+    },
+    Capability {
+        id: "lang.st.lexer-fuzzing",
+        area: "Language",
+        title: "libFuzzer targets for the Structured Text lexer, asserting its postconditions",
+        status: Status::ImplementedUntested,
+        milestone: "v0.1",
+        evidence: &[],
+        note: "Four targets in fuzz/fuzz_targets: valid UTF-8, raw bytes decoded the way the \
+               loader will decode them, the strict dialect, and a differential run of both \
+               dialects. Each asserts what must hold for any input — exactly one Eof, \
+               non-decreasing spans inside the source, every literal and address index \
+               resolving — rather than only that nothing panicked. All four build and run \
+               under nightly, and .github/workflows/fuzz.yml runs each for 60 s daily. Not \
+               ImplementedTested, for two reasons that both matter: a fuzzing run shows that \
+               nothing was found, which is not the same as showing anything is right, and \
+               this registry's evidence rule wants a named test function, which a libFuzzer \
+               target is not. Only the lexer is covered.",
     },
 ];
 

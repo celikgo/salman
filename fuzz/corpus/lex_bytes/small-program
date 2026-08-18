@@ -1,0 +1,3 @@
+PROGRAM Main
+  X := 1;
+END_PROGRAM

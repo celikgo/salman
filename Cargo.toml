@@ -12,6 +12,7 @@ resolver = "3"
 members = [
     "crates/salman-core",
     "crates/salman-lang",
+    "crates/salman-vm",
     "crates/salman-cli",
 ]
 
@@ -28,6 +29,7 @@ categories = ["development-tools", "simulation"]
 [workspace.dependencies]
 salman-core = { path = "crates/salman-core", version = "0.0.1" }
 salman-lang = { path = "crates/salman-lang", version = "0.0.1" }
+salman-vm = { path = "crates/salman-vm", version = "0.0.1" }
 
 [workspace.lints.rust]
 # salman parses bytes that arrive from industrial networks and from files it
@@ -64,6 +66,11 @@ doc_markdown = "allow"
 too_many_lines = "allow"
 # Configuration structs are mostly flags. That is what configuration is.
 struct_excessive_bools = "allow"
+# In a language front end, match arms are grouped by the domain concept, not by
+# whether their bodies happen to coincide. Merging the USINT arm with the BYTE
+# arm because both hold 0..255 would hide that they are different types with
+# different rules, which is exactly what this code exists to keep straight.
+match_same_arms = "allow"
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
 cast_precision_loss = "allow"

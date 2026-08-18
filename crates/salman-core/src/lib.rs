@@ -26,7 +26,7 @@ pub mod value;
 pub mod version;
 
 pub use capability::{Capability, Status};
-pub use clause::ClauseRef;
+pub use clause::{CitationKind, ClauseRef};
 pub use diag::{DiagCode, Diagnostic, Diagnostics, Severity};
 pub use hash::{Sha256, sha256, to_hex};
 pub use ident::{Ident, IdentKey};

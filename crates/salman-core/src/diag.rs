@@ -513,7 +513,7 @@ fn expand_tabs(line: &str, one_based_column: usize) -> (String, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clause::{ClauseRef, Provenance};
+    use crate::clause::{CitationKind, ClauseRef, Provenance};
     use crate::span::{FileId, SourceMap, Span};
 
     const E_TEST: DiagCode = DiagCode("E0001");
@@ -549,8 +549,9 @@ mod tests {
     fn rendering_carries_the_iec_clause_so_a_reader_can_check_salman() {
         let (map, id) = sources("X := 1;\n");
         let clause = ClauseRef {
-            standard: "IEC 61131-3",
-            edition: "3.0 (2013)",
+            standard: "IEC 61131-3:2013",
+            edition: "3.0",
+            kind: CitationKind::Clause,
             number: "0.0",
             title: "Example clause",
             requirement: "an example requirement paraphrase for the test",
@@ -561,7 +562,7 @@ mod tests {
             .with_clause(clause);
         let text = render(&d, &map);
         assert!(
-            text.contains("= standard: IEC 61131-3 Ed. 3.0 (2013) §0.0"),
+            text.contains("= standard: IEC 61131-3:2013 §0.0 \"Example clause\" (Ed 3.0)"),
             "{text}"
         );
         assert!(text.contains("clause number unconfirmed"), "{text}");

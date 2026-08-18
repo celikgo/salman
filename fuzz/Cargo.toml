@@ -1,0 +1,93 @@
+# Fuzz targets for salman's parsers.
+#
+# ---------------------------------------------------------------------------
+# Why this is a separate workspace
+# ---------------------------------------------------------------------------
+#
+# The `[workspace]` table below is load-bearing, not boilerplate. Without it
+# this manifest would be an orphan package inside the root workspace's
+# directory tree and cargo would refuse to build it; with it, `fuzz/` is its
+# own workspace root and inherits nothing from `../Cargo.toml`.
+#
+# Inheriting nothing is the point. cargo-fuzz always builds `--release`, and
+# the root workspace's release profile sets `lto = "thin"` and
+# `codegen-units = 1` — settings chosen for a shipped binary, where a slow link
+# is paid once. A fuzzing session rebuilds on every source edit, and paying a
+# whole-program LTO link each time turns a ten-second edit-run loop into a
+# minute-long one. Nobody fuzzes under those conditions for long, which is how
+# a fuzzing gate quietly stops being used.
+#
+# `fuzz/` is therefore also absent from the root workspace's `members` list.
+# `cargo test --workspace` and `cargo clippy --workspace` at the repository
+# root do not see these targets; `cargo +nightly fuzz build` from here does.
+
+[package]
+name = "salman-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.94"
+license = "Apache-2.0"
+authors = ["salman contributors"]
+description = "Fuzz targets for salman's IEC 61131-3 front end"
+# Not a library anybody depends on and not something to release: this package
+# exists to be run, never to be consumed.
+publish = false
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+# libfuzzer-sys vendors LLVM's libFuzzer, so its licence is
+# `(MIT OR Apache-2.0) AND NCSA` — the NCSA half is not optional and cannot be
+# satisfied by choosing the other arm of the OR. `../deny.toml` already lists
+# NCSA in its `licenses.allow` array with a comment naming this crate as the
+# reason, so this dependency arrives without a supply-chain failure.
+libfuzzer-sys = "0.4"
+# Used, though no `use arbitrary::…` appears in these targets: `fuzz_target!`
+# with a typed input such as `|source: &str|` builds that value through
+# `arbitrary::Arbitrary`. Declaring it directly pins the version salman fuzzes
+# against rather than leaving it to whatever libfuzzer-sys happens to resolve,
+# and the `derive` feature is here for the structured targets that will follow
+# once the parser lands and inputs stop being plain text.
+arbitrary = { version = "1", features = ["derive"] }
+
+salman-core = { path = "../crates/salman-core" }
+salman-lang = { path = "../crates/salman-lang" }
+
+# Every target below is declared explicitly rather than left to cargo's `bin`
+# autodiscovery, because `cargo fuzz list` reads this manifest: a target that is
+# not listed here is not fuzzed, and would not be missed by anything.
+#
+# `test`, `doc` and `bench` are off on each because a `#![no_main]` crate has
+# nothing to run under any of them, and letting cargo try produces link errors
+# that look like real failures.
+
+[[bin]]
+name = "lex_utf8"
+path = "fuzz_targets/lex_utf8.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lex_bytes"
+path = "fuzz_targets/lex_bytes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lex_strict_dialect"
+path = "fuzz_targets/lex_strict_dialect.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lex_differential"
+path = "fuzz_targets/lex_differential.rs"
+test = false
+doc = false
+bench = false

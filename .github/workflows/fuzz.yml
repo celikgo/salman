@@ -1,27 +1,17 @@
 # Rule 7: untrusted input is treated as hostile — every parser is fuzzed.
 #
-# READ THIS BEFORE TRUSTING A RED RUN
+# This workflow used to fail on purpose. There were no fuzz targets, README
+# listed rule 7 under "enforced, not aspirational", and skipping the job would
+# have made that sentence false in the quietest possible way: an all-green
+# checks list with the fuzzing gate silently absent from it. So it failed with
+# a message naming what was missing, and said so in this comment.
 #
-# There are no fuzz targets in this repository yet, and this workflow FAILS
-# because of it. That is the intended behaviour, not an oversight, and the
-# choice was between two options:
-#
-#   (a) gate the whole workflow on `fuzz/` existing, so it is skipped until
-#       somebody writes a target, or
-#   (b) fail with a message naming what is missing.
-#
-# (b) was chosen. README lists rule 7 under "enforced, not aspirational", and
-# (a) would have made that sentence false in the quietest possible way: an
-# all-green checks list, with the fuzzing gate silently absent from it, for as
-# long as nobody happened to look. A gate that reports "nothing to do" and a
-# gate that reports "pass" are indistinguishable on a pull request page, and
-# this project's whole premise is that they must not be.
-#
-# The cost of (b) is bounded, and that is what makes it affordable here. This
-# workflow runs on a schedule and on demand only — it is NOT a pull-request
-# check, so a red run blocks no merge. It is a standing, visible reminder on
-# the Actions tab that a stated rule is not yet enforced. It turns green the
-# day the first fuzz target lands, and never by any other means.
+# The targets exist now — fuzz/fuzz_targets/lex_*.rs — and this workflow does
+# real work. The guard below survives from that arrangement in a different
+# role: it no longer reports an unwritten thing, it catches fuzz/ being deleted
+# or emptied. Without it, removing every target turns this job green, because a
+# loop over nothing succeeds. That failure mode is exactly the one the original
+# comment was written about, so the guard stays.
 #
 # ---------------------------------------------------------------------------
 # What the schedule does and does not guarantee
@@ -37,6 +27,11 @@
 #     after 60 days without repository activity, and GitHub emails an owner
 #     rather than announcing it here. If fuzzing appears to have stopped, check
 #     that this workflow is still enabled before assuming it is passing.
+#
+# Still not a pull-request check. A fuzzing run is a search, and a search that
+# happens to find something on one branch and not another would fail merges at
+# random. Making the *build* of these targets a pull-request check is a
+# reasonable thing to want and a separate decision from this file.
 name: fuzz
 
 on:
@@ -54,6 +49,12 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Per target. A nightly job is a regression smoke test, not a fuzzing
+  # campaign: a minute per target re-runs the whole corpus and explores a
+  # little past it, which is what catches a crash reintroduced yesterday.
+  # Genuine discovery needs hours and a corpus that outlives one run — see
+  # fuzz/README.md for how to do that locally.
+  FUZZ_SECONDS: "60"
 
 jobs:
   fuzz:
@@ -74,13 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d fuzz ]; then
-            echo "::error title=No fuzz targets::README rule 7 says every parser is fuzzed. There is no fuzz/ directory in this repository, so nothing is fuzzed and this job cannot pass. Fuzz targets are required before the next milestone: create fuzz/ with 'cargo fuzz init', add a target per parser as each one lands, and this workflow starts doing real work with no change to it."
-            echo
-            echo "Expected: a fuzz/ directory containing fuzz/Cargo.toml and fuzz/fuzz_targets/*.rs"
-            echo "Found:    nothing"
-            echo
-            echo "This failure is deliberate. See the comment block at the top of"
-            echo ".github/workflows/fuzz.yml for why this is a failure rather than a skip."
+            echo "::error title=No fuzz targets::README rule 7 says every parser is fuzzed. The fuzz/ directory is gone, so nothing is fuzzed and this job cannot pass. It is a separate cargo workspace; restore it rather than adding targets elsewhere."
             exit 1
           fi
           # `set -euo pipefail` is on, so this counts without a pipeline that
@@ -93,13 +88,10 @@ jobs:
             done
           fi
           if [ "$targets" -eq 0 ]; then
-            echo "::error title=No fuzz targets::fuzz/ exists but contains no target in fuzz/fuzz_targets/*.rs, so this job would fuzz nothing. See the comment block at the top of .github/workflows/fuzz.yml."
+            echo "::error title=No fuzz targets::fuzz/ exists but contains no target in fuzz/fuzz_targets/*.rs, so the loop below would fuzz nothing and pass. See the comment block at the top of .github/workflows/fuzz.yml."
             exit 1
           fi
           echo "Found $targets fuzz target(s)."
-
-      # Everything below runs only once the guard above passes. It is the real
-      # job, written now so that the first fuzz target needs no workflow change.
 
       # libFuzzer needs -Z sanitizer, which is nightly-only. The pinned stable
       # toolchain in rust-toolchain.toml stays the toolchain for everything
@@ -114,30 +106,69 @@ jobs:
           # other job, with different flags; sharing one cache key would mean
           # each job repeatedly evicting the other's work.
           key: fuzz-nightly
+          workspaces: fuzz
+
+      # The corpus is the accumulated memory of every run before this one, and
+      # it is where nearly all of a fuzzer's value lives: a minute of fuzzing
+      # from scratch rediscovers what yesterday already knew, a minute starting
+      # from yesterday's corpus goes somewhere new. Losing it silently turns
+      # this job into a permanent first run.
+      #
+      # Restore-only would be enough to be useful; the save on the way out is
+      # what makes it compound. Cache entries are immutable once written, so the
+      # key carries the run id and `restore-keys` picks the most recent previous
+      # entry by prefix. The seed corpus committed under fuzz/corpus/ is checked
+      # out first and the restore unpacks on top of it, so the seeds are present
+      # whether or not a cache entry exists.
+      - name: Restore and persist the corpus
+        uses: actions/cache@v6
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
 
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
 
+      # Built as its own step so that a compile error is reported as a compile
+      # error, rather than as the first target in the loop below failing for
+      # reasons the log makes look like a crash.
       - name: Build every fuzz target
+        working-directory: fuzz
         run: cargo +nightly fuzz build
 
       - name: Run every fuzz target
+        working-directory: fuzz
         run: |
           set -euo pipefail
-          # A nightly job is a smoke test for regressions, not a fuzzing
-          # campaign: a few minutes per target catches a crash reintroduced
-          # yesterday, and long-running discovery belongs on dedicated
-          # infrastructure with a persistent corpus.
+          # `cargo fuzz run` exits non-zero when libFuzzer reports a crash, a
+          # hang or an out-of-memory, and `set -e` turns that into a failed job.
+          # Nothing here swallows a non-zero status, and nothing should: a
+          # crash found and not reported is worse than not fuzzing at all.
+          #
+          #   -timeout=10       one input taking ten seconds is a hang; the
+          #                     lexer is single-pass over bounded input and has
+          #                     no business being anywhere near that.
+          #   -rss_limit_mb=2048 rule 7 says a decoder must not allocate without
+          #                     bound. This is the assertion for that half of
+          #                     the rule — an input that inflates to 2 GB fails
+          #                     the run instead of taking the runner down.
           for target in $(cargo +nightly fuzz list); do
             echo "::group::fuzzing $target"
-            cargo +nightly fuzz run "$target" -- -max_total_time=300 -timeout=10
+            cargo +nightly fuzz run "$target" -- \
+              -max_total_time="$FUZZ_SECONDS" \
+              -timeout=10 \
+              -rss_limit_mb=2048
             echo "::endgroup::"
           done
 
       # Uploaded only on failure: a crashing input is the entire output of a
       # failed fuzzing run, and losing it means the failure cannot be
-      # reproduced. On a passing run there is nothing here worth keeping.
+      # reproduced. fuzz/README.md describes what to do with this artefact.
+      # On a passing run there is nothing here worth keeping — the corpus is
+      # already carried forward by the cache step above.
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

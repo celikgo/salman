@@ -35,6 +35,7 @@ pub mod codes;
 pub mod dialect;
 pub mod lexer;
 pub mod token;
+pub mod types;
 
 pub use address::DirectAddress;
 pub use ast::{CompilationUnit, Expr, ExprKind, Item, Pou, Stmt, StmtKind};
