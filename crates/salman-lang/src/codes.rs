@@ -46,13 +46,47 @@ pub const E_DIALECT_REJECTS: DiagCode = DiagCode("E0115");
 /// An identifier longer than salman accepts.
 pub const E_IDENT_TOO_LONG: DiagCode = DiagCode("E0116");
 
+/// Expressions, statements or operator chains nested deeper than the dialect
+/// allows. Distinct from [`E_NESTING_TOO_DEEP`], which the lexer raises about
+/// comments and brackets: this one is about the shape of the tree.
+pub const E_PARSE_NESTING_TOO_DEEP: DiagCode = DiagCode("E0201");
+/// A token the grammar does not allow where it was found.
+pub const E_EXPECTED_TOKEN: DiagCode = DiagCode("E0202");
+/// An expression was required and there was none.
+pub const E_EXPECTED_EXPRESSION: DiagCode = DiagCode("E0203");
+/// A statement was required and there was none.
+pub const E_EXPECTED_STATEMENT: DiagCode = DiagCode("E0204");
+/// A declaration was required and there was none.
+pub const E_EXPECTED_DECLARATION: DiagCode = DiagCode("E0205");
+/// A type was required and there was none.
+pub const E_EXPECTED_TYPE: DiagCode = DiagCode("E0206");
+/// A block that runs to the end of the file without its closing keyword.
+pub const E_UNCLOSED_BLOCK: DiagCode = DiagCode("E0207");
+/// Two `CASE` labels select the same value. A salman rule, not one salman could
+/// verify in the standard; see `crate::parser`.
+pub const E_DUPLICATE_CASE_LABEL: DiagCode = DiagCode("E0208");
+/// Two `CASE` labels cover overlapping ranges. A salman rule; see
+/// [`E_DUPLICATE_CASE_LABEL`].
+pub const E_OVERLAPPING_CASE_LABELS: DiagCode = DiagCode("E0209");
+/// A `FOR` body assigns to the loop's control variable. A salman rule.
+pub const E_FOR_CONTROL_VARIABLE_ASSIGNED: DiagCode = DiagCode("E0210");
+/// A word used as a name that the identifier rules refuse.
+pub const E_BAD_NAME: DiagCode = DiagCode("E0211");
+
 /// A literal prefix naming a type salman has not implemented, such as `LDT#`.
 pub const U_UNSUPPORTED_LITERAL_PREFIX: DiagCode = DiagCode("U0101");
+
+/// A construct salman parses far enough to name, and does not implement.
+pub const U_UNIMPLEMENTED_CONSTRUCT: DiagCode = DiagCode("U0201");
 
 /// A duration literal finer than one nanosecond, whose tail was truncated.
 pub const W_DURATION_TRUNCATED: DiagCode = DiagCode("W0101");
 /// Two consecutive underscores in an identifier.
 pub const W_CONSECUTIVE_UNDERSCORES: DiagCode = DiagCode("W0102");
+
+/// An unparenthesised unary operand of `**`, where dialects disagree about
+/// which binds tighter.
+pub const W_POWER_OPERAND_BINDING: DiagCode = DiagCode("W0201");
 
 #[cfg(test)]
 mod tests {
@@ -77,9 +111,22 @@ mod tests {
             E_UNTERMINATED_PRAGMA,
             E_DIALECT_REJECTS,
             E_IDENT_TOO_LONG,
+            E_PARSE_NESTING_TOO_DEEP,
+            E_EXPECTED_TOKEN,
+            E_EXPECTED_EXPRESSION,
+            E_EXPECTED_STATEMENT,
+            E_EXPECTED_DECLARATION,
+            E_EXPECTED_TYPE,
+            E_UNCLOSED_BLOCK,
+            E_DUPLICATE_CASE_LABEL,
+            E_OVERLAPPING_CASE_LABELS,
+            E_FOR_CONTROL_VARIABLE_ASSIGNED,
+            E_BAD_NAME,
             U_UNSUPPORTED_LITERAL_PREFIX,
+            U_UNIMPLEMENTED_CONSTRUCT,
             W_DURATION_TRUNCATED,
             W_CONSECUTIVE_UNDERSCORES,
+            W_POWER_OPERAND_BINDING,
         ];
         let mut codes: Vec<&str> = all.iter().map(|c| c.0).collect();
         let count = codes.len();

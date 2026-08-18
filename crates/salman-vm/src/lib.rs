@@ -28,8 +28,17 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod bytecode;
 pub mod clock;
+pub mod exec;
 pub mod memory;
+pub mod stdfb;
+pub mod task;
+pub mod trace;
 
+pub use bytecode::{NativeBlock, Op, Program, Routine};
 pub use clock::{Clock, ClockMode};
+pub use exec::{ExecLimits, Fault, FaultKind, execute};
 pub use memory::{Memory, Persistence, ProcessImage, Restart, SlotId};
+pub use task::{Runtime, StepOutcome, TaskConfig, TaskTrigger};
+pub use trace::{Sample, Signal, Trace};
