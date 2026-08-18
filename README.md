@@ -130,14 +130,15 @@ measurement exceeds the threshold in [`perf-budget.toml`](perf-budget.toml).
 
 | Measurement | Budget | Linux x86-64 | macOS aarch64 | Windows x86-64 |
 |---|---|---|---|---|
-| Cold start of `salman version` | 2 s | **0.70 ms** | **3.6 ms** | **6.7 ms** |
-| Release binary on disk | 120 MB* | **2.80 MB** | **2.38 MB** | **2.52 MB** |
-| Peak resident set | 350 MB | **2.87 MB** | **1.93 MB** | not gated† |
-| `cargo test --workspace`, excluding the build | 60 s | **< 1 s** | **1 s** | **0.91 s** |
+| Cold start of `salman version` | 2 s | **0.76 ms** | **1.5 ms** | **5.8 ms** |
+| Release binary on disk | 120 MB* | **3.38 MB** | **2.82 MB** | **3.09 MB** |
+| Peak resident set | 350 MB | **2.84 MB** | **1.95 MB** | not gated† |
+| `cargo test --workspace`, excluding the build | 60 s | **1 s** | **2 s** | **2.4 s** |
 
 Those are the numbers the `performance budget` job measured on GitHub-hosted
-runners for the commit this README describes, not numbers from a developer's
-laptop. One more, measured locally because no CI job benchmarks throughput yet:
+runners, not numbers from a developer's laptop. They cover a tree with thirteen
+crates and 1179 tests in it; the suite still runs in seconds and the binary is
+still under four megabytes. One more, measured locally because no CI job benchmarks throughput yet:
 a **1000-rung program scans in 60 µs**, or 0.6 % of one core at a 10 ms period.
 
 \* The 120 MB figure is an **installer** budget. There is no installer yet, so
