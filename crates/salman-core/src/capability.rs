@@ -357,6 +357,38 @@ pub static REGISTRY: &[Capability] = &[
                Modbus layer.",
     },
     Capability {
+        id: "io.mapping",
+        area: "Protocols",
+        title: "A project file binding a device's registers to the process image",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-project/tests/project.rs",
+                test: "a_working_project_reads",
+            },
+            Evidence {
+                file: "crates/salman-project/tests/project.rs",
+                test: "writing_to_a_table_modbus_cannot_write_is_refused_when_the_file_is_read",
+            },
+            Evidence {
+                file: "crates/salman-project/tests/project.rs",
+                test: "two_devices_that_claim_the_same_image_bits_are_refused",
+            },
+            Evidence {
+                file: "crates/salman-project/tests/project.rs",
+                test: "a_misspelt_key_is_refused_rather_than_ignored",
+            },
+        ],
+        note: "The mapping is declared in a file rather than in code, so the person who \
+               knows the plant can read it. Which way data moves is not a key the file can \
+               set: %I is read from the device and %Q is written to it. Widths must agree, \
+               ranges must exist, no two mappings may claim the same image bits, and a \
+               misspelt key is refused rather than ignored — an ignored one would leave a \
+               program reading zeros from an input it believed was live. Nothing yet runs a \
+               mapping: this reads and checks one.",
+    },
+    Capability {
         id: "io.modbus.client-and-simulator",
         area: "Protocols",
         title: "A Modbus TCP client and a simulator, over real sockets, with writes gated",

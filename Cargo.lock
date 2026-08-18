@@ -192,6 +192,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "salman-project"
+version = "0.0.1"
+dependencies = [
+ "salman-core",
+ "salman-lang",
+ "salman-modbus",
+ "serde",
+ "serde-saphyr",
+]
+
+[[package]]
 name = "salman-test"
 version = "0.0.1"
 dependencies = [

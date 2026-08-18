@@ -13,11 +13,20 @@ The obvious move is to reach for an asynchronous runtime. Every Rust Modbus libr
 `tokio-modbus` is built on tokio, and the shape is so common that not doing it looks like an
 oversight rather than a decision.
 
-At 0.0.1 this workspace has **no dependencies at all** outside the standard library. SHA-256,
-the pseudo-random generator, the diagnostic renderer, the JUnit writer and now the CRC and
-every Modbus decoder are written in-crate. That is not frugality for its own sake: each one
-is a component that reads input salman did not write, `unsafe_code = "forbid"` is provable
-across all of it, and a fuzz finding in any of it is a finding salman can act on.
+At 0.0.1 the dependency position is worth stating precisely, because the loose version of it
+("salman has no dependencies") is not true.
+
+`salman-core`, `salman-lang`, `salman-vm`, `salman-modbus` and `salman-modbus-net` depend on
+**nothing outside the standard library**. That is every crate that decodes bytes: the
+Structured Text front end, the runtime, and the whole Modbus stack. SHA-256, the
+pseudo-random generator, the diagnostic renderer, the CRC and every decoder are written
+in-crate, so `unsafe_code = "forbid"` is provable across all of it and a fuzz finding
+anywhere in it is one salman can act on.
+
+Two crates at the edges do have dependencies: `salman-test` reads its YAML test format with
+`serde` and `serde-saphyr`, and `salman-cli` parses arguments with `clap`. Both handle input
+a user wrote on their own machine rather than input that arrived from a network, and neither
+is in the path of anything this ADR is about.
 
 ## Decision
 
