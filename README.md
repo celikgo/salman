@@ -115,16 +115,15 @@ and publishes a per-feature account in [`docs/CONFORMANCE.md`](docs/CONFORMANCE.
 ## The performance budget
 
 Rule 5: the lightweight budget is a tested gate, not a slogan.
-`.github/workflows/perf.yml` measures each of these and fails when a measurement
-exceeds the threshold in [`perf-budget.toml`](perf-budget.toml).
+`.github/workflows/perf.yml` measures the four rows below and fails when a
+measurement exceeds the threshold in [`perf-budget.toml`](perf-budget.toml).
 
 | Measurement | Budget | Measured |
 |---|---|---|
-| Cold start (`salman version`, warm page cache, median of 20) | 2 s | **2.8 ms** |
+| Cold start (`salman version`, warm page cache, median of 20) | 2 s | **2.6 ms** |
 | Release binary on disk | 120 MB* | **2.4 MB** |
-| Peak resident set (30 000 scans of the conveyor example) | 350 MB | **2.9 MB** |
+| Peak resident set (`salman version`) | 350 MB | **2.1 MB** |
 | `cargo test --workspace`, excluding the build | 60 s | **0.4 s** |
-| Scan of a 1000-rung program | a small fraction of one core | **60 µs, or 0.6 % of one core at a 10 ms period** |
 
 Measured on an Apple M-series laptop with the pinned toolchain. The numbers on a
 shared-tenant CI runner are worse and noisier, which is why the committed
@@ -133,6 +132,14 @@ thresholds are ceilings rather than targets.
 \* The 120 MB figure is an **installer** budget. There is no installer yet, so
 that job currently weighs the CLI binary against the same number; `perf-budget.toml`
 says so rather than letting a passing run be read as evidence the installer fits.
+
+Two things this table is not. The peak resident set is measured on
+`salman version`, which is the smallest thing the binary does; a longer run costs
+more — 30 000 scans of the conveyor example peaks at about 2.9 MB on the same
+laptop — and nothing in CI gates that figure. And **salman publishes no
+interpreter throughput number.** There is no VM benchmark in this repository, so
+there is nothing to publish; see
+[`docs/adr/ADR-0006-bytecode-vm.md`](docs/adr/ADR-0006-bytecode-vm.md).
 
 ---
 

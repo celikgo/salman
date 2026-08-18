@@ -36,7 +36,7 @@ two tests in that module enforce it:
 The consequence is the useful part: deleting a test fails the build of the crate that claims
 it. A status table cannot drift away from the code, because it is not written by hand.
 
-The registry also records what is *not* claimed. Lexer fuzzing sits at *implemented,
+The registry also records what is *not* claimed. Front-end fuzzing sits at *implemented,
 untested* with an empty evidence list and a note saying why: a fuzzing run demonstrates that
 nothing was found, which is not the same as demonstrating that anything is right. That row
 is a small thing, and it is the clearest example of the rule working, because the easy move
@@ -90,14 +90,17 @@ as standard.
 
 ### Parsers are fuzzed
 
-Rule 7 of the project is that untrusted input is treated as hostile. Four libFuzzer targets
-in `fuzz/fuzz_targets` run against the Structured Text lexer daily in CI, and they assert
+Rule 7 of the project is that untrusted input is treated as hostile. Six libFuzzer targets
+in `fuzz/fuzz_targets` run against the Structured Text front end daily in CI, and they assert
 postconditions — exactly one end-of-file token, non-decreasing spans inside the source,
-every literal and address index resolving — rather than only that nothing panicked.
+every literal and address index resolving, every node id usable as an index into a side
+table — rather than only that nothing panicked.
 
-Coverage today is the lexer. The parser and every decoder salman later grows are not fuzzed
-yet. The sentence "every parser will be fuzzed in CI" is a commitment with a workflow behind
-it, and at 0.0.1 it is partly kept, which is what the capability registry says.
+Coverage today is the lexer, the parser, and the three passes together through semantic
+analysis. The declarative test-file reader in `salman-test` is not fuzzed, and neither is any
+decoder salman later grows. The sentence "every parser will be fuzzed in CI" is a commitment
+with a workflow behind it, and at 0.0.1 it is partly kept, which is what the capability
+registry says.
 
 ### What this adds up to
 

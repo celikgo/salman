@@ -269,15 +269,22 @@ jurisdictions have their own regimes and salman has not assessed them.
 ## 8. Upstream licences
 
 **salman vendors no third-party protocol stack at 0.0.1.** There is no fieldbus code, no
-OPC UA code, no network code of any kind in this repository. The dependency graph is the
-command-line argument parser and what it pulls in, and nothing else.
+OPC UA code, no network code of any kind in this repository. There are exactly two direct
+third-party dependencies — the command-line argument parser and the YAML reader for
+declarative test files — and everything else in the graph is pulled in by one of those two.
+`salman-core`, `salman-lang` and `salman-vm` have no third-party dependency at all.
 
 | Dependency | Role | Licence | How it enters |
 |---|---|---|---|
-| `clap` and its transitive graph (`anstream`, `anstyle*`, `clap_builder`, `clap_derive`, `clap_lex`, `colorchoice`, `heck`, `is_terminal_polyfill`, `once_cell_polyfill`, `strsim`, `utf8parse`) | Command-line argument parsing for `salman-cli` | MIT OR Apache-2.0 | crates.io, pinned in the committed `Cargo.lock` |
-| `proc-macro2`, `quote`, `syn` | Build-time macro support for `clap_derive` | MIT OR Apache-2.0 | crates.io, build dependency only |
+| `clap`, with `clap_builder`, `clap_lex` and `anstyle` | Command-line argument parsing for `salman-cli` | MIT OR Apache-2.0 | crates.io, direct dependency of `salman-cli`, pinned in the committed `Cargo.lock` |
+| `serde` and `serde_core` | Deserialising the declarative test-file schema in `salman-test` | MIT OR Apache-2.0 | crates.io, direct dependency of `salman-test` |
+| `serde-saphyr` | The YAML reader behind `.salman-test.yaml` files | MIT OR Apache-2.0 | crates.io, direct dependency of `salman-test` |
+| `annotate-snippets`, `unicode-width` | Error snippet rendering, via `serde-saphyr` | MIT OR Apache-2.0 | crates.io |
+| `granit-parser`, `arraydeque`, `smallvec`, `nohash-hasher`, `num-traits`, `base64`, `zmij` | Scanning, containers and number and byte-string conversion, via `serde-saphyr` | MIT OR Apache-2.0, except `zmij`, which is MIT only | crates.io |
+| `encoding_rs`, `encoding_rs_io`, `cfg-if` | Character-encoding detection on a test file, via `serde-saphyr` | MIT OR Apache-2.0, and `encoding_rs` additionally BSD-3-Clause for the encoding tables | crates.io |
+| `clap_derive`, `serde_derive`, `proc-macro2`, `quote`, `syn`, `heck` | Build-time macro support for the two derive macros above | MIT OR Apache-2.0 | crates.io, procedural macro and build dependencies only |
 | `unicode-ident` | Identifier character classes, via `syn` | MIT OR Apache-2.0, plus Unicode-3.0 for the character data | crates.io |
-| `windows-sys`, `windows-link` | Terminal detection on Windows, via `anstyle-wincon` | MIT OR Apache-2.0 | crates.io, Windows targets only |
+| `autocfg` | Compiler feature detection, build script of `num-traits` | Apache-2.0 OR MIT | crates.io, build dependency only |
 
 Every one of those is redistributable under Apache-2.0 terms. The allowlist that enforces it
 lives in `deny.toml` at the repository root, and `cargo-deny` runs it in CI: a licence the

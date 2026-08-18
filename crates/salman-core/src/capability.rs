@@ -348,20 +348,24 @@ pub static REGISTRY: &[Capability] = &[
     Capability {
         id: "lang.st.lexer-fuzzing",
         area: "Language",
-        title: "libFuzzer targets for the Structured Text lexer, asserting its postconditions",
+        title: "libFuzzer targets for the Structured Text front end, asserting its \
+                postconditions",
         status: Status::ImplementedUntested,
         milestone: "v0.1",
         evidence: &[],
-        note: "Four targets in fuzz/fuzz_targets: valid UTF-8, raw bytes decoded the way the \
-               loader will decode them, the strict dialect, and a differential run of both \
-               dialects. Each asserts what must hold for any input — exactly one Eof, \
-               non-decreasing spans inside the source, every literal and address index \
-               resolving — rather than only that nothing panicked. All four build and run \
+        note: "Six targets in fuzz/fuzz_targets. Four cover the lexer: valid UTF-8, raw bytes \
+               decoded the way the loader will decode them, the strict dialect, and a \
+               differential run of both dialects. One covers the parser, and one covers \
+               lexing, parsing and semantic analysis together. Each asserts what must hold \
+               for any input — exactly one Eof, non-decreasing spans inside the source, every \
+               literal and address index resolving, every node id usable as an index into a \
+               side table — rather than only that nothing panicked. All six build and run \
                under nightly, and .github/workflows/fuzz.yml runs each for 60 s daily. Not \
                ImplementedTested, for two reasons that both matter: a fuzzing run shows that \
                nothing was found, which is not the same as showing anything is right, and \
                this registry's evidence rule wants a named test function, which a libFuzzer \
-               target is not. Only the lexer is covered.",
+               target is not. The declarative test-file reader in salman-test is not \
+               covered.",
     },
     Capability {
         id: "lang.st.parser",

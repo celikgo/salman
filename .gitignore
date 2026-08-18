@@ -23,6 +23,13 @@ fuzz/corpus/
 /scratch/
 *.local.toml
 
+# IDE. Editor configuration is a personal choice, not a property of the project.
+.idea/
+*.iml
+*.iws
+.vscode/
+.fleet/
+
 # OS
 .DS_Store
 Thumbs.db

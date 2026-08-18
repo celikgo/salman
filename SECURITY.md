@@ -147,10 +147,13 @@ crates underneath it.
 - **The toolchain is pinned** in `rust-toolchain.toml` to an exact version, with the same
   reasoning: a byte-for-byte trace comparison across Linux, macOS and Windows means nothing
   if the machines run different compilers. Bumping the pin is a reviewed change.
-- **Parsers are fuzzed.** Four libFuzzer targets in `fuzz/fuzz_targets` run daily against
-  the Structured Text lexer, asserting its postconditions rather than only that it did not
-  panic. Coverage today is the lexer only; the parser and every future decoder are not yet
-  fuzzed, and the capability registry records that honestly rather than as a tick.
+- **Parsers are fuzzed.** Six libFuzzer targets in `fuzz/fuzz_targets` run daily against the
+  Structured Text front end, asserting postconditions rather than only that nothing panicked.
+  Four cover the lexer — valid UTF-8, raw bytes, the strict dialect, and a differential run
+  of both dialects — one covers the parser, and one covers lexing, parsing and semantic
+  analysis together. The declarative test-file reader in `salman-test` is not fuzzed, and
+  neither is any future protocol decoder. The capability registry records that coverage
+  honestly rather than as a tick.
 
 ---
 

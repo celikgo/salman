@@ -9,8 +9,8 @@ right.
 
 Everything below the "Where v0.1 stands" section is written in the future tense on purpose.
 None of it exists. There is no GUI, no protocol support, no AI layer, no importer, no network
-model, no plant model and no fieldbus in this repository at 0.0.1, and the only thing the
-`salman` binary can do is print its version.
+model, no plant model and no fieldbus in this repository at 0.0.1. The `salman` binary has
+five subcommands — `version`, `status`, `check`, `run` and `test` — and nothing beyond them.
 
 Status markers are the four from the capability registry — shapes, not colours, because a
 red/green table some readers cannot distinguish is a defect:
