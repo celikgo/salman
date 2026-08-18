@@ -149,6 +149,11 @@ impl ServerHandle {
     }
 
     /// How many requests it has answered.
+    ///
+    /// Incremented once the answer is decided and before it is written, so a
+    /// client that has received a reply always sees that reply counted. The
+    /// other order would make this number lag its own observable effect by an
+    /// amount that depends on the thread scheduler.
     #[must_use]
     pub fn served(&self) -> u64 {
         self.served.load(Ordering::Relaxed)
@@ -215,11 +220,18 @@ fn serve(
                     let Some(reply) = answer(&frame, device) else {
                         return;
                     };
+                    // Counted *before* the reply goes out, so that a client
+                    // holding an answer can never see a count that does not
+                    // include it. Counting afterwards is the obvious order and
+                    // is wrong for any observer: the bytes reach the client
+                    // first, and a test that read the count immediately would
+                    // fail depending on how the operating system scheduled two
+                    // threads. It did, on Windows.
+                    served.fetch_add(1, Ordering::Relaxed);
                     if stream.write_all(&reply.to_vec()).is_err() {
                         return;
                     }
                     let _ = stream.flush();
-                    served.fetch_add(1, Ordering::Relaxed);
                 }
                 Ok(None) => break,
                 // Framing is lost and nothing in the stream can recover it.
