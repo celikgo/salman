@@ -75,6 +75,19 @@ pub enum TaskTrigger {
 /// of magnitude of a small program's scan.
 pub const FREEWHEEL_DEFAULT_SCAN: Duration = Duration::from_nanos(1_000_000);
 
+/// One program instance bound to a task.
+///
+/// The base is the instance's first slot: a POU is compiled once and run
+/// against whichever block of memory belongs to the instance, exactly as a
+/// controller keeps one copy of the code and one data block per instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProgramBinding {
+    /// The compiled routine.
+    pub routine: u32,
+    /// The instance's first slot.
+    pub base: u32,
+}
+
 /// One task and the programs bound to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskConfig {
@@ -84,8 +97,8 @@ pub struct TaskConfig {
     pub trigger: TaskTrigger,
     /// Lower is more urgent. See the module documentation.
     pub priority: u16,
-    /// Routine indices to run, in the order the programs were declared.
-    pub programs: Vec<u32>,
+    /// The program instances to run, in the order they were declared.
+    pub programs: Vec<ProgramBinding>,
     /// How long a scan is modelled to take. Zero unless stated.
     pub execution_time: Duration,
 }
@@ -439,12 +452,13 @@ impl Runtime {
 
         let mut instructions = 0u64;
         let mut fault = None;
-        for routine in &task.programs {
+        for binding in &task.programs {
             match execute(
                 &self.program,
                 &mut self.memory,
                 &self.clock,
-                *routine,
+                binding.routine,
+                binding.base,
                 self.limits,
             ) {
                 Ok(done) => instructions += done.instructions,
@@ -555,6 +569,7 @@ mod tests {
                     Op::Return,
                 ],
                 result_slot: None,
+                frame_size: 0,
                 max_stack: 2,
             }],
             constants: vec![Value::Dint(1)],
@@ -581,7 +596,10 @@ mod tests {
     #[test]
     fn a_cyclic_task_runs_once_per_period() {
         let mut task = TaskConfig::cyclic("Main", ms(10), 1);
-        task.programs = vec![0];
+        task.programs = vec![ProgramBinding {
+            routine: 0,
+            base: 0,
+        }];
         let mut rt = runtime(vec![task]);
         rt.run_until(ms(100));
         // Releases at 0, 10, 20 ... 100 inclusive is eleven scans.
@@ -592,7 +610,10 @@ mod tests {
     #[test]
     fn the_clock_lands_exactly_on_each_release() {
         let mut task = TaskConfig::cyclic("Main", ms(10), 1);
-        task.programs = vec![0];
+        task.programs = vec![ProgramBinding {
+            routine: 0,
+            base: 0,
+        }];
         let mut rt = runtime(vec![task]);
         rt.step();
         assert_eq!(rt.clock().elapsed(), Duration::ZERO);
@@ -610,12 +631,14 @@ mod tests {
                     name: "Fast".into(),
                     code: vec![Op::Const(0), Op::StoreSlot(0), Op::Return],
                     result_slot: None,
+                    frame_size: 0,
                     max_stack: 1,
                 },
                 Routine {
                     name: "Slow".into(),
                     code: vec![Op::Const(1), Op::StoreSlot(0), Op::Return],
                     result_slot: None,
+                    frame_size: 0,
                     max_stack: 1,
                 },
             ],
@@ -626,9 +649,15 @@ mod tests {
         };
         let memory = Memory::new(&program.slot_types, 0, ImageLayout::default());
         let mut high = TaskConfig::cyclic("High", ms(10), 1);
-        high.programs = vec![0];
+        high.programs = vec![ProgramBinding {
+            routine: 0,
+            base: 0,
+        }];
         let mut low = TaskConfig::cyclic("Low", ms(10), 9);
-        low.programs = vec![1];
+        low.programs = vec![ProgramBinding {
+            routine: 1,
+            base: 0,
+        }];
         // Declared low first, so only priority can produce the right order.
         let mut rt = Runtime::new(program, memory, Clock::virtual_default(), vec![low, high]);
         rt.step();
@@ -645,10 +674,16 @@ mod tests {
             name: "OnAlarm".into(),
             trigger: TaskTrigger::Event { slot: SlotId(1) },
             priority: 1,
-            programs: vec![0],
+            programs: vec![ProgramBinding {
+                routine: 0,
+                base: 0,
+            }],
             execution_time: Duration::ZERO,
         };
-        event.programs = vec![0];
+        event.programs = vec![ProgramBinding {
+            routine: 0,
+            base: 0,
+        }];
         let mut rt = runtime(vec![event]);
 
         assert_eq!(
@@ -679,7 +714,10 @@ mod tests {
             name: "Free".into(),
             trigger: TaskTrigger::Freewheeling,
             priority: 1,
-            programs: vec![0],
+            programs: vec![ProgramBinding {
+                routine: 0,
+                base: 0,
+            }],
             execution_time: Duration::ZERO,
         };
         let mut rt = runtime(vec![task]);
@@ -691,7 +729,10 @@ mod tests {
     #[test]
     fn a_scan_that_outlasts_its_period_is_counted_as_an_overrun() {
         let mut task = TaskConfig::cyclic("Main", ms(10), 1);
-        task.programs = vec![0];
+        task.programs = vec![ProgramBinding {
+            routine: 0,
+            base: 0,
+        }];
         task.execution_time = ms(15);
         let mut rt = runtime(vec![task]);
         rt.run_scans(3);
@@ -701,7 +742,10 @@ mod tests {
     #[test]
     fn a_scan_inside_its_period_is_not_an_overrun() {
         let mut task = TaskConfig::cyclic("Main", ms(10), 1);
-        task.programs = vec![0];
+        task.programs = vec![ProgramBinding {
+            routine: 0,
+            base: 0,
+        }];
         task.execution_time = ms(2);
         let mut rt = runtime(vec![task]);
         rt.run_scans(5);
@@ -724,6 +768,7 @@ mod tests {
                     Op::Return,
                 ],
                 result_slot: None,
+                frame_size: 0,
                 max_stack: 2,
             }],
             constants: vec![Value::Dint(1), Value::Dint(0)],
@@ -733,7 +778,10 @@ mod tests {
         };
         let memory = Memory::new(&program.slot_types, 0, ImageLayout::default());
         let mut task = TaskConfig::cyclic("Main", ms(10), 1);
-        task.programs = vec![0];
+        task.programs = vec![ProgramBinding {
+            routine: 0,
+            base: 0,
+        }];
         let mut rt = Runtime::new(program, memory, Clock::virtual_default(), vec![task]);
         rt.run_scans(5);
         assert!(rt.has_faulted());
@@ -753,7 +801,10 @@ mod tests {
     #[test]
     fn statistics_record_the_instruction_cost_of_a_scan() {
         let mut task = TaskConfig::cyclic("Main", ms(10), 1);
-        task.programs = vec![0];
+        task.programs = vec![ProgramBinding {
+            routine: 0,
+            base: 0,
+        }];
         let mut rt = runtime(vec![task]);
         rt.run_scans(4);
         let stats = rt.stats().first().copied().expect("one task");
@@ -769,7 +820,10 @@ mod tests {
     #[test]
     fn a_recorded_run_produces_one_trace_row_per_scan() {
         let mut task = TaskConfig::cyclic("Main", ms(10), 1);
-        task.programs = vec![0];
+        task.programs = vec![ProgramBinding {
+            routine: 0,
+            base: 0,
+        }];
         let mut rt = runtime(vec![task]);
         rt.record(vec![Signal {
             slot: SlotId(0),
@@ -788,7 +842,10 @@ mod tests {
     fn the_same_configuration_run_twice_produces_the_same_trace_fingerprint() {
         let run = || {
             let mut task = TaskConfig::cyclic("Main", ms(10), 1);
-            task.programs = vec![0];
+            task.programs = vec![ProgramBinding {
+                routine: 0,
+                base: 0,
+            }];
             let mut rt = runtime(vec![task]);
             rt.record(vec![Signal {
                 slot: SlotId(0),
@@ -810,6 +867,7 @@ mod tests {
                 name: "Spin".into(),
                 code: vec![Op::Jump(0)],
                 result_slot: None,
+                frame_size: 0,
                 max_stack: 0,
             }],
             slot_types: vec![ElementaryType::Bool],
@@ -818,7 +876,10 @@ mod tests {
         };
         let memory = Memory::new(&program.slot_types, 0, ImageLayout::default());
         let mut task = TaskConfig::cyclic("Main", ms(10), 1);
-        task.programs = vec![0];
+        task.programs = vec![ProgramBinding {
+            routine: 0,
+            base: 0,
+        }];
         let mut rt = Runtime::new(program, memory, Clock::virtual_default(), vec![task])
             .with_limits(ExecLimits {
                 max_instructions: 10_000,

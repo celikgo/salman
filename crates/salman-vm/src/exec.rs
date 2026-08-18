@@ -178,6 +178,7 @@ pub fn execute(
     memory: &mut Memory,
     clock: &Clock,
     routine: u32,
+    base: u32,
     limits: ExecLimits,
 ) -> Result<Executed, Fault> {
     let mut state = Exec {
@@ -189,8 +190,9 @@ pub fn execute(
         instructions: 0,
         peak_stack: 0,
         depth: 0,
+        base: 0,
     };
-    state.run(routine)?;
+    state.run(routine, base)?;
     Ok(Executed {
         instructions: state.instructions,
         peak_stack: state.peak_stack,
@@ -206,10 +208,16 @@ struct Exec<'a> {
     instructions: u64,
     peak_stack: usize,
     depth: u32,
+    /// The first slot of the instance the current routine is running for.
+    ///
+    /// A function block is compiled once and run for every instance, exactly as
+    /// a controller keeps one copy of the code and one block of data per
+    /// instance. This register is what makes that work.
+    base: u32,
 }
 
 impl Exec<'_> {
-    fn run(&mut self, index: u32) -> Result<(), Fault> {
+    fn run(&mut self, index: u32, base: u32) -> Result<(), Fault> {
         let Some(routine) = self.program.routine(index) else {
             return Err(Fault {
                 kind: FaultKind::RoutineOutOfRange(index),
@@ -225,7 +233,10 @@ impl Exec<'_> {
             });
         }
         self.depth += 1;
+        let saved = self.base;
+        self.base = base;
         let result = self.run_body(index);
+        self.base = saved;
         self.depth -= 1;
         result
     }
@@ -280,6 +291,40 @@ impl Exec<'_> {
                 Op::Dup => {
                     let top = self.peek().map_err(fault)?.clone();
                     self.push(top).map_err(fault)?;
+                }
+                Op::LoadLocal(offset) => {
+                    let slot = self.base.saturating_add(offset);
+                    let value = self
+                        .memory
+                        .read_slot(SlotId(slot))
+                        .cloned()
+                        .ok_or_else(|| fault(FaultKind::SlotOutOfRange(slot)))?;
+                    self.push(value).map_err(fault)?;
+                }
+                Op::StoreLocal(offset) => {
+                    let slot = self.base.saturating_add(offset);
+                    let value = self.pop().map_err(fault)?;
+                    if !self.memory.write_slot(SlotId(slot), value) {
+                        return Err(fault(FaultKind::SlotOutOfRange(slot)));
+                    }
+                }
+                Op::LoadIndexedLocal { base, len, low } => {
+                    let base = self.base.saturating_add(base);
+                    let slot = self.indexed_slot(base, len, low).map_err(fault)?;
+                    let value = self
+                        .memory
+                        .read_slot(slot)
+                        .cloned()
+                        .ok_or_else(|| fault(FaultKind::SlotOutOfRange(slot.0)))?;
+                    self.push(value).map_err(fault)?;
+                }
+                Op::StoreIndexedLocal { base, len, low } => {
+                    let base = self.base.saturating_add(base);
+                    let value = self.pop().map_err(fault)?;
+                    let slot = self.indexed_slot(base, len, low).map_err(fault)?;
+                    if !self.memory.write_slot(slot, value) {
+                        return Err(fault(FaultKind::SlotOutOfRange(slot.0)));
+                    }
                 }
                 Op::LoadSlot(slot) => {
                     let value = self
@@ -346,6 +391,18 @@ impl Exec<'_> {
                         return Err(fault(FaultKind::SlotOutOfRange(slot.0)));
                     }
                 }
+                Op::BoundsCheck { low, high } => {
+                    let value = self.peek().map_err(fault)?.clone();
+                    let Some(index) = value.as_i64() else {
+                        return Err(fault(FaultKind::TypeMismatch {
+                            expected: ElementaryType::Dint,
+                            found: value.type_of(),
+                        }));
+                    };
+                    if index < low || index > high {
+                        return Err(fault(FaultKind::ArrayIndexOutOfRange { index, low, high }));
+                    }
+                }
                 Op::Binary { op, ty } => {
                     let rhs = self.pop().map_err(fault)?;
                     let lhs = self.pop().map_err(fault)?;
@@ -384,10 +441,19 @@ impl Exec<'_> {
                         next = target;
                     }
                 }
-                Op::Call(callee) => {
-                    self.run(callee)?;
+                Op::Call { routine, base } => {
+                    self.run(routine, base)?;
+                }
+                Op::CallLocal { routine, offset } => {
+                    let base = self.base.saturating_add(offset);
+                    self.run(routine, base)?;
                 }
                 Op::CallNative { block, base } => {
+                    crate::stdfb::step(block, SlotId(base), self.memory, self.clock)
+                        .map_err(fault)?;
+                }
+                Op::CallNativeLocal { block, offset } => {
+                    let base = self.base.saturating_add(offset);
                     crate::stdfb::step(block, SlotId(base), self.memory, self.clock)
                         .map_err(fault)?;
                 }

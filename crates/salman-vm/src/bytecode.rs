@@ -94,10 +94,21 @@ pub enum Op {
     Pop,
     /// Duplicates the top of the stack.
     Dup,
-    /// Pushes the value in a slot.
+    /// Pushes the value in a slot, addressed absolutely.
+    ///
+    /// Used for globals and for anything whose home does not depend on which
+    /// instance is running.
     LoadSlot(u32),
-    /// Pops a value into a slot.
+    /// Pops a value into an absolutely addressed slot.
     StoreSlot(u32),
+    /// Pushes the value in a slot at `offset` from the current instance base.
+    ///
+    /// This is what lets a function block be compiled once and run for every
+    /// instance, exactly as a controller keeps one copy of the code and one
+    /// block of data per instance.
+    LoadLocal(u32),
+    /// Pops a value into a slot at `offset` from the current instance base.
+    StoreLocal(u32),
     /// Pushes the value at a directly represented address.
     LoadAddress(u32),
     /// Pops a value to a directly represented address.
@@ -114,6 +125,24 @@ pub enum Op {
         /// The declared lower bound, for the diagnostic.
         low: i64,
     },
+    /// As [`Op::LoadIndexed`], with `base` relative to the instance base.
+    LoadIndexedLocal {
+        /// First slot of the array, relative to the instance base.
+        base: u32,
+        /// How many elements it has.
+        len: u32,
+        /// The declared lower bound, for the diagnostic.
+        low: i64,
+    },
+    /// As [`Op::StoreIndexed`], with `base` relative to the instance base.
+    StoreIndexedLocal {
+        /// First slot of the array, relative to the instance base.
+        base: u32,
+        /// How many elements it has.
+        len: u32,
+        /// The declared lower bound, for the diagnostic.
+        low: i64,
+    },
     /// Pops a value and an index and stores into an array slot.
     StoreIndexed {
         /// First slot of the array.
@@ -122,6 +151,20 @@ pub enum Op {
         len: u32,
         /// The declared lower bound, for the diagnostic.
         low: i64,
+    },
+    /// Checks that the integer on top of the stack lies within an array
+    /// dimension's declared bounds, leaving it there.
+    ///
+    /// Used to bounds-check each dimension of a multi-dimensional subscript
+    /// before the dimensions are folded into one linear index. Checking the
+    /// linear index alone would let an out-of-range subscript in one dimension
+    /// silently alias into another, which is the kind of bug that reads
+    /// somebody else's tag.
+    BoundsCheck {
+        /// The dimension's declared lower bound.
+        low: i64,
+        /// Its declared upper bound, inclusive.
+        high: i64,
     },
     /// Applies a binary operation to the two values on top of the stack.
     Binary {
@@ -148,14 +191,33 @@ pub enum Op {
     JumpIfFalse(u32),
     /// Pops a `BOOL` and jumps if it is true.
     JumpIfTrue(u32),
-    /// Calls a compiled routine. Arguments are already in its input slots.
-    Call(u32),
+    /// Calls a compiled routine with an absolute instance base.
+    Call {
+        /// Which routine.
+        routine: u32,
+        /// The callee's instance base slot.
+        base: u32,
+    },
+    /// Calls a compiled routine whose instance is nested inside this one.
+    CallLocal {
+        /// Which routine.
+        routine: u32,
+        /// The callee's base, relative to the current instance base.
+        offset: u32,
+    },
     /// Runs a standard function block instance implemented natively.
     CallNative {
         /// Which standard block.
         block: NativeBlock,
-        /// The instance's first slot.
+        /// The instance's first slot, absolute.
         base: u32,
+    },
+    /// Runs a standard function block instance nested inside this one.
+    CallNativeLocal {
+        /// Which standard block.
+        block: NativeBlock,
+        /// The instance's first slot, relative to the current instance base.
+        offset: u32,
     },
     /// Leaves the current routine.
     Return,
@@ -168,8 +230,10 @@ pub struct Routine {
     pub name: String,
     /// Its instructions.
     pub code: Vec<Op>,
-    /// The slot its result goes in, for a function.
+    /// The slot its result goes in, for a function, relative to its base.
     pub result_slot: Option<SlotId>,
+    /// How many slots one instance of this routine's POU occupies.
+    pub frame_size: u32,
     /// Deepest the operand stack gets, computed at compile time so the
     /// interpreter can reserve once and check against a real bound.
     pub max_stack: u32,
@@ -266,6 +330,7 @@ mod tests {
                 name: "Conveyor_Ctrl".into(),
                 code: vec![Op::Return],
                 result_slot: None,
+                frame_size: 0,
                 max_stack: 0,
             }],
             slot_names: vec!["Motor_Run".into()],

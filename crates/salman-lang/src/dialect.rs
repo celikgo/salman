@@ -90,6 +90,14 @@ pub enum UnaryPowerBinding {
     PowerTighter,
 }
 
+/// The highest [`Dialect::max_nesting_depth`] salman will accept.
+///
+/// Descending one level of parentheses costs about eleven stack frames through
+/// the expression precedence chain, so a bound of a few hundred is already
+/// deep enough to exhaust a small thread stack. This ceiling exists because a
+/// nesting bound that itself overflows the stack protects nothing.
+pub const MAX_NESTING_CEILING: u32 = 256;
+
 /// One dialect's rules.
 ///
 /// Every field is consulted by the lexer, parser or type checker. There are no
@@ -132,8 +140,14 @@ pub struct Dialect {
     /// Deepest nesting of comments, parentheses and statements accepted.
     ///
     /// A bound, not a preference: source text arrives from files salman did not
-    /// write, and an unbounded recursive descent parser is a stack overflow
+    /// write, and an unbounded recursive-descent parser is a stack overflow
     /// waiting for a hostile input.
+    ///
+    /// The ceiling is not arbitrary. Descending one level of parentheses costs
+    /// roughly eleven stack frames through the precedence chain, and a bound of
+    /// 4096 was measured overflowing a test thread's stack at around 500 levels
+    /// — that is, the bound itself would have been the bug. [`MAX_NESTING_CEILING`]
+    /// is the highest value salman accepts, and a test enforces it.
     pub max_nesting_depth: u32,
 }
 
@@ -238,7 +252,10 @@ mod tests {
     fn nesting_depth_is_bounded_in_every_dialect() {
         for id in DialectId::all() {
             let d = Dialect::for_id(*id);
-            assert!(d.max_nesting_depth > 0 && d.max_nesting_depth <= 1024);
+            assert!(
+                d.max_nesting_depth > 0 && d.max_nesting_depth <= MAX_NESTING_CEILING,
+                "{id} allows a nesting depth that could overflow the stack it is meant to protect"
+            );
         }
     }
 
