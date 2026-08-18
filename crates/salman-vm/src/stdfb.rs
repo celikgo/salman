@@ -30,34 +30,11 @@
 
 use salman_core::time::Duration;
 use salman_core::value::{ElementaryType, Value};
+use salman_lang::stdlib::{NativeBlock, field_offset};
 
-use crate::bytecode::NativeBlock;
 use crate::clock::Clock;
 use crate::exec::FaultKind;
 use crate::memory::{Memory, SlotId};
-
-/// What a field of a function block instance is for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FieldRole {
-    /// Written by the caller, read by the block.
-    Input,
-    /// Written by the block, read by the caller.
-    Output,
-    /// The block's own state. Visible in a watch list, because a timer whose
-    /// internals you cannot see is a timer you cannot debug.
-    Internal,
-}
-
-/// One field of a function block instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BlockField {
-    /// The name, as written in Structured Text for inputs and outputs.
-    pub name: &'static str,
-    /// Its type.
-    pub ty: ElementaryType,
-    /// What it is for.
-    pub role: FieldRole,
-}
 
 /// A timer or counter's internal phase.
 ///
@@ -70,134 +47,6 @@ mod phase {
     pub(super) const TIMING: u8 = 1;
     /// The interval finished; the elapsed time holds at `PT`.
     pub(super) const COMPLETE: u8 = 2;
-}
-
-/// Builds one field descriptor.
-const fn f(name: &'static str, ty: ElementaryType, role: FieldRole) -> BlockField {
-    BlockField { name, ty, role }
-}
-
-use ElementaryType as E;
-use FieldRole::{Input, Internal, Output};
-
-/// IEC 61131-3:2013 Table 43 "Standard bistable function blocks".
-///
-/// The dominant input carries the digit: `SR` is set dominant, so its set
-/// input is `S1`. That mnemonic is the one thing that prevents the classic
-/// slip of wiring the pair the wrong way round.
-const SR_FIELDS: &[BlockField] = &[
-    f("S1", E::Bool, Input),
-    f("R", E::Bool, Input),
-    f("Q1", E::Bool, Output),
-];
-
-/// IEC 61131-3:2013 Table 43. `RS` is reset dominant, so its reset is `R1`.
-const RS_FIELDS: &[BlockField] = &[
-    f("S", E::Bool, Input),
-    f("R1", E::Bool, Input),
-    f("Q1", E::Bool, Output),
-];
-
-/// IEC 61131-3:2013 Table 44 "Standard edge detection function blocks".
-const TRIG_FIELDS: &[BlockField] = &[
-    f("CLK", E::Bool, Input),
-    f("Q", E::Bool, Output),
-    f("M", E::Bool, Internal),
-];
-
-/// IEC 61131-3:2013 Table 45 "Standard counter function blocks".
-///
-/// `CU` is declared `BOOL R_EDGE` in the standard, so edge detection is part of
-/// the parameter itself: a level that was already high when the instance
-/// started does not count. `CU_M` is what remembers the previous level.
-const CTU_FIELDS: &[BlockField] = &[
-    f("CU", E::Bool, Input),
-    f("R", E::Bool, Input),
-    f("PV", E::Int, Input),
-    f("Q", E::Bool, Output),
-    f("CV", E::Int, Output),
-    f("CU_M", E::Bool, Internal),
-];
-
-/// IEC 61131-3:2013 Table 45. `CTD` has no reset input; `LD` loads the preset.
-const CTD_FIELDS: &[BlockField] = &[
-    f("CD", E::Bool, Input),
-    f("LD", E::Bool, Input),
-    f("PV", E::Int, Input),
-    f("Q", E::Bool, Output),
-    f("CV", E::Int, Output),
-    f("CD_M", E::Bool, Internal),
-];
-
-/// IEC 61131-3:2013 Table 45.
-const CTUD_FIELDS: &[BlockField] = &[
-    f("CU", E::Bool, Input),
-    f("CD", E::Bool, Input),
-    f("R", E::Bool, Input),
-    f("LD", E::Bool, Input),
-    f("PV", E::Int, Input),
-    f("QU", E::Bool, Output),
-    f("QD", E::Bool, Output),
-    f("CV", E::Int, Output),
-    f("CU_M", E::Bool, Internal),
-    f("CD_M", E::Bool, Internal),
-];
-
-/// IEC 61131-3:2013 Table 46 "Standard timer function blocks" and Figure 15
-/// "Standard timer function blocks - timing diagrams (Rules)".
-///
-/// The internal phase and start instant are ordinary fields rather than hidden
-/// runtime state, because a timer whose internals you cannot watch is a timer
-/// you cannot debug at three in the morning.
-const TIMER_FIELDS: &[BlockField] = &[
-    f("IN", E::Bool, Input),
-    f("PT", E::Time, Input),
-    f("Q", E::Bool, Output),
-    f("ET", E::Time, Output),
-    f("PHASE", E::Byte, Internal),
-    f("START", E::LTime, Internal),
-    f("PREV_IN", E::Bool, Internal),
-];
-
-/// Not standard. See the module documentation.
-const SEMA_FIELDS: &[BlockField] = &[
-    f("CLAIM", E::Bool, Input),
-    f("RELEASE", E::Bool, Input),
-    f("BUSY", E::Bool, Output),
-    f("X", E::Bool, Internal),
-];
-
-/// The fields of every natively implemented block, in slot order.
-///
-/// The compiler allocates exactly this many consecutive slots for each
-/// instance, so this list is the contract between the compiler and the runtime.
-#[must_use]
-pub const fn layout(block: NativeBlock) -> &'static [BlockField] {
-    match block {
-        NativeBlock::Sr => SR_FIELDS,
-        NativeBlock::Rs => RS_FIELDS,
-        NativeBlock::RTrig | NativeBlock::FTrig => TRIG_FIELDS,
-        NativeBlock::Ctu => CTU_FIELDS,
-        NativeBlock::Ctd => CTD_FIELDS,
-        NativeBlock::Ctud => CTUD_FIELDS,
-        NativeBlock::Tp | NativeBlock::Ton | NativeBlock::Tof => TIMER_FIELDS,
-        NativeBlock::Sema => SEMA_FIELDS,
-    }
-}
-
-/// How many slots one instance of a block occupies.
-#[must_use]
-pub fn slot_count(block: NativeBlock) -> u32 {
-    layout(block).len() as u32
-}
-
-/// The slot offset of a named field, for the compiler and for tests.
-#[must_use]
-pub fn field_offset(block: NativeBlock, name: &str) -> Option<u32> {
-    layout(block)
-        .iter()
-        .position(|f| f.name.eq_ignore_ascii_case(name))
-        .and_then(|i| u32::try_from(i).ok())
 }
 
 /// Runs one invocation of a standard function block instance.
@@ -637,6 +486,7 @@ fn sema(fb: &mut Instance) -> Result<(), FaultKind> {
 mod tests {
     use super::*;
     use crate::memory::ImageLayout;
+    use salman_lang::stdlib::{FieldRole, layout};
 
     /// One function block instance, wired to memory and a clock.
     struct Fb {
@@ -713,33 +563,6 @@ mod tests {
     // -----------------------------------------------------------------
     // Layout
     // -----------------------------------------------------------------
-
-    #[test]
-    fn every_block_layout_has_unique_field_names_and_at_least_one_output() {
-        for block in NativeBlock::all() {
-            let fields = layout(*block);
-            let mut names: Vec<&str> = fields.iter().map(|f| f.name).collect();
-            let count = names.len();
-            names.sort_unstable();
-            names.dedup();
-            assert_eq!(names.len(), count, "{} has a duplicate field", block.name());
-            assert!(
-                fields.iter().any(|f| f.role == FieldRole::Output),
-                "{} has no output",
-                block.name()
-            );
-            assert_eq!(slot_count(*block), fields.len() as u32);
-        }
-    }
-
-    #[test]
-    fn field_offsets_are_found_case_insensitively() {
-        assert_eq!(field_offset(NativeBlock::Ton, "IN"), Some(0));
-        assert_eq!(field_offset(NativeBlock::Ton, "pt"), Some(1));
-        assert_eq!(field_offset(NativeBlock::Ton, "Q"), Some(2));
-        assert_eq!(field_offset(NativeBlock::Ton, "ET"), Some(3));
-        assert_eq!(field_offset(NativeBlock::Ton, "nope"), None);
-    }
 
     #[test]
     fn internal_state_is_a_visible_field_so_a_timer_can_be_debugged() {

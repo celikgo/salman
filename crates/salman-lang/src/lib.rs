@@ -35,6 +35,8 @@ pub mod codes;
 pub mod dialect;
 pub mod lexer;
 pub mod parser;
+pub mod sema;
+pub mod stdlib;
 pub mod token;
 pub mod types;
 
@@ -43,4 +45,5 @@ pub use ast::{CompilationUnit, Expr, ExprKind, Item, Pou, Stmt, StmtKind};
 pub use dialect::{Dialect, DialectId};
 pub use lexer::{TokenStream, lex};
 pub use parser::{parse, parse_source};
+pub use stdlib::NativeBlock;
 pub use token::{Keyword, LiteralValue, Punct, Token, TokenKind};

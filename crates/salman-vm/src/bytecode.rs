@@ -26,6 +26,7 @@
 
 use salman_core::value::{ElementaryType, Value};
 use salman_lang::address::DirectAddress;
+use salman_lang::stdlib::NativeBlock;
 
 use crate::memory::SlotId;
 
@@ -160,96 +161,6 @@ pub enum Op {
     Return,
 }
 
-/// A standard function block salman implements natively rather than in ST.
-///
-/// The timers need the simulation clock and the counters need edge detection on
-/// their parameters, neither of which is expressible in the subset of ST salman
-/// compiles. Implementing them in Rust also lets each edge case named in
-/// `docs/CONFORMANCE.md` be a test rather than a comment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum NativeBlock {
-    /// `SR`, set dominant. IEC 61131-3:2013 Table 43.
-    Sr,
-    /// `RS`, reset dominant. IEC 61131-3:2013 Table 43.
-    Rs,
-    /// `R_TRIG`, rising edge. IEC 61131-3:2013 Table 44.
-    RTrig,
-    /// `F_TRIG`, falling edge. IEC 61131-3:2013 Table 44.
-    FTrig,
-    /// `CTU`, count up. IEC 61131-3:2013 Table 45.
-    Ctu,
-    /// `CTD`, count down. IEC 61131-3:2013 Table 45.
-    Ctd,
-    /// `CTUD`, count up and down. IEC 61131-3:2013 Table 45.
-    Ctud,
-    /// `TP`, pulse. IEC 61131-3:2013 Table 46 and Figure 15.
-    Tp,
-    /// `TON`, on delay. IEC 61131-3:2013 Table 46 and Figure 15.
-    Ton,
-    /// `TOF`, off delay. IEC 61131-3:2013 Table 46 and Figure 15.
-    Tof,
-    /// `SEMA`. **Not an IEC 61131-3 standard function block** — see
-    /// `docs/CONFORMANCE.md`. Provided for vendor compatibility only.
-    Sema,
-}
-
-impl NativeBlock {
-    /// The name written in Structured Text.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Sr => "SR",
-            Self::Rs => "RS",
-            Self::RTrig => "R_TRIG",
-            Self::FTrig => "F_TRIG",
-            Self::Ctu => "CTU",
-            Self::Ctd => "CTD",
-            Self::Ctud => "CTUD",
-            Self::Tp => "TP",
-            Self::Ton => "TON",
-            Self::Tof => "TOF",
-            Self::Sema => "SEMA",
-        }
-    }
-
-    /// Whether IEC 61131-3 defines this block.
-    ///
-    /// `SEMA` is not in Edition 2 Table 34 nor Edition 3 Table 43, which
-    /// between them contain every standard bistable. salman ships it because
-    /// existing code uses it, and refuses to describe it as standard.
-    #[must_use]
-    pub const fn is_iec_standard(self) -> bool {
-        !matches!(self, Self::Sema)
-    }
-
-    /// Looks a block up by name, case-insensitively.
-    #[must_use]
-    pub fn lookup(name: &str) -> Option<Self> {
-        Self::all()
-            .iter()
-            .copied()
-            .find(|b| b.name().eq_ignore_ascii_case(name))
-    }
-
-    /// Every natively implemented block.
-    #[must_use]
-    pub const fn all() -> &'static [Self] {
-        &[
-            Self::Sr,
-            Self::Rs,
-            Self::RTrig,
-            Self::FTrig,
-            Self::Ctu,
-            Self::Ctd,
-            Self::Ctud,
-            Self::Tp,
-            Self::Ton,
-            Self::Tof,
-            Self::Sema,
-        ]
-    }
-}
-
 /// A compiled routine: the body of one POU.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Routine {
@@ -346,53 +257,6 @@ mod tests {
         for op in [BinOp::Add, BinOp::And, BinOp::Pow, BinOp::Mod] {
             assert!(!op.is_comparison());
         }
-    }
-
-    #[test]
-    fn every_native_block_has_a_distinct_name_and_looks_itself_up() {
-        let mut names: Vec<&str> = NativeBlock::all().iter().map(|b| b.name()).collect();
-        let count = names.len();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(names.len(), count);
-        for block in NativeBlock::all() {
-            assert_eq!(NativeBlock::lookup(block.name()), Some(*block));
-            assert_eq!(
-                NativeBlock::lookup(&block.name().to_lowercase()),
-                Some(*block)
-            );
-        }
-        assert_eq!(NativeBlock::lookup("Conveyor_Ctrl"), None);
-    }
-
-    #[test]
-    fn sema_is_the_only_block_salman_does_not_claim_is_standard() {
-        // SEMA is in neither Edition 2 Table 34 nor Edition 3 Table 43, which
-        // between them hold every standard bistable. salman ships it because
-        // existing code uses it, and says plainly that it is not standard.
-        for block in NativeBlock::all() {
-            assert_eq!(
-                block.is_iec_standard(),
-                *block != NativeBlock::Sema,
-                "{} is misclassified",
-                block.name()
-            );
-        }
-    }
-
-    #[test]
-    fn all_ten_standard_blocks_are_present() {
-        let standard: Vec<&str> = NativeBlock::all()
-            .iter()
-            .filter(|b| b.is_iec_standard())
-            .map(|b| b.name())
-            .collect();
-        for expected in [
-            "SR", "RS", "R_TRIG", "F_TRIG", "CTU", "CTD", "CTUD", "TP", "TON", "TOF",
-        ] {
-            assert!(standard.contains(&expected), "{expected} is missing");
-        }
-        assert_eq!(standard.len(), 10);
     }
 
     #[test]

@@ -141,6 +141,14 @@ pub enum TypeData {
     FunctionBlock {
         /// The function block's name.
         name: IdentKey,
+        /// Which standard block this is, when it is one.
+        native: Option<crate::stdlib::NativeBlock>,
+        /// The index of the declaring POU, when it is user-written.
+        ///
+        /// Exactly one of `native` and `pou` is set for a resolvable instance;
+        /// both are `None` only when the type could not be resolved and a
+        /// diagnostic has already been reported.
+        pou: Option<u32>,
     },
     /// A type that could not be resolved.
     ///
@@ -268,7 +276,7 @@ impl TypeArena {
             TypeData::Subrange { base, low, high } => {
                 format!("{} ({low}..{high})", base.name())
             }
-            TypeData::FunctionBlock { name } => name.to_string(),
+            TypeData::FunctionBlock { name, .. } => name.to_string(),
             TypeData::Error => "<unknown>".to_string(),
         }
     }

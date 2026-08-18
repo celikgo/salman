@@ -344,6 +344,38 @@ pub static REGISTRY: &[Capability] = &[
                this registry's evidence rule wants a named test function, which a libFuzzer \
                target is not. Only the lexer is covered.",
     },
+    Capability {
+        id: "lang.st.parser",
+        area: "Language",
+        title: "Recursive-descent Structured Text parser with error recovery and bounded nesting",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-lang/src/parser.rs",
+                test: "unary_minus_binds_tighter_than_exponentiation_as_edition_3_orders_them",
+            },
+            Evidence {
+                file: "crates/salman-lang/src/parser.rs",
+                test: "a_file_with_ten_broken_statements_reports_about_ten_errors_not_one",
+            },
+            Evidence {
+                file: "crates/salman-lang/src/parser.rs",
+                test: "ten_thousand_nested_parentheses_produce_a_diagnostic_rather_than_a_stack_overflow",
+            },
+        ],
+        note: "Every statement and declaration form of Structured Text, with the Edition 3 \
+               operator precedence: unary binds tighter than `**`, so `-2 ** 2` is 4, and \
+               salman warns where CODESYS and Beckhoff would give -4. Errors produce error \
+               nodes and resynchronise rather than stopping the parse. Nesting, including \
+               left-associative operator chains, is bounded by the dialect. Three things are \
+               salman rules rather than verified requirements and say so in the diagnostic: \
+               duplicate and overlapping CASE labels are refused, a FOR body may not assign \
+               to its control variable, and the value of that variable after the loop is \
+               unspecified. Inline structures and enumerations, VAR_CONFIG instance paths, \
+               single-resource configurations, references and the object-oriented extensions \
+               are parsed far enough to be named and are not implemented.",
+    },
 ];
 
 /// Capabilities in `area`, in registry order.

@@ -971,7 +971,10 @@ impl<'a> Parser<'a> {
                     )
                     .with_clause(clause::USER_DEFINED_DATA_TYPES),
                 );
-                self.recover_statement();
+                // Skip the whole inline type rather than resynchronising on the
+                // next `;`, which inside a STRUCT would stop after its first
+                // field and turn one refusal into a run of consequences.
+                self.skip_inline_type();
                 TypeRef::Error(token.span)
             }
             _ => {
@@ -983,6 +986,33 @@ impl<'a> Parser<'a> {
                 );
                 TypeRef::Error(token.span)
             }
+        }
+    }
+
+    /// Consumes an inline `STRUCT ... END_STRUCT` or `( ... )` salman refuses,
+    /// leaving the position where the declaration's `;` should be.
+    fn skip_inline_type(&mut self) {
+        if self.at_keyword(Keyword::Struct) {
+            while !self.fused && !self.at_eof() && !self.at_keyword(Keyword::EndStruct) {
+                self.bump();
+            }
+            self.eat_keyword(Keyword::EndStruct);
+            return;
+        }
+        let mut depth = 0u32;
+        while !self.fused && !self.at_eof() {
+            if self.at_punct(Punct::LParen) {
+                depth = depth.saturating_add(1);
+            } else if self.at_punct(Punct::RParen) {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    self.bump();
+                    return;
+                }
+            } else if self.at_punct(Punct::Semicolon) {
+                return;
+            }
+            self.bump();
         }
     }
 
@@ -2021,7 +2051,7 @@ impl<'a> Parser<'a> {
     ///
     /// Left-associative, so `2 ** 3 ** 2` is `(2 ** 3) ** 2` = 64 rather than
     /// `2 ** (3 ** 2)` = 512.
-    ///
+    //
     // UNVERIFIED: no source salman could read states the associativity of `**`
     // itself. Table 71 fixes its precedence and says nothing about grouping,
     // and the Annex A production is a repetition, which is conventionally read
@@ -2485,5 +2515,1423 @@ fn collect_assignments_to(body: &[Stmt], variable: &Name, out: &mut Vec<Span>) {
             | StmtKind::Repeat { body, .. } => collect_assignments_to(body, variable, out),
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use salman_core::diag::Severity;
+    use salman_core::span::SourceMap;
+
+    use crate::ast::{Item, TypeDeclKind, VarSection};
+
+    // -- helpers -------------------------------------------------------------
+
+    fn parse_with(dialect: &Dialect, src: &str) -> (CompilationUnit, Diagnostics, SourceMap) {
+        let mut map = SourceMap::new();
+        let file = map.add("t.st", src).unwrap();
+        let (unit, diags) = parse_source(file, src, dialect);
+        (unit, diags, map)
+    }
+
+    fn parse_text(src: &str) -> (CompilationUnit, Diagnostics, SourceMap) {
+        parse_with(&Dialect::generic(), src)
+    }
+
+    fn parse_ok(src: &str) -> CompilationUnit {
+        let (unit, diags, map) = parse_text(src);
+        assert!(
+            !diags.has_errors(),
+            "unexpected errors parsing:\n{src}\n{}",
+            diags.render(&map)
+        );
+        unit
+    }
+
+    fn codes_of(diags: &Diagnostics, severity: Severity) -> Vec<&'static str> {
+        diags
+            .items()
+            .iter()
+            .filter(|d| d.severity == severity)
+            .map(|d| d.code.0)
+            .collect()
+    }
+
+    fn errors(src: &str) -> Vec<&'static str> {
+        let (_, diags, _) = parse_text(src);
+        codes_of(&diags, Severity::Error)
+    }
+
+    fn warnings(src: &str) -> Vec<&'static str> {
+        let (_, diags, _) = parse_text(src);
+        codes_of(&diags, Severity::Warning)
+    }
+
+    fn in_program(body: &str) -> String {
+        format!("PROGRAM Main\n{body}\nEND_PROGRAM\n")
+    }
+
+    fn body_of(body: &str) -> Vec<Stmt> {
+        let src = in_program(body);
+        let unit = parse_ok(&src);
+        unit.pou("Main").expect("PROGRAM Main").body.clone()
+    }
+
+    fn only_stmt(body: &str) -> Stmt {
+        let stmts = body_of(body);
+        assert_eq!(stmts.len(), 1, "expected one statement, got {stmts:?}");
+        stmts.into_iter().next().expect("one statement")
+    }
+
+    /// The right-hand side of `X := <text>;`, parsed under `dialect`.
+    fn expr_in(dialect: &Dialect, text: &str) -> Expr {
+        let src = in_program(&format!("X := {text};"));
+        let (unit, diags, map) = parse_with(dialect, &src);
+        assert!(
+            !diags.has_errors(),
+            "unexpected errors parsing {text:?}:\n{}",
+            diags.render(&map)
+        );
+        let pou = unit.pou("Main").expect("PROGRAM Main");
+        match &pou.body.first().expect("a statement").kind {
+            StmtKind::Assign { value, .. } => value.clone(),
+            other => panic!("expected an assignment, got {other:?}"),
+        }
+    }
+
+    fn expr_of(text: &str) -> Expr {
+        expr_in(&Dialect::generic(), text)
+    }
+
+    /// A parenthesised rendering of an expression tree, so that a precedence
+    /// test states the shape it expects instead of picking through boxes.
+    fn shape(expr: &Expr) -> String {
+        match &expr.kind {
+            ExprKind::Literal(LiteralValue::Int {
+                magnitude,
+                negative,
+                ..
+            }) => format!("{}{magnitude}", if *negative { "-" } else { "" }),
+            ExprKind::Literal(LiteralValue::Bool(value)) => value.to_string(),
+            ExprKind::Literal(LiteralValue::Real { value, .. }) => format!("r{value}"),
+            ExprKind::Literal(_) => "lit".to_string(),
+            ExprKind::Var(name) => name.as_str().to_string(),
+            ExprKind::Direct(address) => format!("%{}", address.location.letter()),
+            ExprKind::Member { base, field } => format!("(. {} {field})", shape(base)),
+            ExprKind::Index { base, indices } => {
+                let mut out = format!("(index {}", shape(base));
+                for index in indices {
+                    out.push(' ');
+                    out.push_str(&shape(index));
+                }
+                out.push(')');
+                out
+            }
+            ExprKind::Deref(base) => format!("(^ {})", shape(base)),
+            ExprKind::Unary { op, operand } => format!("({} {})", op.text(), shape(operand)),
+            ExprKind::Binary { op, lhs, rhs } => {
+                format!("({} {} {})", op.text(), shape(lhs), shape(rhs))
+            }
+            ExprKind::Call { callee, args } => {
+                let mut out = format!("(call {}", shape(callee));
+                for arg in args {
+                    out.push(' ');
+                    out.push_str(&arg_shape(arg));
+                }
+                out.push(')');
+                out
+            }
+            ExprKind::EnumValue { ty, value } => format!("{ty}#{value}"),
+            ExprKind::Paren(inner) => format!("(paren {})", shape(inner)),
+            ExprKind::Error => "<error>".to_string(),
+        }
+    }
+
+    fn arg_shape(arg: &Arg) -> String {
+        match arg {
+            Arg::Positional(expr) => shape(expr),
+            Arg::Input { name, value } => format!("{name}:={}", shape(value)),
+            Arg::Output { name, target } => match target {
+                Some(target) => format!("{name}=>{}", shape(target)),
+                None => format!("{name}=>_"),
+            },
+        }
+    }
+
+    fn collect_expr_ids(expr: &Expr, out: &mut Vec<u32>) {
+        out.push(expr.id.0);
+        match &expr.kind {
+            ExprKind::Member { base, .. } | ExprKind::Deref(base) => collect_expr_ids(base, out),
+            ExprKind::Paren(inner) => collect_expr_ids(inner, out),
+            ExprKind::Unary { operand, .. } => collect_expr_ids(operand, out),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                collect_expr_ids(lhs, out);
+                collect_expr_ids(rhs, out);
+            }
+            ExprKind::Index { base, indices } => {
+                collect_expr_ids(base, out);
+                for index in indices {
+                    collect_expr_ids(index, out);
+                }
+            }
+            ExprKind::Call { callee, args } => {
+                collect_expr_ids(callee, out);
+                for arg in args {
+                    match arg {
+                        Arg::Positional(expr) | Arg::Input { value: expr, .. } => {
+                            collect_expr_ids(expr, out);
+                        }
+                        Arg::Output { target, .. } => {
+                            if let Some(target) = target {
+                                collect_expr_ids(target, out);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_stmt_ids(stmts: &[Stmt], out: &mut Vec<u32>) {
+        for stmt in stmts {
+            out.push(stmt.id.0);
+            match &stmt.kind {
+                StmtKind::Assign { target, value } | StmtKind::AssignAttempt { target, value } => {
+                    collect_expr_ids(target, out);
+                    collect_expr_ids(value, out);
+                }
+                StmtKind::Call(expr) => collect_expr_ids(expr, out),
+                StmtKind::If {
+                    branches,
+                    else_body,
+                } => {
+                    for branch in branches {
+                        collect_expr_ids(&branch.condition, out);
+                        collect_stmt_ids(&branch.body, out);
+                    }
+                    if let Some(body) = else_body {
+                        collect_stmt_ids(body, out);
+                    }
+                }
+                StmtKind::Case {
+                    selector,
+                    arms,
+                    else_body,
+                } => {
+                    collect_expr_ids(selector, out);
+                    for arm in arms {
+                        for label in &arm.labels {
+                            match label {
+                                CaseLabel::Single(expr) => collect_expr_ids(expr, out),
+                                CaseLabel::Range { low, high } => {
+                                    collect_expr_ids(low, out);
+                                    collect_expr_ids(high, out);
+                                }
+                            }
+                        }
+                        collect_stmt_ids(&arm.body, out);
+                    }
+                    if let Some(body) = else_body {
+                        collect_stmt_ids(body, out);
+                    }
+                }
+                StmtKind::For {
+                    from, to, by, body, ..
+                } => {
+                    collect_expr_ids(from, out);
+                    collect_expr_ids(to, out);
+                    if let Some(by) = by {
+                        collect_expr_ids(by, out);
+                    }
+                    collect_stmt_ids(body, out);
+                }
+                StmtKind::While { condition, body } => {
+                    collect_expr_ids(condition, out);
+                    collect_stmt_ids(body, out);
+                }
+                StmtKind::Repeat { body, until } => {
+                    collect_stmt_ids(body, out);
+                    collect_expr_ids(until, out);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // -- precedence ----------------------------------------------------------
+
+    #[test]
+    fn or_binds_looser_than_and() {
+        assert_eq!(shape(&expr_of("a OR b AND c")), "(OR a (AND b c))");
+    }
+
+    #[test]
+    fn and_binds_looser_than_equality() {
+        assert_eq!(shape(&expr_of("a AND b = c")), "(AND a (= b c))");
+    }
+
+    #[test]
+    fn equality_binds_looser_than_the_ordering_comparisons() {
+        // Annex A calls the `=`/`<>` level `comparison` and the `<`/`>` level
+        // `equ_expression`, which is the opposite of what the names suggest.
+        // This test states which one actually binds looser.
+        assert_eq!(shape(&expr_of("a = b < c")), "(= a (< b c))");
+        assert_eq!(shape(&expr_of("a <> b >= c")), "(<> a (>= b c))");
+    }
+
+    #[test]
+    fn xor_sits_between_or_and_and() {
+        assert_eq!(
+            shape(&expr_of("a OR b XOR c AND e")),
+            "(OR a (XOR b (AND c e)))"
+        );
+    }
+
+    #[test]
+    fn addition_binds_looser_than_multiplication() {
+        assert_eq!(shape(&expr_of("a + b * c")), "(+ a (* b c))");
+    }
+
+    #[test]
+    fn multiplication_binds_looser_than_exponentiation() {
+        assert_eq!(shape(&expr_of("a * b ** c")), "(* a (** b c))");
+    }
+
+    #[test]
+    fn mod_binds_as_tightly_as_multiplication() {
+        assert_eq!(shape(&expr_of("a + b MOD c")), "(+ a (MOD b c))");
+        assert_eq!(shape(&expr_of("a * b MOD c")), "(MOD (* a b) c)");
+    }
+
+    #[test]
+    fn not_binds_tighter_than_equality() {
+        // Table 71 puts NOT at row 6 and `=` far below it, so `NOT a = b`
+        // compares the negation, it does not negate the comparison.
+        assert_eq!(shape(&expr_of("NOT a = b")), "(= (NOT a) b)");
+    }
+
+    #[test]
+    fn unary_minus_binds_tighter_than_exponentiation_as_edition_3_orders_them() {
+        // `-2 ** 2` is `(-2) ** 2`, which is 4.
+        //
+        // IEC 61131-3:2013 Table 71 "Operators of the ST language" lists
+        // negation above exponentiation, and the Edition 3 normative Annex A
+        // grammar makes the operands of `**` unary expressions. Two independent
+        // open implementations agree.
+        //
+        // DIVERGENCE: CODESYS and Beckhoff ship the Edition 2 ordering and give
+        // -4 for the same text. That is why salman warns here — see
+        // `an_unparenthesised_unary_operand_of_power_is_warned_about`.
+        assert_eq!(shape(&expr_of("-2 ** 2")), "(** (- 2) 2)");
+        assert_eq!(shape(&expr_of("NOT a ** b")), "(** (NOT a) b)");
+    }
+
+    #[test]
+    fn exponentiation_is_left_associative() {
+        // UNVERIFIED: no source salman could read states the associativity of
+        // `**` itself. Three open implementations group it to the left, so
+        // salman does; code that depends on this should use parentheses.
+        assert_eq!(shape(&expr_of("2 ** 3 ** 2")), "(** (** 2 3) 2)");
+    }
+
+    #[test]
+    fn every_binary_level_is_left_associative() {
+        assert_eq!(shape(&expr_of("a - b - c")), "(- (- a b) c)");
+        assert_eq!(shape(&expr_of("a / b / c")), "(/ (/ a b) c)");
+        assert_eq!(shape(&expr_of("a OR b OR c")), "(OR (OR a b) c)");
+        assert_eq!(shape(&expr_of("a AND b AND c")), "(AND (AND a b) c)");
+        assert_eq!(shape(&expr_of("a < b < c")), "(< (< a b) c)");
+    }
+
+    #[test]
+    fn ampersand_is_another_spelling_of_and() {
+        assert_eq!(shape(&expr_of("a & b")), "(AND a b)");
+        assert_eq!(shape(&expr_of("a & b AND c")), "(AND (AND a b) c)");
+    }
+
+    #[test]
+    fn parentheses_stay_in_the_tree_rather_than_being_folded_away() {
+        // A formatter that discards the author's parentheses rewrites code
+        // nobody asked it to rewrite, and the `**` warning needs to know.
+        assert_eq!(shape(&expr_of("(a + b) * c")), "(* (paren (+ a b)) c)");
+    }
+
+    #[test]
+    fn an_unparenthesised_unary_operand_of_power_is_warned_about() {
+        assert_eq!(warnings(&in_program("X := -2 ** 2;")), ["W0201"]);
+        assert_eq!(warnings(&in_program("X := 2 ** -2;")), ["W0201"]);
+        assert_eq!(warnings(&in_program("X := NOT a ** b;")), ["W0201"]);
+    }
+
+    #[test]
+    fn a_parenthesised_power_operand_does_not_warn() {
+        assert!(warnings(&in_program("X := (-2) ** 2;")).is_empty());
+        assert!(warnings(&in_program("X := 2 ** (-2);")).is_empty());
+        assert!(warnings(&in_program("X := 2 ** 2;")).is_empty());
+    }
+
+    #[test]
+    fn the_power_warning_suggests_the_parentheses_that_would_settle_it() {
+        let (_, diags, _) = parse_text(&in_program("X := -2 ** 2;"));
+        let warning = diags
+            .items()
+            .iter()
+            .find(|d| d.code == codes::W_POWER_OPERAND_BINDING)
+            .expect("a binding warning");
+        let suggestion = warning.suggestions.first().expect("a suggestion");
+        assert_eq!(
+            suggestion.edits.first().map(|e| e.replacement.as_str()),
+            Some("(-2)")
+        );
+        assert!(
+            warning
+                .dialect_rule
+                .as_deref()
+                .is_some_and(|r| r.contains("unary operators against `**`")),
+            "{:?}",
+            warning.dialect_rule
+        );
+    }
+
+    #[test]
+    fn a_dialect_that_binds_power_tighter_lifts_the_unary_back_out() {
+        // Nothing salman ships selects this, but the setting exists, so it has
+        // to mean something. Under the Edition 2 ordering `-2 ** 2` is -4.
+        let dialect = Dialect {
+            unary_power_binding: UnaryPowerBinding::PowerTighter,
+            ..Dialect::generic()
+        };
+        assert_eq!(shape(&expr_in(&dialect, "-2 ** 2")), "(- (** 2 2))");
+        assert_eq!(
+            shape(&expr_in(&dialect, "-2 ** 3 ** 2")),
+            "(- (** (** 2 3) 2))"
+        );
+    }
+
+    // -- primaries and postfix ----------------------------------------------
+
+    #[test]
+    fn member_access_chains_left_to_right() {
+        assert_eq!(shape(&expr_of("a.b.c")), "(. (. a b) c)");
+    }
+
+    #[test]
+    fn an_index_takes_one_expression_per_dimension() {
+        assert_eq!(shape(&expr_of("Grid[i, j + 1]")), "(index Grid i (+ j 1))");
+    }
+
+    #[test]
+    fn dereference_is_a_postfix_operator() {
+        assert_eq!(shape(&expr_of("Handle^")), "(^ Handle)");
+        assert_eq!(shape(&expr_of("Handle^.Field")), "(. (^ Handle) Field)");
+    }
+
+    #[test]
+    fn member_index_and_call_chain_together_in_source_order() {
+        assert_eq!(
+            shape(&expr_of("Cell.Motors[2].Start(x)")),
+            "(call (. (index (. Cell Motors) 2) Start) x)"
+        );
+    }
+
+    #[test]
+    fn an_enumeration_value_parses_as_a_qualified_pair() {
+        assert_eq!(shape(&expr_of("Colour#Red")), "Colour#Red");
+    }
+
+    #[test]
+    fn a_direct_address_arrives_as_one_token_and_one_node() {
+        // The lexer hands `%IX0.0` over whole; the parser must not try to
+        // reassemble it out of an identifier, a dot and a number.
+        let expr = expr_of("%IX0.0");
+        assert!(matches!(expr.kind, ExprKind::Direct(_)), "{expr:?}");
+    }
+
+    #[test]
+    fn literals_reach_the_tree_with_their_values() {
+        assert_eq!(shape(&expr_of("42")), "42");
+        assert_eq!(shape(&expr_of("TRUE")), "true");
+        assert_eq!(shape(&expr_of("16#FF")), "255");
+        assert!(matches!(
+            expr_of("T#5s").kind,
+            ExprKind::Literal(LiteralValue::Duration { .. })
+        ));
+        assert!(matches!(
+            expr_of("'text'").kind,
+            ExprKind::Literal(LiteralValue::String(_))
+        ));
+    }
+
+    #[test]
+    fn a_chain_of_unary_operators_nests_outward() {
+        assert_eq!(shape(&expr_of("- - a")), "(- (- a))");
+        assert_eq!(shape(&expr_of("NOT NOT a")), "(NOT (NOT a))");
+        assert_eq!(shape(&expr_of("-+a")), "(- (+ a))");
+    }
+
+    // -- calls ---------------------------------------------------------------
+
+    #[test]
+    fn a_call_may_take_no_arguments() {
+        assert_eq!(shape(&expr_of("Reset()")), "(call Reset)");
+    }
+
+    #[test]
+    fn a_call_may_take_positional_arguments() {
+        assert_eq!(shape(&expr_of("MAX(a, b)")), "(call MAX a b)");
+    }
+
+    #[test]
+    fn a_call_may_bind_inputs_by_name() {
+        assert_eq!(
+            shape(&expr_of("Timer(IN := Start, PT := Delay)")),
+            "(call Timer IN:=Start PT:=Delay)"
+        );
+    }
+
+    #[test]
+    fn a_call_may_bind_outputs_by_name() {
+        assert_eq!(
+            shape(&expr_of("Timer(IN := Start, Q => Running)")),
+            "(call Timer IN:=Start Q=>Running)"
+        );
+    }
+
+    #[test]
+    fn an_output_binding_with_nothing_after_it_discards_the_output() {
+        assert_eq!(
+            shape(&expr_of("Timer(Q =>, ET => E)")),
+            "(call Timer Q=>_ ET=>E)"
+        );
+        assert_eq!(shape(&expr_of("Timer(Q =>)")), "(call Timer Q=>_)");
+    }
+
+    #[test]
+    fn positional_named_and_output_arguments_may_be_mixed() {
+        // Whether a particular callee accepts the mixture is the checker's
+        // business; the parser's job is to keep what was written.
+        assert_eq!(
+            shape(&expr_of("F(a, IN := b, Q => c)")),
+            "(call F a IN:=b Q=>c)"
+        );
+    }
+
+    #[test]
+    fn an_argument_may_itself_be_a_call() {
+        assert_eq!(shape(&expr_of("F(G(x), y)")), "(call F (call G x) y)");
+    }
+
+    // -- statements ----------------------------------------------------------
+
+    #[test]
+    fn a_bare_semicolon_is_the_empty_statement() {
+        assert!(matches!(only_stmt(";").kind, StmtKind::Empty));
+    }
+
+    #[test]
+    fn an_assignment_keeps_its_target_and_its_value() {
+        match only_stmt("Motor := Speed + 1;").kind {
+            StmtKind::Assign { target, value } => {
+                assert_eq!(shape(&target), "Motor");
+                assert_eq!(shape(&value), "(+ Speed 1)");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_assignment_attempt_is_parsed_rather_than_refused() {
+        // IEC 61131-3:2013 Table 52 "Assignment attempt". salman implements no
+        // references, but parsing `?=` is what lets the message about that come
+        // from the checker and read like an answer.
+        assert!(matches!(
+            only_stmt("Target ?= Source;").kind,
+            StmtKind::AssignAttempt { .. }
+        ));
+    }
+
+    #[test]
+    fn a_call_on_its_own_is_a_statement() {
+        match only_stmt("Timer(IN := Start);").kind {
+            StmtKind::Call(expr) => assert_eq!(shape(&expr), "(call Timer IN:=Start)"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_bare_expression_is_not_a_statement() {
+        assert_eq!(errors(&in_program("a + b;")), ["E0204"]);
+    }
+
+    #[test]
+    fn if_then_end_if_has_one_branch_and_no_else() {
+        match only_stmt("IF Ready THEN Go := 1; END_IF").kind {
+            StmtKind::If {
+                branches,
+                else_body,
+            } => {
+                assert_eq!(branches.len(), 1);
+                assert_eq!(shape(&branches[0].condition), "Ready");
+                assert_eq!(branches[0].body.len(), 1);
+                assert!(else_body.is_none());
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn elsif_branches_are_kept_in_order_after_the_if() {
+        match only_stmt(
+            "IF a THEN X := 1; ELSIF b THEN X := 2; ELSIF c THEN X := 3; ELSE X := 4; END_IF",
+        )
+        .kind
+        {
+            StmtKind::If {
+                branches,
+                else_body,
+            } => {
+                let conditions: Vec<String> =
+                    branches.iter().map(|b| shape(&b.condition)).collect();
+                assert_eq!(conditions, ["a", "b", "c"]);
+                assert_eq!(else_body.map(|b| b.len()), Some(1));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_trailing_semicolon_after_a_closing_keyword_is_accepted() {
+        assert_eq!(body_of("IF a THEN X := 1; END_IF;").len(), 1);
+        assert_eq!(body_of("WHILE a DO X := 1; END_WHILE;").len(), 1);
+    }
+
+    #[test]
+    fn case_labels_may_be_single_values_lists_or_ranges() {
+        match only_stmt("CASE Sel OF 1: A := 1; 2, 3: A := 2; 4..7: A := 3; END_CASE").kind {
+            StmtKind::Case { arms, .. } => {
+                assert_eq!(arms.len(), 3);
+                assert_eq!(arms[0].labels.len(), 1);
+                assert_eq!(arms[1].labels.len(), 2);
+                assert!(matches!(arms[2].labels[0], CaseLabel::Range { .. }));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_case_may_have_an_else_arm() {
+        match only_stmt("CASE Sel OF 1: A := 1; ELSE A := 0; END_CASE").kind {
+            StmtKind::Case {
+                arms, else_body, ..
+            } => {
+                assert_eq!(arms.len(), 1);
+                assert_eq!(else_body.map(|b| b.len()), Some(1));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_case_arm_holds_every_statement_up_to_the_next_label() {
+        match only_stmt("CASE S OF 1: A := 1; B := 2; C := 3; 2: E := 4; END_CASE").kind {
+            StmtKind::Case { arms, .. } => {
+                assert_eq!(arms[0].body.len(), 3);
+                assert_eq!(arms[1].body.len(), 1);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_enumeration_value_may_be_a_case_label() {
+        match only_stmt("CASE C OF Colour#Red: A := 1; Colour#Blue: A := 2; END_CASE").kind {
+            StmtKind::Case { arms, .. } => assert_eq!(arms.len(), 2),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn for_keeps_its_control_variable_bounds_and_step() {
+        match only_stmt("FOR i := 0 TO 10 BY 2 DO Total := Total + i; END_FOR").kind {
+            StmtKind::For {
+                variable,
+                from,
+                to,
+                by,
+                body,
+            } => {
+                assert_eq!(variable.as_str(), "i");
+                assert_eq!(shape(&from), "0");
+                assert_eq!(shape(&to), "10");
+                assert_eq!(by.map(|e| shape(&e)), Some("2".to_string()));
+                assert_eq!(body.len(), 1);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn for_without_by_records_no_step_rather_than_inventing_one() {
+        match only_stmt("FOR i := 0 TO 10 DO A := i; END_FOR").kind {
+            StmtKind::For { by, .. } => assert!(by.is_none()),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn while_tests_before_the_body_and_repeat_tests_after_it() {
+        match only_stmt("WHILE a DO X := 1; END_WHILE").kind {
+            StmtKind::While { condition, body } => {
+                assert_eq!(shape(&condition), "a");
+                assert_eq!(body.len(), 1);
+            }
+            other => panic!("{other:?}"),
+        }
+        match only_stmt("REPEAT X := 1; UNTIL a END_REPEAT").kind {
+            StmtKind::Repeat { body, until } => {
+                assert_eq!(body.len(), 1);
+                assert_eq!(shape(&until), "a");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn continue_is_a_standard_statement_in_edition_3() {
+        // IEC 61131-3:2013 Table 72 "ST language statements" row 9. Beckhoff's
+        // documentation still calls CONTINUE a non-standard extension, which is
+        // Edition-2-era wording; salman treats it as standard and does not warn.
+        let stmts = body_of("WHILE a DO CONTINUE; END_WHILE");
+        match &stmts.first().expect("a WHILE").kind {
+            StmtKind::While { body, .. } => {
+                assert!(matches!(
+                    body.first().map(|s| &s.kind),
+                    Some(StmtKind::Continue)
+                ));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn exit_and_return_are_statements_of_their_own() {
+        assert!(matches!(only_stmt("EXIT;").kind, StmtKind::Exit));
+        assert!(matches!(only_stmt("RETURN;").kind, StmtKind::Return));
+    }
+
+    #[test]
+    fn control_constructs_nest_inside_one_another() {
+        let stmt = only_stmt(
+            "FOR i := 1 TO 3 DO \
+               IF a THEN \
+                 CASE i OF 1: WHILE b DO REPEAT X := 1; UNTIL c END_REPEAT END_WHILE END_CASE \
+               END_IF \
+             END_FOR",
+        );
+        let mut ids = Vec::new();
+        collect_stmt_ids(std::slice::from_ref(&stmt), &mut ids);
+        assert!(ids.len() >= 6, "the nest collapsed: {stmt:?}");
+    }
+
+    // -- salman's CASE rule --------------------------------------------------
+
+    #[test]
+    fn duplicate_case_labels_are_refused_by_a_salman_rule() {
+        assert_eq!(
+            errors(&in_program("CASE S OF 1: A := 1; 1: A := 2; END_CASE")),
+            ["E0208"]
+        );
+    }
+
+    #[test]
+    fn overlapping_case_ranges_are_refused_by_a_salman_rule() {
+        assert_eq!(
+            errors(&in_program(
+                "CASE S OF 1..5: A := 1; 4..8: A := 2; END_CASE"
+            )),
+            ["E0209"]
+        );
+    }
+
+    #[test]
+    fn the_case_label_rule_says_in_the_diagnostic_that_it_is_a_salman_rule() {
+        let (_, diags, _) = parse_text(&in_program("CASE S OF 1: A := 1; 1: A := 2; END_CASE"));
+        let note = diags
+            .items()
+            .iter()
+            .find(|d| d.code == codes::E_DUPLICATE_CASE_LABEL)
+            .and_then(|d| d.notes.first())
+            .expect("a note");
+        assert!(note.contains("salman rule"), "{note}");
+        assert!(
+            note.contains("IEC 61131-3:2013 Table 72 \"ST language statements\""),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn case_labels_that_name_constants_are_compared_by_spelling_only() {
+        // The parser can see that `Red` appears twice. It cannot see whether
+        // `Colour#Red` and `Red` are the same value — that needs the
+        // enumeration's declaration, so it is the checker's to decide.
+        assert_eq!(
+            errors(&in_program("CASE C OF Red: A := 1; Red: A := 2; END_CASE")),
+            ["E0208"]
+        );
+        assert!(
+            errors(&in_program(
+                "CASE C OF Colour#Red: A := 1; Red: A := 2; END_CASE"
+            ))
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn distinct_case_labels_are_accepted() {
+        assert!(
+            errors(&in_program(
+                "CASE S OF 1: A := 1; 2..4: A := 2; 5, 6: A := 3; ELSE A := 0; END_CASE"
+            ))
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_negative_case_label_is_evaluated_like_any_other_constant() {
+        assert_eq!(
+            errors(&in_program("CASE S OF -1: A := 1; -1: A := 2; END_CASE")),
+            ["E0208"]
+        );
+        assert!(errors(&in_program("CASE S OF -1: A := 1; 1: A := 2; END_CASE")).is_empty());
+    }
+
+    // -- salman's FOR rule ---------------------------------------------------
+
+    #[test]
+    fn assigning_the_control_variable_in_a_for_body_is_refused_by_a_salman_rule() {
+        assert_eq!(
+            errors(&in_program("FOR i := 1 TO 10 DO i := 5; END_FOR")),
+            ["E0210"]
+        );
+    }
+
+    #[test]
+    fn the_for_rule_finds_an_assignment_nested_inside_the_body() {
+        assert_eq!(
+            errors(&in_program(
+                "FOR i := 1 TO 10 DO IF a THEN i := 5; END_IF END_FOR"
+            )),
+            ["E0210"]
+        );
+    }
+
+    #[test]
+    fn a_for_body_that_leaves_its_counter_alone_is_accepted() {
+        assert!(
+            errors(&in_program(
+                "FOR i := 1 TO 10 DO j := i; Total := Total + i; END_FOR"
+            ))
+            .is_empty()
+        );
+    }
+
+    // -- declarations --------------------------------------------------------
+
+    #[test]
+    fn a_program_carries_its_variable_blocks_and_its_body() {
+        let unit = parse_ok(
+            "PROGRAM Conveyor\n\
+             VAR_INPUT Start : BOOL; END_VAR\n\
+             VAR Count : DINT := 0; END_VAR\n\
+             Count := Count + 1;\n\
+             END_PROGRAM\n",
+        );
+        let pou = unit
+            .pou("conveyor")
+            .expect("names compare case-insensitively");
+        assert_eq!(pou.kind, PouKind::Program);
+        assert_eq!(pou.var_blocks.len(), 2);
+        assert_eq!(pou.var_blocks[0].section, VarSection::Input);
+        assert_eq!(pou.var_blocks[1].section, VarSection::Local);
+        assert_eq!(pou.body.len(), 1);
+    }
+
+    #[test]
+    fn every_variable_section_keyword_opens_its_section() {
+        let sections = [
+            ("VAR", VarSection::Local),
+            ("VAR_INPUT", VarSection::Input),
+            ("VAR_OUTPUT", VarSection::Output),
+            ("VAR_IN_OUT", VarSection::InOut),
+            ("VAR_TEMP", VarSection::Temp),
+            ("VAR_EXTERNAL", VarSection::External),
+            ("VAR_ACCESS", VarSection::Access),
+            ("VAR_CONFIG", VarSection::Config),
+        ];
+        for (keyword, expected) in sections {
+            let src = format!("PROGRAM P\n{keyword}\n A : BOOL;\nEND_VAR\nEND_PROGRAM\n");
+            let unit = parse_ok(&src);
+            let pou = unit.pou("P").expect("P");
+            assert_eq!(
+                pou.var_blocks.first().map(|b| b.section),
+                Some(expected),
+                "{keyword}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_var_global_block_at_file_scope_is_a_top_level_item() {
+        let unit = parse_ok("VAR_GLOBAL Emergency : BOOL; END_VAR\n");
+        match unit.items.first() {
+            Some(Item::Globals(block)) => assert_eq!(block.section, VarSection::Global),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn variable_block_qualifiers_are_recorded() {
+        let unit = parse_ok("PROGRAM P VAR RETAIN CONSTANT A : INT := 1; END_VAR END_PROGRAM");
+        let block = &unit.pou("P").expect("P").var_blocks[0];
+        assert_eq!(block.qualifiers.retention, Retention::Retain);
+        assert!(block.qualifiers.constant);
+        assert!(!block.qualifiers.persistent);
+
+        let unit = parse_ok("PROGRAM P VAR NON_RETAIN PERSISTENT A : INT; END_VAR END_PROGRAM");
+        let block = &unit.pou("P").expect("P").var_blocks[0];
+        assert_eq!(block.qualifiers.retention, Retention::NonRetain);
+        assert!(block.qualifiers.persistent);
+    }
+
+    #[test]
+    fn one_declaration_may_name_several_variables() {
+        let unit = parse_ok("PROGRAM P VAR A, B, C : DINT := 0; END_VAR END_PROGRAM");
+        let decl = &unit.pou("P").expect("P").var_blocks[0].decls[0];
+        let names: Vec<&str> = decl.names.iter().map(Name::as_str).collect();
+        assert_eq!(names, ["A", "B", "C"]);
+        assert!(decl.init.is_some());
+    }
+
+    #[test]
+    fn a_located_variable_keeps_the_address_it_was_bound_to() {
+        let unit = parse_ok("PROGRAM P VAR Sensor AT %IX0.0 : BOOL; END_VAR END_PROGRAM");
+        let decl = &unit.pou("P").expect("P").var_blocks[0].decls[0];
+        assert!(decl.located_at.is_some(), "{decl:?}");
+        assert!(decl.located_at_span.is_some());
+    }
+
+    #[test]
+    fn a_string_may_declare_its_maximum_length() {
+        let unit = parse_ok(
+            "PROGRAM P VAR A : STRING[80]; B : STRING; C : WSTRING(20); END_VAR END_PROGRAM",
+        );
+        let decls = &unit.pou("P").expect("P").var_blocks[0].decls;
+        assert!(matches!(
+            decls[0].ty,
+            TypeRef::String {
+                max_len: Some(_),
+                ..
+            }
+        ));
+        assert!(matches!(decls[1].ty, TypeRef::String { max_len: None, .. }));
+        assert!(matches!(
+            decls[2].ty,
+            TypeRef::String {
+                ty: ElementaryType::WString,
+                max_len: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn an_array_declaration_keeps_one_dimension_per_bound_pair() {
+        let unit = parse_ok("PROGRAM P VAR Grid : ARRAY [0..9, 1..4] OF REAL; END_VAR END_PROGRAM");
+        match &unit.pou("P").expect("P").var_blocks[0].decls[0].ty {
+            TypeRef::Array { dims, element, .. } => {
+                assert_eq!(dims.len(), 2);
+                assert_eq!(shape(&dims[0].low), "0");
+                assert_eq!(shape(&dims[1].high), "4");
+                assert!(matches!(
+                    **element,
+                    TypeRef::Elementary {
+                        ty: ElementaryType::Real,
+                        ..
+                    }
+                ));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_subrange_declaration_keeps_its_base_type_and_both_bounds() {
+        let unit = parse_ok("PROGRAM P VAR Level : INT (0..100); END_VAR END_PROGRAM");
+        match &unit.pou("P").expect("P").var_blocks[0].decls[0].ty {
+            TypeRef::Subrange {
+                base, low, high, ..
+            } => {
+                assert!(matches!(
+                    **base,
+                    TypeRef::Elementary {
+                        ty: ElementaryType::Int,
+                        ..
+                    }
+                ));
+                assert_eq!(shape(low), "0");
+                assert_eq!(shape(high), "100");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_function_block_instance_is_declared_by_naming_its_type() {
+        let unit = parse_ok("PROGRAM P VAR T1 : TON; END_VAR END_PROGRAM");
+        match &unit.pou("P").expect("P").var_blocks[0].decls[0].ty {
+            TypeRef::Named(name) => assert_eq!(name.as_str(), "TON"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_function_declares_the_type_of_the_value_it_returns() {
+        let unit = parse_ok(
+            "FUNCTION Average : REAL\nVAR_INPUT A, B : REAL; END_VAR\nAverage := (A + B) / 2.0;\nEND_FUNCTION\n",
+        );
+        let pou = unit.pou("Average").expect("Average");
+        assert_eq!(pou.kind, PouKind::Function);
+        assert!(matches!(
+            pou.return_type,
+            Some(TypeRef::Elementary {
+                ty: ElementaryType::Real,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_function_block_has_no_return_type() {
+        let unit = parse_ok(
+            "FUNCTION_BLOCK Latch\nVAR_INPUT S : BOOL; END_VAR\nVAR_OUTPUT Q : BOOL; END_VAR\nQ := S;\nEND_FUNCTION_BLOCK\n",
+        );
+        let pou = unit.pou("Latch").expect("Latch");
+        assert_eq!(pou.kind, PouKind::FunctionBlock);
+        assert!(pou.return_type.is_none());
+        assert_eq!(pou.var_blocks.len(), 2);
+    }
+
+    #[test]
+    fn a_type_block_holds_aliases_structures_enumerations_subranges_and_arrays() {
+        let unit = parse_ok(
+            "TYPE\n\
+               Speed : DINT := 7;\n\
+               Point : STRUCT X : INT; Y : INT; END_STRUCT;\n\
+               Colour : (Red, Green := 5, Blue);\n\
+               Percent : INT (0..100);\n\
+               Table : ARRAY [1..10] OF REAL;\n\
+             END_TYPE\n",
+        );
+        let Some(Item::Types(decls)) = unit.items.first() else {
+            panic!("{:?}", unit.items);
+        };
+        assert_eq!(decls.len(), 5);
+        assert!(matches!(decls[0].kind, TypeDeclKind::Alias(_)));
+        assert!(decls[0].init.is_some());
+        match &decls[1].kind {
+            TypeDeclKind::Struct(fields) => assert_eq!(fields.len(), 2),
+            other => panic!("{other:?}"),
+        }
+        match &decls[2].kind {
+            TypeDeclKind::Enum { base, values } => {
+                assert!(base.is_none());
+                assert_eq!(values.len(), 3);
+                assert_eq!(values[1].name.as_str(), "Green");
+                assert!(values[1].value.is_some());
+                assert!(values[0].value.is_none());
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(decls[3].kind, TypeDeclKind::Subrange { .. }));
+        assert!(matches!(decls[4].kind, TypeDeclKind::Array { .. }));
+    }
+
+    #[test]
+    fn an_enumeration_may_name_the_type_its_values_are_stored_in() {
+        // `Colour : INT (Red, Green)` is an enumeration; `Percent : INT (0..100)`
+        // is a subrange. They differ only after the opening parenthesis.
+        let unit = parse_ok("TYPE Colour : INT (Red, Green); END_TYPE");
+        let Some(Item::Types(decls)) = unit.items.first() else {
+            panic!("{:?}", unit.items);
+        };
+        match &decls[0].kind {
+            TypeDeclKind::Enum { base, values } => {
+                assert_eq!(*base, Some(ElementaryType::Int));
+                assert_eq!(values.len(), 2);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_configuration_holds_globals_resources_tasks_and_program_instances() {
+        let unit = parse_ok(
+            "CONFIGURATION Plant\n\
+               VAR_GLOBAL Emergency : BOOL; END_VAR\n\
+               RESOURCE Station ON CPU_001\n\
+                 VAR_GLOBAL Local : INT; END_VAR\n\
+                 TASK Fast (INTERVAL := T#10ms, PRIORITY := 1);\n\
+                 TASK OnEvent (SINGLE := Emergency, PRIORITY := 0);\n\
+                 PROGRAM Main WITH Fast : Conveyor;\n\
+                 PROGRAM Spare : Conveyor;\n\
+               END_RESOURCE\n\
+             END_CONFIGURATION\n",
+        );
+        let config = unit.configurations().next().expect("a configuration");
+        assert_eq!(config.name.as_str(), "Plant");
+        assert_eq!(config.var_blocks.len(), 1);
+        let resource = config.resources.first().expect("a resource");
+        assert_eq!(resource.on_type.as_ref().map(Name::as_str), Some("CPU_001"));
+        assert_eq!(resource.var_blocks.len(), 1);
+        assert_eq!(resource.tasks.len(), 2);
+        assert!(resource.tasks[0].interval.is_some());
+        assert!(resource.tasks[0].priority.is_some());
+        assert!(resource.tasks[1].single.is_some());
+        assert_eq!(resource.programs.len(), 2);
+        assert_eq!(
+            resource.programs[0].task.as_ref().map(Name::as_str),
+            Some("Fast")
+        );
+        assert!(resource.programs[1].task.is_none());
+        assert_eq!(resource.programs[1].program_type.as_str(), "Conveyor");
+    }
+
+    #[test]
+    fn several_top_level_items_parse_into_one_unit_in_source_order() {
+        let unit = parse_ok(
+            "TYPE Speed : INT; END_TYPE\n\
+             FUNCTION F : INT F := 1; END_FUNCTION\n\
+             FUNCTION_BLOCK B B_Out := 1; END_FUNCTION_BLOCK\n\
+             PROGRAM P X := 1; END_PROGRAM\n",
+        );
+        assert_eq!(unit.items.len(), 4);
+        let names: Vec<&str> = unit.pous().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["F", "B", "P"]);
+    }
+
+    // -- unimplemented constructs -------------------------------------------
+
+    #[test]
+    fn a_reserved_but_unimplemented_construct_says_so_rather_than_failing_to_parse() {
+        assert_eq!(errors("CLASS Motor END_CLASS"), ["U0201"]);
+        assert_eq!(errors(&in_program("X := NULL;")), ["U0201"]);
+    }
+
+    #[test]
+    fn an_inline_structure_or_enumeration_asks_for_a_named_type() {
+        assert_eq!(
+            errors("PROGRAM P VAR C : (Red, Green); END_VAR END_PROGRAM"),
+            ["U0201"]
+        );
+        assert_eq!(
+            errors("PROGRAM P VAR C : STRUCT X : INT; END_STRUCT; END_VAR END_PROGRAM"),
+            ["U0201"]
+        );
+    }
+
+    #[test]
+    fn an_instance_path_in_a_declaration_says_it_is_not_implemented() {
+        assert_eq!(
+            errors(
+                "PROGRAM P VAR_CONFIG Station.Main.Sensor AT %IX1.0 : BOOL; END_VAR END_PROGRAM"
+            ),
+            ["U0201"]
+        );
+    }
+
+    // -- error recovery ------------------------------------------------------
+
+    #[test]
+    fn a_file_with_ten_broken_statements_reports_about_ten_errors_not_one() {
+        let mut body = String::new();
+        for index in 0..10 {
+            // Each line is missing its right-hand side, which is a fresh error
+            // and not a consequence of the one before it.
+            body.push('V');
+            body.push_str(&index.to_string());
+            body.push_str(" := ;\n");
+        }
+        let found = errors(&in_program(&body));
+        assert!(
+            found.len() >= 10,
+            "recovery collapsed: got {} errors: {found:?}",
+            found.len()
+        );
+        assert!(
+            found.len() <= 14,
+            "recovery is producing consequences: got {} errors: {found:?}",
+            found.len()
+        );
+    }
+
+    #[test]
+    fn a_broken_statement_does_not_hide_the_good_ones_after_it() {
+        let stmts = {
+            let src = in_program("A := ;\nB := 2;\nC := 3;");
+            let (unit, _, _) = parse_text(&src);
+            unit.pou("Main").expect("Main").body.clone()
+        };
+        assert_eq!(stmts.len(), 3, "{stmts:?}");
+        // The first statement survives as an assignment whose value could not
+        // be built; the two after it are untouched.
+        match &stmts[0].kind {
+            StmtKind::Assign { value, .. } => assert!(matches!(value.kind, ExprKind::Error)),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(stmts[1].kind, StmtKind::Assign { .. }));
+        assert!(matches!(stmts[2].kind, StmtKind::Assign { .. }));
+    }
+
+    #[test]
+    fn an_unclosed_block_says_where_it_started() {
+        let (_, diags, map) = parse_text("PROGRAM P\nIF a THEN\nX := 1;\nEND_PROGRAM\n");
+        let text = diags.render(&map);
+        assert!(text.contains("`IF` is never closed"), "{text}");
+        assert!(text.contains("`IF` starts here"), "{text}");
+    }
+
+    #[test]
+    fn a_mismatched_closing_keyword_is_reported_where_it_is_not_swallowed() {
+        let found = errors("PROGRAM P\nIF a THEN\nX := 1;\nEND_WHILE\nEND_PROGRAM\n");
+        assert!(found.contains(&"E0207"), "{found:?}");
+    }
+
+    #[test]
+    fn a_missing_semicolon_resynchronises_at_the_next_one() {
+        let found = errors(&in_program("A := 1\nB := 2;\nC := 3;"));
+        assert_eq!(found, ["E0202"], "{found:?}");
+    }
+
+    #[test]
+    fn a_broken_declaration_does_not_stop_the_ones_after_it() {
+        let (unit, diags, _) =
+            parse_text("PROGRAM P VAR A : ; B : INT; C : BOOL; END_VAR END_PROGRAM");
+        assert!(diags.has_errors());
+        let decls = &unit.pou("P").expect("P").var_blocks[0].decls;
+        assert!(decls.len() >= 2, "{decls:?}");
+    }
+
+    #[test]
+    fn a_broken_top_level_item_does_not_stop_the_ones_after_it() {
+        let (unit, diags, _) = parse_text("nonsense here\nPROGRAM P X := 1; END_PROGRAM\n");
+        assert!(diags.has_errors());
+        assert!(unit.pou("P").is_some(), "{:?}", unit.items);
+    }
+
+    #[test]
+    fn an_error_node_never_appears_without_a_diagnostic_beside_it() {
+        for src in [
+            in_program("A := ;"),
+            in_program("A := ) ;"),
+            in_program("FOR := 1 TO 2 DO END_FOR"),
+            "PROGRAM".to_string(),
+        ] {
+            let (_, diags, _) = parse_text(&src);
+            assert!(diags.has_errors(), "no diagnostic for {src:?}");
+        }
+    }
+
+    // -- safety --------------------------------------------------------------
+
+    #[test]
+    fn ten_thousand_nested_parentheses_produce_a_diagnostic_rather_than_a_stack_overflow() {
+        let src = in_program(&format!(
+            "X := {}1{};",
+            "(".repeat(10_000),
+            ")".repeat(10_000)
+        ));
+        let found = errors(&src);
+        assert_eq!(found, ["E0201"], "{found:?}");
+    }
+
+    #[test]
+    fn ten_thousand_nested_if_statements_produce_a_diagnostic_rather_than_a_stack_overflow() {
+        let src = in_program(&format!(
+            "{}X := 1;{}",
+            "IF a THEN ".repeat(10_000),
+            "END_IF ".repeat(10_000)
+        ));
+        let found = errors(&src);
+        assert_eq!(found, ["E0201"], "{found:?}");
+    }
+
+    #[test]
+    fn a_long_operator_chain_is_bounded_too_because_its_tree_is_just_as_deep() {
+        let short = format!("X := {};", vec!["1"; 50].join(" + "));
+        assert!(errors(&in_program(&short)).is_empty());
+
+        let long = format!("X := {};", vec!["1"; 5_000].join(" + "));
+        assert_eq!(errors(&in_program(&long)), ["E0201"]);
+    }
+
+    #[test]
+    fn a_long_member_chain_is_bounded_too() {
+        let long = format!("X := a{};", ".b".repeat(5_000));
+        assert_eq!(errors(&in_program(&long)), ["E0201"]);
+    }
+
+    #[test]
+    fn a_deeper_bound_accepts_what_the_default_refuses() {
+        // Proves the bound really is the dialect's setting rather than a
+        // constant hidden in the parser.
+        let deep = Dialect {
+            max_nesting_depth: 200,
+            ..Dialect::generic()
+        };
+        let src = in_program(&format!("X := {}1{};", "(".repeat(160), ")".repeat(160)));
+        let (_, diags, _) = parse_with(&deep, &src);
+        assert!(
+            !diags.has_errors(),
+            "{:?}",
+            codes_of(&diags, Severity::Error)
+        );
+        assert_eq!(errors(&src), ["E0201"]);
+    }
+
+    #[test]
+    fn pathological_input_terminates_and_never_panics() {
+        let cases = [
+            "",
+            ";",
+            ";;;;;;;;",
+            "((((((((",
+            "))))))))",
+            "PROGRAM",
+            "PROGRAM P",
+            "PROGRAM P VAR",
+            "IF",
+            "CASE",
+            "CASE OF",
+            "FOR",
+            "REPEAT",
+            "END_IF",
+            "TYPE",
+            "TYPE X :",
+            "CONFIGURATION",
+            "RESOURCE",
+            "1,1,1,1,1,1,1,1",
+            "X := ",
+            "X ?= ",
+            ", , , ,",
+            ".....",
+            "**",
+            "a ** ** b",
+            "F(,)",
+            "F(",
+            "a[",
+            "a[]",
+            "%IX0.0 := ;",
+            "VAR_GLOBAL",
+            "&&&&&&&&",
+            "PROGRAM P PROGRAM Q END_PROGRAM",
+        ];
+        for case in cases {
+            // The assertion is that this returns at all. A hang or a panic here
+            // is the failure; the diagnostics are not the point.
+            let (unit, _, _) = parse_text(case);
+            let _ = unit.items.len();
+            let wrapped = in_program(case);
+            let (unit, _, _) = parse_text(&wrapped);
+            let _ = unit.items.len();
+        }
+    }
+
+    #[test]
+    fn a_case_label_scan_that_finds_no_colon_still_terminates() {
+        // The one place the parser looks ahead without a bound on the grammar
+        // is the CASE arm scanner; this is the input that would make it walk.
+        let commas = vec!["1"; 20_000].join(",");
+        let src = in_program(&format!("CASE S OF {commas} END_CASE"));
+        let (_, diags, _) = parse_text(&src);
+        assert!(diags.has_errors());
+    }
+
+    #[test]
+    fn parsing_is_deterministic() {
+        let src = "TYPE Speed : INT (0..100); END_TYPE\n\
+                   PROGRAM Main\n\
+                   VAR RETAIN Count : DINT := 0; T1 : TON; END_VAR\n\
+                   IF Count < 10 THEN Count := Count + 1; ELSE Count := 0; END_IF\n\
+                   CASE Count OF 0: A := 1; 1..3: A := 2; ELSE A := 0; END_CASE\n\
+                   T1(IN := TRUE, PT := T#5s, Q => Running);\n\
+                   END_PROGRAM\n";
+        let (first_unit, first_diags, map) = parse_text(src);
+        let (second_unit, second_diags, _) = parse_text(src);
+        assert_eq!(first_unit, second_unit);
+        assert_eq!(first_diags.render(&map), second_diags.render(&map));
+        assert_eq!(first_unit.node_count, second_unit.node_count);
+    }
+
+    #[test]
+    fn node_ids_are_unique_and_counted() {
+        let unit = parse_ok(
+            "PROGRAM Main\n\
+             VAR Count : DINT := 0; END_VAR\n\
+             FOR i := 1 TO 10 BY 2 DO\n\
+               IF Count > 3 THEN Count := Count + F(a, b); ELSE Count := 0; END_IF\n\
+             END_FOR\n\
+             CASE Count OF 1, 2: A := 1; 3..4: A := 2; ELSE A := 0; END_CASE\n\
+             END_PROGRAM\n",
+        );
+        let mut ids = Vec::new();
+        for pou in unit.pous() {
+            collect_stmt_ids(&pou.body, &mut ids);
+        }
+        assert!(ids.len() > 20, "the walk found almost nothing: {ids:?}");
+        let count = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), count, "a node id was reused");
+        assert!(
+            ids.iter().all(|id| *id < unit.node_count),
+            "an id fell outside node_count {}",
+            unit.node_count
+        );
+    }
+
+    #[test]
+    fn parse_and_parse_source_agree_on_the_same_text() {
+        let src = "PROGRAM P X := a + b * c; END_PROGRAM\n";
+        let mut map = SourceMap::new();
+        let file = map.add("t.st", src).unwrap();
+        let dialect = Dialect::generic();
+        let (stream, lex_diags) = lex(file, src, &dialect);
+        assert!(!lex_diags.has_errors());
+        let (from_stream, _) = parse(file, src, &stream, &dialect);
+        let (from_source, _) = parse_source(file, src, &dialect);
+        assert_eq!(from_stream, from_source);
+    }
+
+    #[test]
+    fn the_lexers_diagnostics_survive_into_the_merged_list() {
+        // `2#2` is a lexical error, `X := ;` a syntactic one. Both must be in
+        // the list a caller of parse_source gets.
+        let found = errors(&in_program("A := 2#2;\nB := ;"));
+        assert!(found.contains(&"E0106"), "{found:?}");
+        assert!(found.contains(&"E0203"), "{found:?}");
+    }
+
+    #[test]
+    fn comments_and_pragmas_do_not_reach_the_tree_but_do_not_derail_it() {
+        let unit = parse_ok(
+            "PROGRAM P (* a comment *) VAR {attribute 'x'} A : INT; END_VAR // trailing\n\
+             A := 1;\n\
+             END_PROGRAM\n",
+        );
+        let pou = unit.pou("P").expect("P");
+        assert_eq!(pou.var_blocks.len(), 1);
+        assert_eq!(pou.body.len(), 1);
     }
 }

@@ -36,9 +36,10 @@ pub mod stdfb;
 pub mod task;
 pub mod trace;
 
-pub use bytecode::{NativeBlock, Op, Program, Routine};
+pub use bytecode::{Op, Program, Routine};
 pub use clock::{Clock, ClockMode};
 pub use exec::{ExecLimits, Fault, FaultKind, execute};
 pub use memory::{Memory, Persistence, ProcessImage, Restart, SlotId};
+pub use salman_lang::stdlib::NativeBlock;
 pub use task::{Runtime, StepOutcome, TaskConfig, TaskTrigger};
 pub use trace::{Sample, Signal, Trace};
