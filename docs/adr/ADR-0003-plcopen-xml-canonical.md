@@ -19,10 +19,19 @@ around them. Each of those formats encodes not only the code but a model of what
 is, and those models disagree.
 
 There is exactly one neutral candidate. PLCopen's XML exchange format was developed by its
-TC6 working group for exactly this purpose, and in 2019 it was adopted into the standard as
-IEC 61131-10:2019 "Programmable controllers - Part 10: PLC open XML exchange format"; see
-[PLCopen's page on it](https://www.plcopen.org/standards/xml-echange/). It is not a perfect
-model of every vendor's project, and no such model exists.
+TC6 working group for exactly this purpose; see
+[PLCopen's page on it](https://www.plcopen.org/standards/xml-echange/) — the missing "x" in
+that URL is genuinely how it is spelled, and `xml-exchange` does not exist. It is not a
+perfect model of every vendor's project, and no such model exists.
+
+**An earlier version of this paragraph said that in 2019 the format "was adopted into the
+standard as IEC 61131-10:2019", which reads as continuity and is wrong.** They are two
+different formats. PLCopen's own flyer states: *"This new version is not compatible to
+previous versions of PLCopen XML."* Structurally they share almost nothing — different
+namespace, `<project>` against `<Project>`, lowercase against PascalCase, three kinds of POU
+against nine, and, most consequentially, Structured Text stored as XHTML-wrapped markup in
+one and as a plain string in the other. §"Which PLCopen XML" below records which salman
+targets.
 
 The other force is honesty about fidelity. "Imports Rockwell projects" is a claim that
 means nothing without a statement of what survives the trip. Every tool in this space makes
@@ -33,6 +42,66 @@ Note on editions: salman's language work targets IEC 61131-3:2013 (Edition 3.0),
 IEC 61131-3:2025 (Edition 4.0). salman targets Edition 3.0 because it is the edition our
 public sources let us verify. IEC 61131-10:2019 is a separate part of the standard,
 unaffected by that withdrawal.
+
+## Which PLCopen XML
+
+**salman targets PLCopen XML v2.01**, the current PLCopen format: "XML Formats for
+IEC 61131-3", Official Release, 2009-05-08, schema `tc6_xml_v201.xsd`, target namespace
+`http://www.plcopen.org/xml/tc6_0201`.
+
+The reasons, all checkable:
+
+- **It is what tools actually write.** Every vendor export examined — CODESYS, TwinCAT,
+  Rexroth ctrlX, WAGO, Schneider, Beremiz, OpenPLC — is v2.01 or v2.0.
+- **It is free and it is stable.** The schema downloads without a login, and the copy
+  archived in 2017 from an entirely different URL is byte-identical to today's: SHA-256
+  `591b92ba65018a77c32ab9e606abf27bd810cb1f7761d972a85689531c51e20f`.
+- **Its type set matches what salman implements.** v2.01 is frozen at IEC 61131-3 2nd
+  edition and rejects `LTIME`, `LDATE`, `LTOD`, `LDT`, `CHAR` and `WCHAR` — which are
+  exactly the types salman does not implement either.
+- **There is no v3.0.** The full downloads listing contains no schema or document above
+  2.01, and PLCopen's own page says "The latest PLCopen version is 2.01". Anything
+  describing a "PLCopen XML 3.0" is most likely confusing it with IEC 61131-3 **3rd
+  edition**. salman claims no more than: no v3.0 is published by PLCopen as of 2026-08-19.
+
+**IEC 61131-10:2019 is a separate future target, not a migration.** It is paywalled at
+CHF 475, and its clause 5 — which is what a project would need to describe its own
+compliance posture — is behind that wall: the free 26-page preview stops after clause 3. So
+salman will not describe an IEC 61131-10 compliance posture at all until somebody has read
+clause 5.
+
+**salman will not ship a copy of either schema.** For v2.01 that is a firm finding rather
+than a gap: the document carries no licence or terms-of-use statement, and no redistribution
+grant could be found anywhere on PLCopen's site. Not finding permission is not permission.
+salman reads the format from a schema the user supplies or from its own model of the format,
+and cites the schema rather than carrying it.
+
+**salman will not claim conformance or certification.** PLCopen runs no conformance or
+certification programme for the XML format. It certifies Logic, Motion Control, Safety and
+Training Centers, and certification is for voting members only. The XML side has a
+members-only logo scheme whose own text says a certification document "is currently under
+construction" — that was 2009, and no such document is on the downloads page today.
+
+## The one thing that will surprise an implementer
+
+**In v2.01, Structured Text is not stored as text.** `<ST>` has type `formattedText`, whose
+whole definition is a sequence of exactly one element from the XHTML namespace with
+`processContents="lax"`. So `<ST>a := TRUE;</ST>` does not validate, and neither does a bare
+`CDATA` section: the code has to be inside an XHTML element.
+
+The specification does not say **which** element, contains no worked ST example anywhere in
+its eighty numbered pages, and imports no XHTML schema — so the namespace is constrained and
+the element name is not. Real tools have split into two families as a result:
+
+| Family | What it writes |
+|---|---|
+| CODESYS, TwinCAT, ctrlX, WAGO, Schneider | `<ST><xhtml xmlns="http://www.w3.org/1999/xhtml">…</xhtml></ST>` — an element named `xhtml`, which does not exist in XHTML 1.1 |
+| Beremiz, OpenPLC Editor | `<ST><xhtml:p><![CDATA[…]]></xhtml:p></ST>` |
+
+Both validate. **A reader that keys on the element name fails on half the ecosystem**, so
+salman accepts any single element in the XHTML namespace and takes its text content. This is
+under-specification in the standard rather than vendors misbehaving, and there is no correct
+answer to look up.
 
 ## Decision
 
