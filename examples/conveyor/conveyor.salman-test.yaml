@@ -22,14 +22,22 @@
     - { advance: "T#1s999ms", expect: { Motor: true } }
     - { advance: "T#2ms", expect: { Motor: false } }
 
-- test: "the stop button wins when both buttons are pressed"
+- test: "the stop button wins when both buttons are pressed, and there is no start-up pulse"
   pou: Conveyor
   steps:
     - set: { Start_PB: true, Stop_PB: true }
       scans: 1
-      expect: { Motor: true }
-      note: "RS is reset dominant, so the latch is clear and only the run-on delay holds the motor"
+      expect: { Motor: false }
+      note: >-
+        Two rules at once. RS is reset dominant, so with both buttons pressed the latch
+        is clear. And a fresh TOF whose input starts low must not begin an off delay:
+        if it did, every programme using a run-on timer would emit a phantom pulse the
+        moment the controller started.
     - { advance: "T#3s", expect: { Motor: false } }
+    - set: { Stop_PB: false }
+      scans: 1
+      expect: { Motor: true }
+      note: "releasing stop lets the latch set, because start is still held"
 
 - test: "each part counts exactly once, on the leading edge of the sensor"
   pou: Conveyor

@@ -128,20 +128,41 @@ fn run(cli: Cli) -> Result<u8, String> {
             Ok(0)
         }
         Command::Check { path, dialect } => check(&path, &dialect),
-        Command::Run { path, scans, until, record, trace, dialect } => {
-            run_program(&path, scans, until.as_deref(), &record, trace.as_deref(), &dialect)
-        }
-        Command::Test { path, tests, junit, update_golden, dialect } => {
-            run_tests(&path, &tests, junit.as_deref(), update_golden, &dialect)
-        }
+        Command::Run {
+            path,
+            scans,
+            until,
+            record,
+            trace,
+            dialect,
+        } => run_program(
+            &path,
+            scans,
+            until.as_deref(),
+            &record,
+            trace.as_deref(),
+            &dialect,
+        ),
+        Command::Test {
+            path,
+            tests,
+            junit,
+            update_golden,
+            dialect,
+        } => run_tests(&path, &tests, junit.as_deref(), update_golden, &dialect),
     }
 }
 
 fn dialect_for(name: &str) -> Result<Dialect, String> {
-    DialectId::from_name(name).map(Dialect::for_id).ok_or_else(|| {
-        let known: Vec<&str> = DialectId::all().iter().map(|d| d.name()).collect();
-        format!("unknown dialect {name:?}. salman implements: {}", known.join(", "))
-    })
+    DialectId::from_name(name)
+        .map(Dialect::for_id)
+        .ok_or_else(|| {
+            let known: Vec<&str> = DialectId::all().iter().map(|d| d.name()).collect();
+            format!(
+                "unknown dialect {name:?}. salman implements: {}",
+                known.join(", ")
+            )
+        })
 }
 
 fn read(path: &Path) -> Result<String, String> {
@@ -200,14 +221,23 @@ fn run_program(
         let mut signals = Vec::new();
         for name in record {
             let slot = find_slot(&compiled, name)?;
-            signals.push(Signal { slot, name: name.clone() });
+            signals.push(Signal {
+                slot,
+                name: name.clone(),
+            });
         }
         runtime.record(signals);
     }
 
-    println!("posture: {} — salman 0.0.1 has no code path that writes to a device", Posture::default());
+    println!(
+        "posture: {} — salman 0.0.1 has no code path that writes to a device",
+        Posture::default()
+    );
     for task in runtime.tasks() {
-        println!("task {} priority {} ({:?})", task.name, task.priority, task.trigger);
+        println!(
+            "task {} priority {} ({:?})",
+            task.name, task.priority, task.trigger
+        );
     }
 
     if let Some(text) = until {
@@ -239,13 +269,21 @@ fn run_program(
             Some(path) => {
                 std::fs::write(path, &text)
                     .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-                println!("trace written to {} ({})", path.display(), trace.fingerprint_hex());
+                println!(
+                    "trace written to {} ({})",
+                    path.display(),
+                    trace.fingerprint_hex()
+                );
             }
             None => print!("{text}"),
         }
     }
 
-    Ok(if runtime.has_faulted() { EXIT_PROBLEM } else { 0 })
+    Ok(if runtime.has_faulted() {
+        EXIT_PROBLEM
+    } else {
+        0
+    })
 }
 
 fn run_tests(
@@ -272,8 +310,8 @@ fn run_tests(
     let mut outcomes = Vec::new();
     for file in &files {
         let text = read(file)?;
-        let cases = salman_test::spec::parse(&text)
-            .map_err(|e| format!("{}: {e}", file.display()))?;
+        let cases =
+            salman_test::spec::parse(&text).map_err(|e| format!("{}: {e}", file.display()))?;
         let mut file_outcomes = salman_test::run_all(&compiled, &cases);
         let directory = file.parent().unwrap_or(Path::new("."));
         for outcome in &mut file_outcomes {
@@ -314,20 +352,17 @@ fn compare_golden(
         return Ok(());
     }
 
-    let expected = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(_) => {
-            outcome.status = salman_test::Status::Failed;
-            outcome.problems.push(salman_test::runner::Problem {
-                step: None,
-                message: format!(
-                    "{} does not exist. Run with --update-golden to create it, then read it \
-                     before committing",
-                    path.display()
-                ),
-            });
-            return Ok(());
-        }
+    let Ok(expected) = std::fs::read_to_string(&path) else {
+        outcome.status = salman_test::Status::Failed;
+        outcome.problems.push(salman_test::runner::Problem {
+            step: None,
+            message: format!(
+                "{} does not exist. Run with --update-golden to create it, then read it \
+                 before committing",
+                path.display()
+            ),
+        });
+        return Ok(());
     };
 
     if expected != rendered {
@@ -359,13 +394,15 @@ fn test_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     if path.is_file() {
         return Ok(vec![path.to_path_buf()]);
     }
-    let entries = std::fs::read_dir(path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let entries =
+        std::fs::read_dir(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let mut files: Vec<PathBuf> = entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|candidate| {
-            candidate.extension().is_some_and(|e| e == "yaml" || e == "yml")
+            candidate
+                .extension()
+                .is_some_and(|e| e == "yaml" || e == "yml")
         })
         .collect();
     // read_dir order is platform-dependent and can change between calls. Sort,
@@ -463,13 +500,20 @@ mod tests {
     fn the_status_table_lists_every_registered_capability() {
         let table = status_table();
         for entry in capability::REGISTRY {
-            assert!(table.contains(entry.title), "{} is missing from the table", entry.id);
+            assert!(
+                table.contains(entry.title),
+                "{} is missing from the table",
+                entry.id
+            );
         }
     }
 
     #[test]
     fn a_duration_argument_is_an_iec_literal() {
-        assert_eq!(parse_duration("T#5s").map(|d| d.nanos()), Ok(5_000_000_000));
+        assert_eq!(
+            parse_duration("T#5s").map(salman_core::Duration::nanos),
+            Ok(5_000_000_000)
+        );
         assert!(parse_duration("five seconds").is_err());
     }
 }

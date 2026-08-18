@@ -140,18 +140,21 @@ steps:
         assert_eq!(case.given.len(), 2);
         assert_eq!(case.steps.len(), 2);
         assert_eq!(case.steps.first().and_then(|s| s.scans), Some(1));
-        assert_eq!(case.steps.get(1).and_then(|s| s.advance.clone()).as_deref(), Some("T#4s999ms"));
+        assert_eq!(
+            case.steps.get(1).and_then(|s| s.advance.clone()).as_deref(),
+            Some("T#4s999ms")
+        );
     }
 
     #[test]
     fn a_list_of_tests_parses() {
         let cases = parse(
-            r#"
+            r"
 - test: first
   steps: []
 - test: second
   steps: []
-"#,
+",
         )
         .expect("parses");
         assert_eq!(cases.len(), 2);
@@ -162,11 +165,11 @@ steps:
         // A misspelled `expects:` that was silently skipped would leave the
         // test passing while asserting nothing.
         let error = parse(
-            r#"
+            r"
 test: typo
 steps:
   - { expects: { X: true } }
-"#,
+",
         )
         .expect_err("must be rejected");
         assert!(!error.is_empty());
@@ -179,7 +182,8 @@ steps:
 
     #[test]
     fn values_keep_their_written_form_for_later_conversion() {
-        let cases = parse("test: t\ngiven: { A: 3, B: true, C: 1.5, D: \"T#1s\" }\n").expect("parses");
+        let cases =
+            parse("test: t\ngiven: { A: 3, B: true, C: 1.5, D: \"T#1s\" }\n").expect("parses");
         let given = &cases.first().expect("case").given;
         assert_eq!(given.get("A"), Some(&ValueSpec::Int(3)));
         assert_eq!(given.get("B"), Some(&ValueSpec::Bool(true)));

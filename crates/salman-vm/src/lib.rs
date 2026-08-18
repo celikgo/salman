@@ -33,7 +33,7 @@ pub mod clock;
 pub mod compile;
 pub mod exec;
 pub mod memory;
-// pub mod project;  <- enabled as soon as sema::check lands; see project.rs
+pub mod project;
 pub mod stdfb;
 pub mod task;
 pub mod trace;
@@ -43,6 +43,7 @@ pub use clock::{Clock, ClockMode};
 pub use compile::{Compiled, compile};
 pub use exec::{ExecLimits, Fault, FaultKind, execute};
 pub use memory::{Memory, Persistence, ProcessImage, Restart, SlotId};
+pub use project::{Build, build};
 pub use salman_lang::stdlib::NativeBlock;
 pub use task::{ProgramBinding, Runtime, StepOutcome, TaskConfig, TaskTrigger};
 pub use trace::{Sample, Signal, Trace};

@@ -85,7 +85,10 @@ pub fn run(compiled: &Compiled, case: &TestCase) -> Outcome {
 
     if let Some(reason) = &case.skip {
         outcome.status = Status::Skipped;
-        outcome.problems.push(Problem { step: None, message: reason.clone() });
+        outcome.problems.push(Problem {
+            step: None,
+            message: reason.clone(),
+        });
         return outcome;
     }
 
@@ -101,9 +104,15 @@ pub fn run(compiled: &Compiled, case: &TestCase) -> Outcome {
         let mut signals = Vec::new();
         for name in &case.record {
             match resolve(&compiled.program, case.pou.as_deref(), name) {
-                Ok(slot) => signals.push(Signal { slot, name: name.clone() }),
+                Ok(slot) => signals.push(Signal {
+                    slot,
+                    name: name.clone(),
+                }),
                 Err(message) => {
-                    outcome.problems.push(Problem { step: None, message });
+                    outcome.problems.push(Problem {
+                        step: None,
+                        message,
+                    });
                     outcome.status = Status::Errored;
                 }
             }
@@ -111,11 +120,27 @@ pub fn run(compiled: &Compiled, case: &TestCase) -> Outcome {
         runtime.record(signals);
     }
 
-    apply(&mut runtime, compiled, case, None, &case.given, &mut outcome, Application::Set);
+    apply(
+        &mut runtime,
+        compiled,
+        case,
+        None,
+        &case.given,
+        &mut outcome,
+        Application::Set,
+    );
 
     for (index, step) in case.steps.iter().enumerate() {
         let number = index + 1;
-        apply(&mut runtime, compiled, case, Some(number), &step.set, &mut outcome, Application::Set);
+        apply(
+            &mut runtime,
+            compiled,
+            case,
+            Some(number),
+            &step.set,
+            &mut outcome,
+            Application::Set,
+        );
         apply(
             &mut runtime,
             compiled,
@@ -139,7 +164,11 @@ pub fn run(compiled: &Compiled, case: &TestCase) -> Outcome {
 
         if runtime.has_faulted() {
             for fault in runtime.faults() {
-                problem(&mut outcome, Some(number), format!("the program faulted: {fault}"));
+                problem(
+                    &mut outcome,
+                    Some(number),
+                    format!("the program faulted: {fault}"),
+                );
             }
             outcome.status = Status::Errored;
             break;
@@ -158,13 +187,17 @@ pub fn run_all(compiled: &Compiled, cases: &[TestCase]) -> Vec<Outcome> {
     cases.iter().map(|case| run(compiled, case)).collect()
 }
 
+#[derive(Clone, Copy)]
 enum Application {
     Set,
     Force,
 }
 
 fn problem(outcome: &mut Outcome, step: Option<usize>, message: impl Into<String>) {
-    outcome.problems.push(Problem { step, message: message.into() });
+    outcome.problems.push(Problem {
+        step,
+        message: message.into(),
+    });
     if outcome.status == Status::Passed {
         outcome.status = Status::Errored;
     }
@@ -208,7 +241,11 @@ fn run_step(runtime: &mut Runtime, step: &Step, outcome: &mut Outcome, number: u
             Ok(value) => {
                 let by = value.as_duration().unwrap_or(Duration::ZERO);
                 if by.is_negative() {
-                    problem(outcome, Some(number), format!("cannot advance by {text}: time only moves forward"));
+                    problem(
+                        outcome,
+                        Some(number),
+                        format!("cannot advance by {text}: time only moves forward"),
+                    );
                 } else {
                     let target = runtime.clock().elapsed().saturating_add(by);
                     runtime.run_until(target);
@@ -252,9 +289,16 @@ fn check(
                 continue;
             }
         };
-        let found = runtime.memory().read_slot(slot).cloned().unwrap_or(Value::Bool(false));
+        let found = runtime
+            .memory()
+            .read_slot(slot)
+            .cloned()
+            .unwrap_or(Value::Bool(false));
         if found != wanted {
-            let note = step.note.as_ref().map_or(String::new(), |n| format!(" ({n})"));
+            let note = step
+                .note
+                .as_ref()
+                .map_or(String::new(), |n| format!(" ({n})"));
             outcome.problems.push(Problem {
                 step: Some(number),
                 message: format!(
@@ -272,7 +316,11 @@ fn check(
 }
 
 fn slot_type(program: &Program, slot: SlotId) -> ElementaryType {
-    program.slot_types.get(slot.index()).copied().unwrap_or(ElementaryType::Dint)
+    program
+        .slot_types
+        .get(slot.index())
+        .copied()
+        .unwrap_or(ElementaryType::Dint)
 }
 
 /// Finds the slot a test file's name refers to.
@@ -309,10 +357,11 @@ fn resolve(program: &Program, pou: Option<&str>, name: &str) -> Result<SlotId, S
             .iter()
             .copied()
             .filter(|index| {
-                program
-                    .slot_names
-                    .get(*index)
-                    .is_some_and(|n| n.len() > prefix.len() && n.get(..prefix.len()).is_some_and(|p| p.eq_ignore_ascii_case(&prefix)))
+                program.slot_names.get(*index).is_some_and(|n| {
+                    n.len() > prefix.len()
+                        && n.get(..prefix.len())
+                            .is_some_and(|p| p.eq_ignore_ascii_case(&prefix))
+                })
             })
             .collect();
         if !narrowed.is_empty() {

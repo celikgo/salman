@@ -94,21 +94,38 @@ impl ValueSpec {
                 negative: *v < 0,
                 declared: None,
             },
-            Self::Real(v) => LiteralValue::Real { value: *v, declared: None },
-            Self::Text(text) => parse_literal(text)
-                .ok_or_else(|| ValueError::NotALiteral(text.clone()))?,
+            Self::Real(v) => LiteralValue::Real {
+                value: *v,
+                declared: None,
+            },
+            Self::Text(text) => {
+                parse_literal(text).ok_or_else(|| ValueError::NotALiteral(text.clone()))?
+            }
         };
         convert(&literal, ty).ok_or_else(|| match &literal {
-            LiteralValue::Int { magnitude, negative, .. } => {
+            LiteralValue::Int {
+                magnitude,
+                negative,
+                ..
+            } => {
                 let signed = i128::try_from(*magnitude).unwrap_or(i128::MAX);
                 let value = if *negative { -signed } else { signed };
                 if integer_fits(value, ty) {
-                    ValueError::WrongKind { written: self.written(), ty }
+                    ValueError::WrongKind {
+                        written: self.written(),
+                        ty,
+                    }
                 } else {
-                    ValueError::OutOfRange { written: self.written(), ty }
+                    ValueError::OutOfRange {
+                        written: self.written(),
+                        ty,
+                    }
                 }
             }
-            _ => ValueError::WrongKind { written: self.written(), ty },
+            _ => ValueError::WrongKind {
+                written: self.written(),
+                ty,
+            },
         })
     }
 }
@@ -138,7 +155,11 @@ fn convert(literal: &LiteralValue, ty: ElementaryType) -> Option<Value> {
     use ElementaryType as E;
     match literal {
         LiteralValue::Bool(v) => (ty == E::Bool).then_some(Value::Bool(*v)),
-        LiteralValue::Int { magnitude, negative, .. } => {
+        LiteralValue::Int {
+            magnitude,
+            negative,
+            ..
+        } => {
             let signed = i128::try_from(*magnitude).ok()?;
             let value = if *negative { -signed } else { signed };
             match ty {
@@ -165,9 +186,7 @@ fn convert(literal: &LiteralValue, ty: ElementaryType) -> Option<Value> {
         },
         LiteralValue::Date(d) => (ty == E::Date).then_some(Value::Date(*d)),
         LiteralValue::TimeOfDay(t) => (ty == E::TimeOfDay).then_some(Value::TimeOfDay(*t)),
-        LiteralValue::DateAndTime(d) => {
-            (ty == E::DateAndTime).then_some(Value::DateAndTime(*d))
-        }
+        LiteralValue::DateAndTime(d) => (ty == E::DateAndTime).then_some(Value::DateAndTime(*d)),
         LiteralValue::String(bytes) => (ty == E::String).then(|| Value::string(bytes)),
         LiteralValue::WString(units) => (ty == E::WString).then(|| Value::wstring(units)),
     }
@@ -199,7 +218,10 @@ mod tests {
 
     #[test]
     fn a_plain_boolean_becomes_a_bool() {
-        assert_eq!(ValueSpec::Bool(true).to_value(E::Bool), Ok(Value::Bool(true)));
+        assert_eq!(
+            ValueSpec::Bool(true).to_value(E::Bool),
+            Ok(Value::Bool(true))
+        );
     }
 
     #[test]
@@ -222,8 +244,13 @@ mod tests {
     fn a_duration_is_written_as_an_iec_literal() {
         let value = ValueSpec::Text("T#5s".into()).to_value(E::Time).unwrap();
         assert_eq!(value.to_trace_string(), "T#5s");
-        let long = ValueSpec::Text("T#4s999ms".into()).to_value(E::Time).unwrap();
-        assert_eq!(long.as_duration().map(|d| d.nanos()), Some(4_999_000_000));
+        let long = ValueSpec::Text("T#4s999ms".into())
+            .to_value(E::Time)
+            .unwrap();
+        assert_eq!(
+            long.as_duration().map(salman_core::Duration::nanos),
+            Some(4_999_000_000)
+        );
     }
 
     #[test]
@@ -239,22 +266,33 @@ mod tests {
             Ok(Value::Int(10))
         );
         assert_eq!(
-            ValueSpec::Text("D#2024-02-29".into()).to_value(E::Date).map(|v| v.to_trace_string()),
+            ValueSpec::Text("D#2024-02-29".into())
+                .to_value(E::Date)
+                .map(|v| v.to_trace_string()),
             Ok("D#2024-02-29".to_string())
         );
         assert_eq!(
             ValueSpec::Text("'hello'".into()).to_value(E::String),
             Ok(Value::string(b"hello"))
         );
-        assert_eq!(ValueSpec::Text("TRUE".into()).to_value(E::Bool), Ok(Value::Bool(true)));
+        assert_eq!(
+            ValueSpec::Text("TRUE".into()).to_value(E::Bool),
+            Ok(Value::Bool(true))
+        );
     }
 
     #[test]
     fn something_that_is_not_a_literal_is_refused_with_the_text_that_was_written() {
-        let err = ValueSpec::Text("Motor_Run".into()).to_value(E::Bool).unwrap_err();
+        let err = ValueSpec::Text("Motor_Run".into())
+            .to_value(E::Bool)
+            .unwrap_err();
         assert!(matches!(err, ValueError::NotALiteral(_)), "{err}");
         assert!(err.to_string().contains("Motor_Run"), "{err}");
-        assert!(ValueSpec::Text("T#5s + 1".into()).to_value(E::Time).is_err());
+        assert!(
+            ValueSpec::Text("T#5s + 1".into())
+                .to_value(E::Time)
+                .is_err()
+        );
         assert!(ValueSpec::Text(String::new()).to_value(E::Bool).is_err());
     }
 
@@ -262,7 +300,9 @@ mod tests {
     fn a_literal_of_the_wrong_kind_is_refused_rather_than_coerced() {
         // Writing a duration into a BOOL is a mistake in the test, not
         // something to guess at.
-        let err = ValueSpec::Text("T#5s".into()).to_value(E::Bool).unwrap_err();
+        let err = ValueSpec::Text("T#5s".into())
+            .to_value(E::Bool)
+            .unwrap_err();
         assert!(matches!(err, ValueError::WrongKind { .. }), "{err}");
         assert!(ValueSpec::Bool(true).to_value(E::Dint).is_err());
     }
@@ -270,6 +310,9 @@ mod tests {
     #[test]
     fn integers_widen_into_reals_because_writing_0_for_a_real_is_natural() {
         assert_eq!(ValueSpec::Int(0).to_value(E::Real), Ok(Value::real(0.0)));
-        assert_eq!(ValueSpec::Real(1.5).to_value(E::Lreal), Ok(Value::lreal(1.5)));
+        assert_eq!(
+            ValueSpec::Real(1.5).to_value(E::Lreal),
+            Ok(Value::lreal(1.5))
+        );
     }
 }

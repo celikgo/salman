@@ -74,9 +74,19 @@ pub fn build(name: &str, text: &str, dialect: &Dialect) -> Result<Build, SourceE
     } else {
         let (compiled, compile_diagnostics) = compile(&unit, &checked, dialect);
         diagnostics.extend(compile_diagnostics);
-        if diagnostics.has_errors() { None } else { compiled }
+        if diagnostics.has_errors() {
+            None
+        } else {
+            compiled
+        }
     };
 
     diagnostics.sort();
-    Ok(Build { sources, file, checked, compiled, diagnostics })
+    Ok(Build {
+        sources,
+        file,
+        checked,
+        compiled,
+        diagnostics,
+    })
 }

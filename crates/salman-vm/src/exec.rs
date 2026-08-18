@@ -819,6 +819,34 @@ fn unary(op: UnOp, ty: ElementaryType, operand: &Value) -> Result<Value, FaultKi
     }
 }
 
+/// Converts a float to an integer type.
+///
+/// Rust's float-to-integer casts saturate at the target type's bounds and map
+/// NaN to zero. That is fully specified and platform-independent, unlike C,
+/// where the same conversion is undefined behaviour. Going through a wider
+/// intermediate and then truncating would be wrong: a `REAL` of 1e30 would
+/// become whatever its low thirty-two bits happen to be, which for that value
+/// is zero — a wrong answer that looks like a plausible one.
+fn float_to_int(value: f64, ty: ElementaryType) -> Result<Value, FaultKind> {
+    use ElementaryType as E;
+    Ok(match ty {
+        E::Sint => Value::Sint(value as i8),
+        E::Int => Value::Int(value as i16),
+        E::Dint => Value::Dint(value as i32),
+        E::Lint => Value::Lint(value as i64),
+        E::Usint => Value::Usint(value as u8),
+        E::Uint => Value::Uint(value as u16),
+        E::Udint => Value::Udint(value as u32),
+        E::Ulint => Value::Ulint(value as u64),
+        E::Byte => Value::Byte(value as u8),
+        E::Word => Value::Word(value as u16),
+        E::Dword => Value::Dword(value as u32),
+        E::Lword => Value::Lword(value as u64),
+        E::Bool => Value::Bool(value != 0.0),
+        _ => return Err(FaultKind::Unsupported(format!("converting a real to {ty}"))),
+    })
+}
+
 /// Converts a value to another elementary type.
 ///
 /// Only the conversions the compiler emits appear here. Narrowing truncates,
@@ -867,12 +895,11 @@ fn convert(value: &Value, to: ElementaryType) -> Result<Value, FaultKind> {
         }
         _ => {
             if let Some(i) = value.as_i64() {
+                // Integer to integer truncates, which is what the explicit
+                // conversion functions do.
                 wrap_int(i128::from(i), to)
             } else if let Some(f) = value.as_f64() {
-                // Float to integer saturates in Rust, which is specified and
-                // platform-independent, rather than being undefined as it is
-                // in C.
-                wrap_int(f as i128, to)
+                float_to_int(f, to)
             } else {
                 Err(FaultKind::Unsupported(format!(
                     "converting {} to {to}",
@@ -880,5 +907,561 @@ fn convert(value: &Value, to: ElementaryType) -> Result<Value, FaultKind> {
                 )))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::Routine;
+    use crate::memory::ImageLayout;
+    use salman_lang::address::{AddressLocation, AddressSize, DirectAddress};
+
+    /// Runs a routine over the given constants and returns the slot values.
+    fn run(
+        code: Vec<Op>,
+        constants: Vec<Value>,
+        slots: &[ElementaryType],
+    ) -> Result<Vec<Value>, Fault> {
+        run_with(code, constants, slots, Vec::new(), ExecLimits::default())
+    }
+
+    fn run_with(
+        code: Vec<Op>,
+        constants: Vec<Value>,
+        slots: &[ElementaryType],
+        addresses: Vec<DirectAddress>,
+        limits: ExecLimits,
+    ) -> Result<Vec<Value>, Fault> {
+        let program = Program {
+            routines: vec![Routine {
+                name: "T".into(),
+                code,
+                result_slot: None,
+                frame_size: slots.len() as u32,
+                max_stack: 16,
+            }],
+            constants,
+            addresses,
+            slot_types: slots.to_vec(),
+            slot_names: (0..slots.len()).map(|i| format!("s{i}")).collect(),
+            image_bytes: 16,
+        };
+        let mut memory = Memory::new(slots, 16, ImageLayout::default());
+        let clock = Clock::virtual_default();
+        execute(&program, &mut memory, &clock, 0, 0, limits)?;
+        Ok((0..slots.len())
+            .filter_map(|i| memory.read_slot(SlotId(i as u32)).cloned())
+            .collect())
+    }
+
+    /// Applies a binary operation to two constants and returns the result.
+    fn binop(op: BinOp, ty: ElementaryType, a: Value, b: Value) -> Result<Value, FaultKind> {
+        let result = run(
+            vec![
+                Op::Const(0),
+                Op::Const(1),
+                Op::Binary { op, ty },
+                Op::StoreSlot(0),
+            ],
+            vec![a, b],
+            &[ty],
+        );
+        match result {
+            Ok(slots) => Ok(slots.into_iter().next().unwrap_or(Value::Bool(false))),
+            Err(fault) => Err(fault.kind),
+        }
+    }
+
+    // -- arithmetic policy ------------------------------------------------
+
+    #[test]
+    fn integer_overflow_wraps_because_that_is_what_a_controller_does() {
+        // salman policy, chosen to match hardware rather than to be tidy. IEC
+        // 61131-3 does not fix the behaviour.
+        assert_eq!(
+            binop(
+                BinOp::Add,
+                ElementaryType::Dint,
+                Value::Dint(i32::MAX),
+                Value::Dint(1)
+            ),
+            Ok(Value::Dint(i32::MIN))
+        );
+        assert_eq!(
+            binop(
+                BinOp::Sub,
+                ElementaryType::Sint,
+                Value::Sint(i8::MIN),
+                Value::Sint(1)
+            ),
+            Ok(Value::Sint(i8::MAX))
+        );
+        assert_eq!(
+            binop(
+                BinOp::Mul,
+                ElementaryType::Uint,
+                Value::Uint(u16::MAX),
+                Value::Uint(2)
+            ),
+            Ok(Value::Uint(u16::MAX - 1))
+        );
+    }
+
+    #[test]
+    fn integer_division_by_zero_is_a_fault_not_a_value() {
+        // Returning zero would let the bug reach a plant disguised as data.
+        assert_eq!(
+            binop(
+                BinOp::Div,
+                ElementaryType::Dint,
+                Value::Dint(1),
+                Value::Dint(0)
+            ),
+            Err(FaultKind::DivisionByZero)
+        );
+        assert_eq!(
+            binop(
+                BinOp::Mod,
+                ElementaryType::Dint,
+                Value::Dint(1),
+                Value::Dint(0)
+            ),
+            Err(FaultKind::DivisionByZero)
+        );
+    }
+
+    #[test]
+    fn the_most_negative_integer_divided_by_minus_one_does_not_abort() {
+        // i64::MIN / -1 panics unconditionally in Rust, release builds too.
+        // The interpreter must never turn that into a process abort.
+        assert_eq!(
+            binop(
+                BinOp::Div,
+                ElementaryType::Lint,
+                Value::Lint(i64::MIN),
+                Value::Lint(-1)
+            ),
+            Ok(Value::Lint(i64::MIN))
+        );
+        assert_eq!(
+            binop(
+                BinOp::Mod,
+                ElementaryType::Lint,
+                Value::Lint(i64::MIN),
+                Value::Lint(-1)
+            ),
+            Ok(Value::Lint(0))
+        );
+    }
+
+    #[test]
+    fn integer_division_truncates_toward_zero() {
+        assert_eq!(
+            binop(
+                BinOp::Div,
+                ElementaryType::Dint,
+                Value::Dint(-7),
+                Value::Dint(2)
+            ),
+            Ok(Value::Dint(-3))
+        );
+        assert_eq!(
+            binop(
+                BinOp::Mod,
+                ElementaryType::Dint,
+                Value::Dint(-7),
+                Value::Dint(2)
+            ),
+            Ok(Value::Dint(-1))
+        );
+    }
+
+    #[test]
+    fn real_division_by_zero_follows_ieee_754_rather_than_faulting() {
+        // IEC 61131-3 references IEEE 754 normatively for REAL and LREAL.
+        let result = binop(
+            BinOp::Div,
+            ElementaryType::Lreal,
+            Value::lreal(1.0),
+            Value::lreal(0.0),
+        );
+        assert_eq!(
+            result.as_ref().map(Value::to_trace_string),
+            Ok("inf".to_string())
+        );
+        let nan = binop(
+            BinOp::Div,
+            ElementaryType::Lreal,
+            Value::lreal(0.0),
+            Value::lreal(0.0),
+        );
+        assert_eq!(
+            nan.as_ref().map(Value::to_trace_string),
+            Ok("NaN".to_string())
+        );
+    }
+
+    #[test]
+    fn a_nan_produced_by_the_interpreter_is_canonicalised() {
+        // The default quiet NaN has a different sign bit on x86-64 and
+        // aarch64. Without this, the determinism gate would fail the first time
+        // a test program divided zero by zero.
+        let nan = binop(
+            BinOp::Div,
+            ElementaryType::Lreal,
+            Value::lreal(0.0),
+            Value::lreal(0.0),
+        )
+        .expect("no fault");
+        let mut bytes = Vec::new();
+        nan.write_canonical_bytes(&mut bytes);
+        let mut expected = Vec::new();
+        Value::lreal(f64::NAN).write_canonical_bytes(&mut expected);
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn nan_compares_unequal_to_everything_including_itself() {
+        let nan = Value::lreal(f64::NAN);
+        assert_eq!(
+            binop(BinOp::Eq, ElementaryType::Lreal, nan.clone(), nan.clone()),
+            Ok(Value::Bool(false))
+        );
+        assert_eq!(
+            binop(BinOp::Ne, ElementaryType::Lreal, nan.clone(), nan.clone()),
+            Ok(Value::Bool(true))
+        );
+        assert_eq!(
+            binop(BinOp::Lt, ElementaryType::Lreal, nan, Value::lreal(1.0)),
+            Ok(Value::Bool(false))
+        );
+    }
+
+    #[test]
+    fn bit_operations_keep_the_width_of_their_operands() {
+        assert_eq!(
+            binop(
+                BinOp::And,
+                ElementaryType::Word,
+                Value::Word(0xF0F0),
+                Value::Word(0x0FF0)
+            ),
+            Ok(Value::Word(0x00F0))
+        );
+        assert_eq!(
+            binop(
+                BinOp::Or,
+                ElementaryType::Byte,
+                Value::Byte(0x0F),
+                Value::Byte(0xF0)
+            ),
+            Ok(Value::Byte(0xFF))
+        );
+        assert_eq!(
+            binop(
+                BinOp::Xor,
+                ElementaryType::Bool,
+                Value::Bool(true),
+                Value::Bool(true)
+            ),
+            Ok(Value::Bool(false))
+        );
+    }
+
+    #[test]
+    fn duration_arithmetic_works_and_saturates_rather_than_wrapping() {
+        let one_second = Value::Time(Duration::from_nanos(1_000_000_000));
+        assert_eq!(
+            binop(
+                BinOp::Add,
+                ElementaryType::Time,
+                one_second.clone(),
+                one_second.clone()
+            ),
+            Ok(Value::Time(Duration::from_nanos(2_000_000_000)))
+        );
+        assert_eq!(
+            binop(
+                BinOp::Mul,
+                ElementaryType::Time,
+                one_second.clone(),
+                Value::Dint(3)
+            ),
+            Ok(Value::Time(Duration::from_nanos(3_000_000_000)))
+        );
+        assert_eq!(
+            binop(BinOp::Div, ElementaryType::Time, one_second, Value::Dint(0)),
+            Err(FaultKind::DivisionByZero)
+        );
+    }
+
+    #[test]
+    fn strings_and_dates_compare_by_value() {
+        assert_eq!(
+            binop(
+                BinOp::Lt,
+                ElementaryType::String,
+                Value::string(b"alpha"),
+                Value::string(b"beta")
+            ),
+            Ok(Value::Bool(true))
+        );
+    }
+
+    // -- conversion --------------------------------------------------------
+
+    #[test]
+    fn converting_a_real_to_an_integer_saturates_rather_than_being_undefined() {
+        // Rust's float-to-integer casts have been saturating since 1.45 and are
+        // fully specified, unlike C's.
+        let slots = run(
+            vec![
+                Op::Const(0),
+                Op::Convert {
+                    to: ElementaryType::Dint,
+                },
+                Op::StoreSlot(0),
+            ],
+            vec![Value::lreal(1e30)],
+            &[ElementaryType::Dint],
+        )
+        .expect("no fault");
+        assert_eq!(slots.first(), Some(&Value::Dint(i32::MAX)));
+    }
+
+    #[test]
+    fn converting_a_nan_to_an_integer_gives_zero() {
+        let slots = run(
+            vec![
+                Op::Const(0),
+                Op::Convert {
+                    to: ElementaryType::Dint,
+                },
+                Op::StoreSlot(0),
+            ],
+            vec![Value::lreal(f64::NAN)],
+            &[ElementaryType::Dint],
+        )
+        .expect("no fault");
+        assert_eq!(slots.first(), Some(&Value::Dint(0)));
+    }
+
+    // -- faults ------------------------------------------------------------
+
+    #[test]
+    fn the_watchdog_stops_a_routine_that_jumps_to_itself() {
+        let fault = run_with(
+            vec![Op::Jump(0)],
+            Vec::new(),
+            &[],
+            Vec::new(),
+            ExecLimits {
+                max_instructions: 500,
+                ..ExecLimits::default()
+            },
+        )
+        .expect_err("must fault");
+        assert_eq!(fault.kind, FaultKind::InstructionBudgetExceeded(500));
+        assert!(fault.to_string().contains("watchdog"), "{fault}");
+    }
+
+    #[test]
+    fn the_operand_stack_is_bounded() {
+        let fault = run_with(
+            vec![Op::Const(0), Op::Jump(0)],
+            vec![Value::Dint(1)],
+            &[],
+            Vec::new(),
+            ExecLimits {
+                max_stack: 8,
+                ..ExecLimits::default()
+            },
+        )
+        .expect_err("must fault");
+        assert_eq!(fault.kind, FaultKind::StackOverflow);
+    }
+
+    #[test]
+    fn popping_an_empty_stack_faults_rather_than_panicking() {
+        let fault = run(vec![Op::Pop], Vec::new(), &[]).expect_err("must fault");
+        assert_eq!(fault.kind, FaultKind::StackUnderflow);
+    }
+
+    #[test]
+    fn a_jump_outside_the_routine_faults() {
+        let fault = run(vec![Op::Jump(99)], Vec::new(), &[]).expect_err("must fault");
+        assert_eq!(fault.kind, FaultKind::JumpOutOfRange(99));
+    }
+
+    #[test]
+    fn a_slot_or_constant_that_does_not_exist_faults() {
+        assert_eq!(
+            run(vec![Op::LoadSlot(99)], Vec::new(), &[]).map_err(|f| f.kind),
+            Err(FaultKind::SlotOutOfRange(99))
+        );
+        assert_eq!(
+            run(vec![Op::Const(99)], Vec::new(), &[]).map_err(|f| f.kind),
+            Err(FaultKind::ConstantOutOfRange(99))
+        );
+    }
+
+    #[test]
+    fn a_condition_that_is_not_a_bool_faults_rather_than_guessing() {
+        let fault = run(
+            vec![Op::Const(0), Op::JumpIfFalse(3), Op::Return, Op::Return],
+            vec![Value::Dint(0)],
+            &[],
+        )
+        .expect_err("must fault");
+        assert!(
+            matches!(fault.kind, FaultKind::TypeMismatch { .. }),
+            "{fault}"
+        );
+    }
+
+    #[test]
+    fn an_array_subscript_outside_its_bounds_faults_with_the_bounds_in_the_message() {
+        let fault = run(
+            vec![
+                Op::Const(0),
+                Op::LoadIndexed {
+                    base: 0,
+                    len: 4,
+                    low: 1,
+                },
+            ],
+            vec![Value::Dint(9)],
+            &[ElementaryType::Dint; 4],
+        )
+        .expect_err("must fault");
+        assert_eq!(
+            fault.kind,
+            FaultKind::ArrayIndexOutOfRange {
+                index: 9,
+                low: 1,
+                high: 4
+            }
+        );
+        assert!(fault.to_string().contains("1..4"), "{fault}");
+    }
+
+    #[test]
+    fn a_bounds_check_leaves_the_index_on_the_stack_when_it_passes() {
+        let slots = run(
+            vec![
+                Op::Const(0),
+                Op::BoundsCheck { low: 0, high: 10 },
+                Op::Convert {
+                    to: ElementaryType::Dint,
+                },
+                Op::StoreSlot(0),
+            ],
+            vec![Value::Lint(5)],
+            &[ElementaryType::Dint],
+        )
+        .expect("no fault");
+        assert_eq!(slots.first(), Some(&Value::Dint(5)));
+    }
+
+    #[test]
+    fn a_fault_names_the_routine_and_the_instruction() {
+        let fault = run(vec![Op::Pop], Vec::new(), &[]).expect_err("must fault");
+        assert_eq!(fault.routine, "T");
+        assert_eq!(fault.pc, 0);
+        assert!(
+            fault.to_string().contains("in T at instruction 0"),
+            "{fault}"
+        );
+    }
+
+    // -- process image -----------------------------------------------------
+
+    #[test]
+    fn a_direct_address_reads_and_writes_the_process_image() {
+        let coil = DirectAddress {
+            location: AddressLocation::Output,
+            size: AddressSize::Bit,
+            size_letter_written: true,
+            path: Some(vec![0, 3]),
+        };
+        let slots = run_with(
+            vec![
+                Op::Const(0),
+                Op::StoreAddress(0),
+                Op::LoadAddress(0),
+                Op::StoreSlot(0),
+            ],
+            vec![Value::Bool(true)],
+            &[ElementaryType::Bool],
+            vec![coil],
+            ExecLimits::default(),
+        )
+        .expect("no fault");
+        assert_eq!(slots.first(), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn writing_an_input_address_faults_rather_than_silently_doing_nothing() {
+        let sensor = DirectAddress {
+            location: AddressLocation::Input,
+            size: AddressSize::Bit,
+            size_letter_written: true,
+            path: Some(vec![0, 0]),
+        };
+        let fault = run_with(
+            vec![Op::Const(0), Op::StoreAddress(0)],
+            vec![Value::Bool(true)],
+            &[],
+            vec![sensor],
+            ExecLimits::default(),
+        )
+        .expect_err("must fault");
+        assert!(matches!(fault.kind, FaultKind::Address(_)), "{fault}");
+    }
+
+    // -- instrumentation ---------------------------------------------------
+
+    #[test]
+    fn execution_reports_what_it_did_so_a_scan_can_be_budgeted() {
+        let program = Program {
+            routines: vec![Routine {
+                name: "T".into(),
+                code: vec![Op::Const(0), Op::Const(0), Op::Pop, Op::Pop, Op::Return],
+                result_slot: None,
+                frame_size: 0,
+                max_stack: 2,
+            }],
+            constants: vec![Value::Dint(1)],
+            ..Program::new()
+        };
+        let mut memory = Memory::new(&[], 0, ImageLayout::default());
+        let done = execute(
+            &program,
+            &mut memory,
+            &Clock::virtual_default(),
+            0,
+            0,
+            ExecLimits::default(),
+        )
+        .expect("no fault");
+        assert_eq!(done.instructions, 5);
+        assert_eq!(done.peak_stack, 2);
+    }
+
+    #[test]
+    fn a_routine_that_does_not_exist_faults_rather_than_panicking() {
+        let program = Program::new();
+        let mut memory = Memory::new(&[], 0, ImageLayout::default());
+        let fault = execute(
+            &program,
+            &mut memory,
+            &Clock::virtual_default(),
+            7,
+            0,
+            ExecLimits::default(),
+        )
+        .expect_err("must fault");
+        assert_eq!(fault.kind, FaultKind::RoutineOutOfRange(7));
     }
 }

@@ -146,7 +146,11 @@ pub fn render_junit(suite: &str, outcomes: &[Outcome]) -> String {
                 );
             }
             Status::Failed | Status::Errored => {
-                let element = if outcome.status == Status::Failed { "failure" } else { "error" };
+                let element = if outcome.status == Status::Failed {
+                    "failure"
+                } else {
+                    "error"
+                };
                 let _ = writeln!(
                     out,
                     ">\n      <{element} message=\"{}\">{}</{element}>\n    </testcase>",
@@ -161,7 +165,10 @@ pub fn render_junit(suite: &str, outcomes: &[Outcome]) -> String {
 }
 
 fn first_line(outcome: &Outcome) -> String {
-    outcome.problems.first().map_or_else(String::new, |p| p.message.clone())
+    outcome
+        .problems
+        .first()
+        .map_or_else(String::new, |p| p.message.clone())
 }
 
 fn joined(outcome: &Outcome) -> String {
@@ -235,7 +242,10 @@ mod tests {
             status,
             problems: problems
                 .into_iter()
-                .map(|m| Problem { step: Some(1), message: m.into() })
+                .map(|m| Problem {
+                    step: Some(1),
+                    message: m.into(),
+                })
                 .collect(),
             scans: 3,
             elapsed: Duration::from_nanos(3_000_000),
@@ -254,7 +264,15 @@ mod tests {
         ];
         let summary = Summary::of(&outcomes);
         assert_eq!(summary.total(), 4);
-        assert_eq!((summary.passed, summary.failed, summary.errored, summary.skipped), (1, 1, 1, 1));
+        assert_eq!(
+            (
+                summary.passed,
+                summary.failed,
+                summary.errored,
+                summary.skipped
+            ),
+            (1, 1, 1, 1)
+        );
         assert!(!summary.is_ok());
         assert_eq!(summary.exit_code(), 1);
     }
@@ -276,16 +294,26 @@ mod tests {
             "conveyor",
             &[
                 outcome("passes", Status::Passed, vec![]),
-                outcome("fails", Status::Failed, vec!["Motor_Run is FALSE, expected TRUE"]),
+                outcome(
+                    "fails",
+                    Status::Failed,
+                    vec!["Motor_Run is FALSE, expected TRUE"],
+                ),
                 outcome("errors", Status::Errored, vec!["no variable called Nope"]),
                 outcome("skipped", Status::Skipped, vec!["waiting"]),
             ],
         );
-        assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"), "{xml}");
+        assert!(
+            xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"),
+            "{xml}"
+        );
         assert!(xml.contains("<failure message="), "{xml}");
         assert!(xml.contains("<error message="), "{xml}");
         assert!(xml.contains("<skipped message="), "{xml}");
-        assert!(xml.contains("tests=\"4\" failures=\"1\" errors=\"1\" skipped=\"1\""), "{xml}");
+        assert!(
+            xml.contains("tests=\"4\" failures=\"1\" errors=\"1\" skipped=\"1\""),
+            "{xml}"
+        );
     }
 
     #[test]
@@ -294,16 +322,25 @@ mod tests {
         let text = escape_text(nasty);
         assert!(!text.contains('<') && !text.contains('>'));
         assert!(text.contains("&amp;"));
-        assert!(!text.contains('\u{0}'), "a control character would break the whole report");
+        assert!(
+            !text.contains('\u{0}'),
+            "a control character would break the whole report"
+        );
         let attribute = escape_attribute(nasty);
         assert!(attribute.contains("&quot;") && attribute.contains("&apos;"));
         assert!(!attribute.contains('\u{0}'));
-        assert!(attribute.contains("&#9;"), "a tab in an attribute must be a reference");
+        assert!(
+            attribute.contains("&#9;"),
+            "a tab in an attribute must be a reference"
+        );
     }
 
     #[test]
     fn a_failure_message_containing_xml_does_not_escape_its_element() {
-        let xml = render_junit("s", &[outcome("t", Status::Failed, vec!["</failure><script>"])]);
+        let xml = render_junit(
+            "s",
+            &[outcome("t", Status::Failed, vec!["</failure><script>"])],
+        );
         assert!(!xml.contains("<script>"), "{xml}");
     }
 
