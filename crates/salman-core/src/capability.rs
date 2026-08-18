@@ -751,6 +751,42 @@ pub static REGISTRY: &[Capability] = &[
                docs/adr/ADR-0012-modbus-addressing.md.",
     },
     Capability {
+        id: "io.plcopen.read",
+        area: "Interchange",
+        title: "Reading PLCopen XML, both families of Structured Text wrapper",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-plcopen/tests/read.rs",
+                test: "both_families_of_structured_text_wrapper_are_read",
+            },
+            Evidence {
+                file: "crates/salman-plcopen/tests/read.rs",
+                test: "the_structured_text_a_document_becomes_actually_compiles",
+            },
+            Evidence {
+                file: "crates/salman-plcopen/tests/read.rs",
+                test: "a_document_in_another_namespace_is_refused_by_name",
+            },
+            Evidence {
+                file: "crates/salman-plcopen/tests/read.rs",
+                test: "a_body_in_a_language_salman_does_not_read_is_named_rather_than_dropped",
+            },
+        ],
+        note: "v2.01 and v2.0, and a document says which it was — salman modelled v2.01 and \
+               has not read the v2.0 schema, so anything the two differ about is unchecked \
+               and a caller can say so. Structured Text is stored as XHTML-wrapped markup \
+               rather than as text, the specification never says which element, and the \
+               ecosystem split into two mutually-unreadable families as a result: salman \
+               accepts any single element in the XHTML namespace. A body in a language \
+               salman does not read is named rather than dropped, because a file that \
+               quietly lost half its program would compile and be wrong. Verified against a \
+               real CODESYS V3.5 export that PLCopen itself publishes. Nothing writes \
+               PLCopen XML yet, and there is no compatibility matrix — see \
+               docs/adr/ADR-0003-plcopen-xml-canonical.md.",
+    },
+    Capability {
         id: "lang.project.multi-file",
         area: "Language",
         title: "Several source files build as one program",

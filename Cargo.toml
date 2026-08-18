@@ -20,6 +20,7 @@ members = [
     "crates/salman-capture",
     "crates/salman-findings",
     "crates/salman-analyse",
+    "crates/salman-plcopen",
     "crates/salman-test",
     "crates/salman-cli",
 ]
@@ -45,6 +46,7 @@ salman-link = { path = "crates/salman-link", version = "0.0.1" }
 salman-capture = { path = "crates/salman-capture", version = "0.0.1" }
 salman-findings = { path = "crates/salman-findings", version = "0.0.1" }
 salman-analyse = { path = "crates/salman-analyse", version = "0.0.1" }
+salman-plcopen = { path = "crates/salman-plcopen", version = "0.0.1" }
 salman-test = { path = "crates/salman-test", version = "0.0.1" }
 
 [workspace.lints.rust]

@@ -1,0 +1,19 @@
+[package]
+name = "salman-plcopen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Reading and writing the PLCopen XML exchange format"
+
+[dependencies]
+salman-core.workspace = true
+xml = "1.4"
+
+[dev-dependencies]
+salman-lang.workspace = true
+salman-vm.workspace = true
+
+[lints]
+workspace = true

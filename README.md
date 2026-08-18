@@ -180,8 +180,8 @@ exit code. Two dialect profiles.
 
 **Not written:** every graphical language, Instruction List, the Edition 3
 object-oriented extensions, references, most of the standard function library,
-every protocol except Modbus, every importer, the network model, the desktop
-application and the AI layer. Meeting one of these in source produces a message naming what is
+every protocol except Modbus, writing PLCopen XML, every other importer, the
+network model, the desktop application and the AI layer. Meeting one of these in source produces a message naming what is
 missing, not a confusing failure.
 
 ---

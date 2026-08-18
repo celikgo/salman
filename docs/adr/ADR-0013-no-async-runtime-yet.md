@@ -18,9 +18,14 @@ At 0.0.1 the dependency position is worth stating precisely, because the loose v
 
 `salman-core`, `salman-lang`, `salman-vm`, `salman-modbus`, `salman-modbus-net`,
 `salman-capture` and `salman-link` depend on **nothing outside the standard library**. That
-covers every crate that decodes bytes off a wire or out of a file salman did not write: the
-Structured Text front end, the runtime, the whole Modbus stack, and the capture reader with
-its link, IP and TCP decoders. SHA-256, the pseudo-random generator, the diagnostic renderer,
+covers the Structured Text front end, the runtime, the whole Modbus stack, and the capture
+reader with its link, IP and TCP decoders — which is where bytes arrive from a network.
+
+It does **not** cover every crate that reads a file salman did not write: `salman-plcopen`
+parses XML with the `xml` crate, for the reasons in
+`docs/adr/ADR-0015-xml-parser.md`. An earlier revision of this ADR claimed the property held
+for every decoding crate, and once PLCopen XML arrived that stopped being true. Naming the
+crates is more useful than a slogan and harder to be quietly wrong about. SHA-256, the pseudo-random generator, the diagnostic renderer,
 the CRC, the pcap container and every protocol decoder are written in-crate, so
 `unsafe_code = "forbid"` is provable across all of it and a fuzz finding anywhere in it is
 one salman can act on.
