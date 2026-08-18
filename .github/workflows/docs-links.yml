@@ -51,6 +51,7 @@ jobs:
             --timeout 30
             --accept 200,206,301,302,308
             --exclude '^https?://[^/]*\.invalid(/|$)'
+            --exclude '^https?://www\.plcopen\.org/xml/tc6_'
             './**/*.md'
             './**/*.rs'
 
@@ -68,8 +69,23 @@ jobs:
 # by the RFC.
 #
 # The pattern is anchored and matches only the reserved TLD, so it cannot
-# silently swallow a real host. Nothing else is excluded: if a link in this
-# repository is unreachable, this job is meant to say so.
+# silently swallow a real host.
+#
+# `--exclude '^https?://www\.plcopen\.org/xml/tc6_'`
+#
+# These are XML **namespace names**, not links. A namespace name is an
+# identifier that happens to be spelled as a URI; nothing in the XML namespaces
+# specification requires it to dereference to anything, and plenty of widely
+# used ones do not. `http://www.plcopen.org/xml/tc6_0200` returns 404 and is
+# still the correct, byte-exact identifier for PLCopen XML v2.0 — changing it to
+# something that resolves would mean salman no longer reads those documents.
+#
+# The pattern is deliberately narrow: the `tc6_` prefix, on that host, under
+# `/xml/`. A dead link to PLCopen's actual documentation still fails this job,
+# which is the point.
+#
+# Nothing else is excluded: if a link in this repository is unreachable, this
+# job is meant to say so.
 #
 # `--accept 200,206,301,302,308` is a status allowlist, not an exclusion. It is
 # here because several standards bodies answer a HEAD with a redirect chain,
