@@ -122,6 +122,14 @@ named `EN` or `ENO`** (`E0324`), because one name would then mean two things at 
 Using `ENO` as an input or `EN` as an output is reported by name rather than as an unknown
 parameter, since `F(ENO := ok)` looks plausible and does the opposite of what it says.
 
+*salman policy, and a deliberate asymmetry:* the reservation covers POU variables and
+file-scope globals, and **not** structure fields. A POU variable named `EN` is refused because
+it would collide with the execution control at every call to that POU, and a global because it
+is in scope inside every POU. A structure is never callable, so `Flags.EN` is a member access
+that can collide with nothing — and refusing it would invent a restriction IEC 61131-3 does not
+have. The `E0324` diagnostic says so, and
+`a_structure_field_may_be_called_en_or_eno` proves the field still works.
+
 *salman policy:* `EN` on a call **whose result is used** is refused (`U0301`). With `EN` false
 there is no call and therefore no result, and salman will not invent one. Call it as a
 statement and read the result separately. Tests: `a_call_with_enable_false_does_not_happen_at_all`,
@@ -188,11 +196,27 @@ value the body was given rather than one past it. IEC 61131-3 does not define th
 control variable after its loop; salman chose the one that is inside the variable's own
 declared range.
 
-Related, and part of the same defect: `BY` is a **step**, not a value of the control variable,
-and it was type-checked against the control variable's declared type. That refused
-`FOR I := 3 TO 0 BY -1;` over `I : INT (0..3)` — a descending loop over a non-negative
-subrange could not be written at all, although every value it gives the variable is inside the
-range. `BY` is now checked against the control variable's base type.
+Related, and part of the same defect: **`TO` is a limit and `BY` is a step, and neither is
+ever stored into the control variable.** The compiler keeps both in temporaries and tests the
+next candidate against the limit before letting it reach the variable. Both were nevertheless
+type-checked against the control variable's *declared* type, which refused two correct
+programmes:
+
+- `FOR I := 3 TO 0 BY -1;` over `I : INT (0..3)` — a descending loop over a non-negative
+  subrange could not be written at all, although every value it gives the variable is inside
+  the range.
+- `FOR I := 0 TO 10 DO ... IF I >= 3 THEN EXIT; END_IF; ... END_FOR;` over the same variable —
+  an `EXIT` leaves the loop while the variable is still in range, so the programme is correct.
+
+Both are now checked against the control variable's **base** type. `FOR ... :=` keeps the
+declared type, because its value *is* stored into the control variable, immediately.
+
+*salman policy:* a constant `TO` limit outside the control variable's subrange is a **warning**
+(`W0302`), not an error. It is very likely a mistake and the loop will fault when the variable
+steps past its range — but it is not *certainly* a mistake, because an `EXIT` can leave the
+loop first, and refusing it would reject a correct programme. The run-time check catches the
+real violation with a precise message if it happens. Earliness is worth having; it is not worth
+rejecting valid code for.
 
 **An enumeration was a subrange in all but name, and carried none of its meaning.** An
 enumeration is a base type and a **set** of legal values, and salman flattened it to the base

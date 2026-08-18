@@ -605,6 +605,13 @@ impl Checker<'_> {
             // EN and ENO belong to the calling convention, not to a POU. A
             // variable of either name would shadow the execution control on
             // every call to this POU, and the name would then mean two things.
+            //
+            // This covers POU variables and file-scope globals, and
+            // deliberately not structure fields. A structure is never callable,
+            // so `Flags.EN` is a member access that can collide with nothing;
+            // refusing it would invent a restriction IEC 61131-3 does not have.
+            // The asymmetry is tested by
+            // `a_structure_field_may_be_called_en_or_eno`.
             if name.ident.eq_str("EN") || name.ident.eq_str("ENO") {
                 self.diags.push(
                     Diagnostic::error(
@@ -612,6 +619,10 @@ impl Checker<'_> {
                         format!("`{name}` cannot be declared as a variable"),
                     )
                     .with_primary(name.span, "this name belongs to the calling convention")
+                    .with_note(
+                        "A structure field may still be called EN or ENO: a structure is never \
+                         called, so the name collides with nothing there.",
+                    )
                     .with_note(
                         "IEC 61131-3:2013 Table 18 \"Execution control graphically using EN and \
                          ENO\" (Ed 3.0) makes EN and ENO available on every call without being \
@@ -3357,13 +3368,26 @@ impl Checker<'_> {
         // `FOR I := 3 TO 0 BY -1;` over `I : INT (0..3)` because -1 is outside
         // 0..3 — a descending loop over a subrange could not be written at all,
         // although every value it gives the control variable is in range.
-        let step_ty = control
+        // `TO` is a **limit**, and `BY` a **step**. Neither is ever stored into
+        // the control variable: the compiler keeps both in temporaries and tests
+        // the next candidate against the limit before letting it reach the
+        // variable. Checking either against the control variable's *declared*
+        // type therefore refuses correct programs — `FOR I := 3 TO 0 BY -1;`
+        // over `I : INT (0..3)` because -1 is outside 0..3, and
+        // `FOR I := 0 TO 10 DO ... EXIT; ... END_FOR;` over the same variable
+        // because 10 is, even though every value the variable actually takes is
+        // in range. Both are checked against the base type instead.
+        //
+        // Only `FOR ... :=` keeps the declared type, because its value *is*
+        // stored into the control variable, immediately.
+        let base_ty = control
             .and_then(|ty| self.types.as_elementary(ty))
             .map(|base| self.types.elementary(base))
             .or(control);
+        let step_ty = base_ty;
         for (expr, what, expected) in [
             Some((from, "FOR ... :=", control)),
-            Some((to, "TO", control)),
+            Some((to, "TO", base_ty)),
             by.map(|b| (b, "BY", step_ty)),
         ]
         .into_iter()
@@ -3387,6 +3411,36 @@ impl Checker<'_> {
                     .with_clause(clause::TABLE_ST_STATEMENTS),
                 );
             }
+        }
+
+        // A constant limit outside the control variable's subrange is very
+        // likely a mistake, and the loop will fault when the variable steps past
+        // the subrange. It is not *certainly* a mistake: an `EXIT` can leave the
+        // loop while the variable is still in range, and that program is
+        // correct. So salman warns rather than refusing — the run-time check
+        // catches the real violation with a precise message if it happens.
+        if let Some(control_ty) = control
+            && let TypeData::Subrange { low, high, .. } = *self.types.get(control_ty)
+            && let Some(limit) = self.fold(to).as_ref().and_then(Value::as_i64)
+            && (limit < low || limit > high)
+        {
+            self.diags.push(
+                Diagnostic::warning(
+                    codes::W_FOR_LIMIT_OUTSIDE_SUBRANGE,
+                    format!(
+                        "this loop counts to {limit}, which `{variable}` cannot hold ({low}..{high})"
+                    ),
+                )
+                .with_primary(to.span, "the loop will fault before reaching this")
+                .with_secondary(variable.span, "declared here")
+                .with_note(
+                    "salman warns rather than refusing because an `EXIT` can leave the loop \
+                     while the control variable is still in range, and that programme is \
+                     correct. Without one, the loop faults on the first value outside the \
+                     range.",
+                )
+                .with_clause(clause::TABLE_ST_STATEMENTS),
+            );
         }
 
         if let Some(by) = by

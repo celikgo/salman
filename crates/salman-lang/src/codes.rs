@@ -181,6 +181,9 @@ pub const W_POWER_OPERAND_BINDING: DiagCode = DiagCode("W0201");
 /// A `FUNCTION` that can finish without ever assigning its result. A warning
 /// rather than an error; see `crate::sema`.
 pub const W_FUNCTION_RESULT_NOT_ASSIGNED: DiagCode = DiagCode("W0301");
+/// A `FOR` limit outside the control variable's subrange, which the loop will
+/// step into unless an `EXIT` leaves it first.
+pub const W_FOR_LIMIT_OUTSIDE_SUBRANGE: DiagCode = DiagCode("W0302");
 
 #[cfg(test)]
 mod tests {
@@ -263,6 +266,7 @@ mod tests {
             W_CONSECUTIVE_UNDERSCORES,
             W_POWER_OPERAND_BINDING,
             W_FUNCTION_RESULT_NOT_ASSIGNED,
+            W_FOR_LIMIT_OUTSIDE_SUBRANGE,
         ];
         let mut codes: Vec<&str> = all.iter().map(|c| c.0).collect();
         let count = codes.len();

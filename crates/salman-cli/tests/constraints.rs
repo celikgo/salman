@@ -200,14 +200,135 @@ fn a_named_subrange_type_carries_its_bounds_to_every_variable_of_that_type() {
 }
 
 #[test]
-fn a_for_loop_whose_constant_limit_leaves_the_control_variables_range_is_refused() {
-    // When the limit is a constant the checker sees it, and a compile-time
-    // error beats a run-time fault every time.
-    let rendered = refused(
+fn a_for_loop_whose_constant_limit_leaves_the_control_variables_range_warns() {
+    // It is very likely a mistake and salman says so, but it is not *certainly*
+    // one — the loop below proves it — so this warns rather than refusing.
+    let ran = run(
+        "PROGRAM P\nVAR I : INT (0..3); Total : INT; END_VAR\n\
+           FOR I := 0 TO 10 DO Total := Total + 1; IF I >= 3 THEN EXIT; END_IF; END_FOR;\n\
+         END_PROGRAM\n",
+        1,
+    );
+    assert!(ran.diagnostics.contains("W0302"), "{}", ran.diagnostics);
+    assert!(
+        ran.diagnostics.contains("`I` cannot hold (0..3)"),
+        "the warning should name the variable and its range: {}",
+        ran.diagnostics
+    );
+}
+
+#[test]
+fn a_for_loop_that_exits_before_leaving_its_range_is_correct_and_runs() {
+    // This is the programme the old compile-time refusal rejected. Every value
+    // the control variable takes is inside its declared range; the limit is
+    // only ever compared against, never stored.
+    let ran = run(
+        "PROGRAM P\nVAR I : INT (0..3); Total : INT; END_VAR\n\
+           FOR I := 0 TO 10 DO Total := Total + 1; IF I >= 3 THEN EXIT; END_IF; END_FOR;\n\
+         END_PROGRAM\n",
+        1,
+    );
+    assert_eq!(ran.faults(), "", "a correct loop must not fault");
+    assert_eq!(ran.get("Total"), Value::Int(4));
+}
+
+#[test]
+fn the_same_loop_without_an_exit_faults_where_the_warning_said_it_would() {
+    let ran = run(
         "PROGRAM P\nVAR I : INT (0..3); Total : INT; END_VAR\n\
            FOR I := 0 TO 10 DO Total := Total + 1; END_FOR;\nEND_PROGRAM\n",
+        1,
+    );
+    assert!(
+        ran.faults().contains("declared range 0..3"),
+        "{}",
+        ran.faults()
+    );
+}
+
+#[test]
+fn a_descending_loop_over_a_non_negative_subrange_is_accepted() {
+    // `BY -1` is a step, not a value of the control variable. Checking it
+    // against the declared type made a descending loop over a subrange
+    // unwritable.
+    let ran = run(
+        "PROGRAM P\nVAR I : INT (0..3); Total : INT; END_VAR\n\
+           FOR I := 3 TO 0 BY -1 DO Total := Total + 1; END_FOR;\nEND_PROGRAM\n",
+        1,
+    );
+    assert_eq!(ran.faults(), "");
+    assert_eq!(ran.get("Total"), Value::Int(4));
+}
+
+#[test]
+fn a_loop_counting_exactly_over_its_control_variables_range_runs() {
+    // The value that ends a FOR is one past its end by construction, so a
+    // naive range check on the increment made every ordinary loop over a
+    // subrange impossible.
+    let ran = run(
+        "PROGRAM P\nVAR I : INT (0..3); Total : INT; END_VAR\n\
+           FOR I := 0 TO 3 DO Total := Total + 1; END_FOR;\nEND_PROGRAM\n",
+        1,
+    );
+    assert_eq!(ran.faults(), "");
+    assert_eq!(ran.get("Total"), Value::Int(4));
+}
+
+#[test]
+fn the_initial_value_of_a_for_loop_is_still_checked_against_the_declared_range() {
+    // `FOR ... :=` is stored into the control variable immediately, so unlike
+    // the limit and the step it keeps the declared type.
+    let rendered = refused(
+        "PROGRAM P\nVAR I : INT (0..3); Total : INT; END_VAR\n\
+           FOR I := 9 TO 3 BY -1 DO Total := Total + 1; END_FOR;\nEND_PROGRAM\n",
     );
     assert!(rendered.contains("E0404"), "{rendered}");
+}
+
+// ---------------------------------------------------------------------------
+// EN and ENO are reserved for the calling convention, and only there
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_structure_field_may_be_called_en_or_eno() {
+    // Deliberate asymmetry, not an oversight. A POU variable named EN is
+    // refused because it would collide with the execution control at every
+    // call to that POU. A structure is never callable, so `F.EN` is a member
+    // access that can collide with nothing — and refusing it would invent a
+    // restriction IEC 61131-3 does not have.
+    let ran = run(
+        "TYPE Flags : STRUCT EN : BOOL; ENO : BOOL; END_STRUCT; END_TYPE\n\
+         PROGRAM P\nVAR F : Flags; Seen : BOOL; END_VAR\n\
+           F.EN := TRUE;\n  Seen := F.EN;\nEND_PROGRAM\n",
+        1,
+    );
+    assert_eq!(ran.faults(), "", "{}", ran.diagnostics);
+    assert_eq!(ran.get("Seen"), Value::Bool(true));
+}
+
+#[test]
+fn a_global_may_not_be_called_en_or_eno_either() {
+    // A global is in scope inside every POU, so it would collide at a call
+    // site exactly as a local would.
+    for name in ["EN", "ENO"] {
+        let rendered = refused(&format!(
+            "VAR_GLOBAL {name} : BOOL; END_VAR\n\
+             PROGRAM P\nVAR X : BOOL; END_VAR\n  X := FALSE;\nEND_PROGRAM\n"
+        ));
+        assert!(rendered.contains("E0324"), "{name}: {rendered}");
+    }
+}
+
+#[test]
+fn a_function_block_input_may_not_be_called_en_or_eno() {
+    // This is the case the rule exists for: `FB(EN := x)` would otherwise mean
+    // both "bind the input" and "decide whether to call".
+    let rendered = refused(
+        "FUNCTION_BLOCK FB\nVAR_INPUT EN : BOOL; END_VAR\n\
+         VAR_OUTPUT Q : BOOL; END_VAR\n  Q := EN;\nEND_FUNCTION_BLOCK\n\
+         PROGRAM P\nVAR B : FB; END_VAR\n  B(EN := TRUE);\nEND_PROGRAM\n",
+    );
+    assert!(rendered.contains("E0324"), "{rendered}");
 }
 
 #[test]
