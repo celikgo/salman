@@ -1,0 +1,61 @@
+# salman capability status
+
+*Generated from `salman_core::capability::REGISTRY`. Do not edit by hand.*
+
+`[x]` implemented and tested  ·  `[~]` implemented, untested  ·  `[-]` stub  ·  `[ ]` planned
+
+A capability is only marked *implemented and tested* if it names tests that exist in this repository. A test in this crate checks that they do.
+
+## Determinism
+
+| | Capability | Status | Milestone | Notes |
+|---|---|---|---|---|
+| `[x]` | Seeded xoshiro256++ generator, pinned and recorded in every trace header | implemented and tested | v0.1 | Written out in-crate rather than taken from rand, whose StdRng and SmallRng are documented as non-portable. Not cryptographic: never use it for a key or a token. |
+| `[x]` | In-crate SHA-256 fingerprint of simulation traces, with NIST known-answer tests | implemented and tested | v0.1 | A content fingerprint, not a security primitive: not constant-time, and not to be used where an attacker picks the input and the comparison is secret. Written in-crate so there is no runtime CPU-feature dispatch and no C toolchain. |
+
+## Language
+
+| | Capability | Status | Milestone | Notes |
+|---|---|---|---|---|
+| `[x]` | Diagnostics with spans, IEC clause citations and the dialect rule applied | implemented and tested | v0.1 | Rendered in plain text with no colour, so meaning never depends on colour and golden tests can compare bytes. |
+| `[x]` | Case-insensitive, case-preserving IEC identifiers | implemented and tested | v0.1 | ASCII case rules only, so identifier identity cannot shift with a Unicode version. |
+| `[x]` | Source map, spans and line/column resolution for diagnostics | implemented and tested | v0.1 | Source files above 64 MiB are refused rather than loaded. |
+| `[x]` | TIME, LTIME, DATE, TIME_OF_DAY and DATE_AND_TIME values | implemented and tested | v0.1 | Leap seconds, time zones and daylight saving are not modelled: every day here is exactly 86 400 s. |
+| `[x]` | Elementary types, the ANY generic hierarchy, and runtime values | implemented and tested | v0.1 | CHAR, WCHAR, LDATE, LTOD and LDT are not implemented. NaN is canonicalised on entry so that a trace cannot differ between architectures. |
+| `[x]` | Dialects as configuration, with every diagnostic naming the rule it applied | implemented and tested | v0.1 | Two profiles ship: generic and iec61131-3:2013-strict. No vendor profile exists, and DialectId does not contain one. |
+| `[~]` | libFuzzer targets for the Structured Text lexer, asserting its postconditions | implemented, untested | v0.1 | Four targets in fuzz/fuzz_targets: valid UTF-8, raw bytes decoded the way the loader will decode them, the strict dialect, and a differential run of both dialects. Each asserts what must hold for any input — exactly one Eof, non-decreasing spans inside the source, every literal and address index resolving — rather than only that nothing panicked. All four build and run under nightly, and .github/workflows/fuzz.yml runs each for 60 s daily. Not ImplementedTested, for two reasons that both matter: a fuzzing run shows that nothing was found, which is not the same as showing anything is right, and this registry's evidence rule wants a named test function, which a libFuzzer target is not. Only the lexer is covered. |
+| `[x]` | Recursive-descent Structured Text parser with error recovery and bounded nesting | implemented and tested | v0.1 | Every statement and declaration form of Structured Text, with the Edition 3 operator precedence: unary binds tighter than `**`, so `-2 ** 2` is 4, and salman warns where CODESYS and Beckhoff would give -4. Errors produce error nodes and resynchronise rather than stopping the parse. Nesting, including left-associative operator chains, is bounded by the dialect. Three things are salman rules rather than verified requirements and say so in the diagnostic: duplicate and overlapping CASE labels are refused, a FOR body may not assign to its control variable, and the value of that variable after the loop is unspecified. Inline structures and enumerations, VAR_CONFIG instance paths, single-resource configurations, references and the object-oriented extensions are parsed far enough to be named and are not implemented. |
+
+## Project infrastructure
+
+| | Capability | Status | Milestone | Notes |
+|---|---|---|---|---|
+| `[x]` | Generated capability status, with tests cited as evidence | implemented and tested | v0.1 | Status tables in the README and docs are generated from this registry. |
+| `[x]` | IEC clause citation registry with explicit provenance | implemented and tested | v0.1 | 43 citations are registered — 22 clauses, 18 tables and 3 figures of IEC 61131-3:2013 (Edition 3.0) — each with a number cross-checked against a public source and a requirement paraphrased in salman's own words. docs/IEC_CITATIONS.md is generated from the registry and cannot drift from it. A citation being registered does not mean the behaviour it names is implemented. |
+| `[x]` | One source of version truth, checked when the crate compiles | implemented and tested | v0.1 | The root VERSION file and Cargo's version cannot disagree: the mismatch is a compile error, not a CI job. |
+
+## Runtime
+
+| | Capability | Status | Milestone | Notes |
+|---|---|---|---|---|
+| `[x]` | Bytecode compiler with static instance layout and no run-time allocation | implemented and tested | v0.1 | Exponentiation and AT %-located variables are reported as not implemented rather than compiled to something approximate. |
+| `[x]` | Bytecode interpreter that faults rather than panics, with a scan watchdog | implemented and tested | v0.1 | Integer overflow wraps and division by zero faults; both are salman decisions, documented in docs/CONFORMANCE.md. |
+| `[x]` | Scan semantics with a correct process image, and a visible force list | implemented and tested | v0.1 | Nothing maps a located variable to the image yet; the image is reachable only through a directly represented variable in an expression. |
+| `[x]` | RETAIN and PERSISTENT across simulated warm and cold restarts | implemented and tested | v0.1 | The runtime models it; no command line surface exposes a restart yet. |
+| `[x]` | Cyclic, event and freewheeling tasks with priority and overrun detection | implemented and tested | v0.1 | Pre-emption is NOT modelled: a scan is atomic. A race that depends on being interrupted mid-scan cannot be reproduced here. |
+| `[x]` | All ten IEC standard function blocks, with their awkward edge cases asserted | implemented and tested | v0.1 | SEMA is also provided and is NOT an IEC standard function block; see docs/CONFORMANCE.md. |
+| `[x]` | Virtual clock, so a ten-minute sequence tests in milliseconds, identically | implemented and tested | v0.1 | A real-time mode exists in the type and reports its measured jitter; nothing drives it yet, because there is no hardware to be in the loop with. |
+
+## Safety
+
+| | Capability | Status | Milestone | Notes |
+|---|---|---|---|---|
+| `[x]` | OBSERVE / SIMULATE / ARMED posture model with categorical refusals | implemented and tested | v0.1 | No code path in salman writes to a device yet, so nothing calls this. It exists first so that the first write path cannot avoid it. |
+
+## Testing
+
+| | Capability | Status | Milestone | Notes |
+|---|---|---|---|---|
+| `[x]` | Declarative unit tests for POUs, on a virtual clock, with no vendor runtime | implemented and tested | v0.1 | One source file per run. Multi-file projects are not implemented. |
+| `[x]` | Golden-trace tests against a reviewable text file | implemented and tested | v0.1 | --update-golden rewrites them. Read the diff before committing it. |
+| `[x]` | JUnit XML report and a real exit code, for a build server | implemented and tested | v0.1 | Targets the Jenkins junit-10 schema, the strictest of the three in circulation. |

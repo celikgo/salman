@@ -524,18 +524,23 @@ impl Checker<'_> {
             }
         }
         for block in blocks {
-            let symbols = self.symbols_of(block);
-            for symbol in symbols {
-                if let Some(earlier) = self
-                    .globals
-                    .iter()
-                    .find(|s| s.name.ident == symbol.name.ident)
-                    .map(|s| s.name.span)
-                {
-                    self.duplicate(&symbol.name, earlier, "a global variable");
-                    continue;
+            // One declaration at a time, and each is in scope for the next:
+            // `VAR_GLOBAL CONSTANT Size : INT := 4; Limit : INT := Size; END_VAR`
+            // is ordinary code, and it only works if the folder can already see
+            // `Size` when it reaches `Limit`.
+            for decl in &block.decls {
+                for symbol in self.symbols_of(block, decl) {
+                    if let Some(earlier) = self
+                        .globals
+                        .iter()
+                        .find(|s| s.name.ident == symbol.name.ident)
+                        .map(|s| s.name.span)
+                    {
+                        self.duplicate(&symbol.name, earlier, "a global variable");
+                        continue;
+                    }
+                    self.globals.push(symbol);
                 }
-                self.globals.push(symbol);
             }
         }
     }
@@ -558,22 +563,24 @@ impl Checker<'_> {
             let return_type = pou.return_type.as_ref().map(|ty| self.resolve_type_ref(ty));
             let mut symbols: Vec<Symbol> = Vec::new();
             for block in &pou.var_blocks {
-                for symbol in self.symbols_of(block) {
-                    if let Some(earlier) = symbols
-                        .iter()
-                        .find(|s| s.name.ident == symbol.name.ident)
-                        .map(|s| s.name.span)
-                    {
-                        self.duplicate(&symbol.name, earlier, "a variable");
-                        continue;
+                for decl in &block.decls {
+                    for symbol in self.symbols_of(block, decl) {
+                        if let Some(earlier) = symbols
+                            .iter()
+                            .find(|s| s.name.ident == symbol.name.ident)
+                            .map(|s| s.name.span)
+                        {
+                            self.duplicate(&symbol.name, earlier, "a variable");
+                            continue;
+                        }
+                        symbols.push(symbol);
                     }
-                    symbols.push(symbol);
-                }
-                // Each block is installed as it is resolved, so that a later
-                // block's initialiser can name a CONSTANT an earlier one
-                // declared.
-                if let Some(slot) = self.pous.get_mut(index as usize) {
-                    slot.symbols.clone_from(&symbols);
+                    // Each declaration is installed as it is resolved, so that
+                    // the next one's initialiser and the next array bound can
+                    // name a CONSTANT this one declared.
+                    if let Some(slot) = self.pous.get_mut(index as usize) {
+                        slot.symbols.clone_from(&symbols);
+                    }
                 }
             }
             if let Some(slot) = self.pous.get_mut(index as usize) {
@@ -585,46 +592,48 @@ impl Checker<'_> {
         }
     }
 
-    /// Every symbol one `VAR ... END_VAR` block declares.
-    fn symbols_of(&mut self, block: &VarBlock) -> Vec<Symbol> {
+    /// Every symbol one declaration in a `VAR ... END_VAR` block declares.
+    ///
+    /// One declaration rather than the whole block, so that the caller can put
+    /// each name in scope before resolving the next: `Size` has to be visible
+    /// when the folder reaches `ARRAY [1..Size]` on the line below it.
+    fn symbols_of(&mut self, block: &VarBlock, decl: &VarDecl) -> Vec<Symbol> {
+        let ty = self.resolve_type_ref(&decl.ty);
+        let init = self.declared_initial_value(decl, ty);
         let mut out = Vec::new();
-        for decl in &block.decls {
-            let ty = self.resolve_type_ref(&decl.ty);
-            let init = self.declared_initial_value(decl, ty);
-            for (position, name) in decl.names.iter().enumerate() {
-                // `A, B AT %IX0.0 : BOOL;` would put two variables at one
-                // address, so only a single-name declaration keeps the address.
-                let address = if decl.names.len() == 1 {
-                    decl.located_at.clone()
-                } else {
-                    if position == 0 && decl.located_at.is_some() {
-                        self.diags.push(
-                            Diagnostic::error(
-                                codes::E_DUPLICATE_DECLARATION,
-                                "several variables cannot share one direct address",
-                            )
-                            .with_primary(
-                                decl.located_at_span.unwrap_or(decl.span),
-                                "this `AT` clause names one location",
-                            )
-                            .with_note(
-                                "Declare each located variable on a line of its own, so that it \
-                                 is visible which name owns which address.",
-                            )
-                            .with_clause(clause::DIRECTLY_REPRESENTED_VARIABLES),
-                        );
-                    }
-                    None
-                };
-                out.push(Symbol {
-                    name: name.clone(),
-                    section: block.section,
-                    qualifiers: block.qualifiers,
-                    ty,
-                    address,
-                    init: init.clone(),
-                });
-            }
+        for (position, name) in decl.names.iter().enumerate() {
+            // `A, B AT %IX0.0 : BOOL;` would put two variables at one address,
+            // so only a single-name declaration keeps the address.
+            let address = if decl.names.len() == 1 {
+                decl.located_at.clone()
+            } else {
+                if position == 0 && decl.located_at.is_some() {
+                    self.diags.push(
+                        Diagnostic::error(
+                            codes::E_DUPLICATE_DECLARATION,
+                            "several variables cannot share one direct address",
+                        )
+                        .with_primary(
+                            decl.located_at_span.unwrap_or(decl.span),
+                            "this `AT` clause names one location",
+                        )
+                        .with_note(
+                            "Declare each located variable on a line of its own, so that it is \
+                             visible which name owns which address.",
+                        )
+                        .with_clause(clause::DIRECTLY_REPRESENTED_VARIABLES),
+                    );
+                }
+                None
+            };
+            out.push(Symbol {
+                name: name.clone(),
+                section: block.section,
+                qualifiers: block.qualifiers,
+                ty,
+                address,
+                init: init.clone(),
+            });
         }
         out
     }
@@ -695,13 +704,9 @@ impl Checker<'_> {
                 self.types.intern(TypeData::Str { wide, max_len })
             }
             TypeRef::Named(name) => self.resolve_named_type(name),
-            TypeRef::Array {
-                dims,
-                element,
-                span,
-            } => {
+            TypeRef::Array { dims, element, .. } => {
                 let element = self.resolve_type_ref(element);
-                self.array_type(dims, element, *span)
+                self.array_type(dims, element)
             }
             TypeRef::Subrange {
                 base,
@@ -750,7 +755,7 @@ impl Checker<'_> {
     }
 
     /// Builds an array type from its written dimensions.
-    fn array_type(&mut self, dims: &[ArrayDim], element: TypeId, span: Span) -> TypeId {
+    fn array_type(&mut self, dims: &[ArrayDim], element: TypeId) -> TypeId {
         if dims.is_empty() {
             // Only reachable after the parser has refused `ARRAY [*]`.
             return self.types.error();
@@ -777,7 +782,6 @@ impl Checker<'_> {
             }
             bounds.push(ArrayBounds { low, high });
         }
-        let _ = span;
         self.types.intern(TypeData::Array {
             element,
             dims: bounds,
@@ -920,7 +924,7 @@ impl Checker<'_> {
             }
             TypeDeclKind::Array { dims, element } => {
                 let element = self.resolve_type_ref(element);
-                self.array_type(dims, element, decl.span)
+                self.array_type(dims, element)
             }
         }
     }
@@ -1754,6 +1758,17 @@ impl Checker<'_> {
         operand: &Expr,
         expected: Option<TypeId>,
     ) -> TypeId {
+        // `-128` is an operator and a magnitude in the tree and one value to
+        // the engineer who wrote it. SINT holds -128 and does not hold 128, so
+        // the range check has to be done on the negated value — otherwise the
+        // most negative value of every signed type would be unwritable.
+        if op == UnaryOp::Neg
+            && let Some(magnitude) = plain_integer_literal(operand)
+        {
+            let ty = self.integer_literal_type(e, -magnitude, None, expected);
+            self.record_type_through_parentheses(operand, ty);
+            return ty;
+        }
         let operand_ty = self.expr(operand, expected);
         if self.types.is_error(operand_ty) {
             return operand_ty;
@@ -1822,6 +1837,16 @@ impl Checker<'_> {
                 );
                 self.types.error()
             }
+        }
+    }
+
+    /// Records one type on an expression and on every parenthesis round it.
+    fn record_type_through_parentheses(&mut self, expr: &Expr, ty: TypeId) {
+        if let Some(slot) = self.expr_types.get_mut(expr.id.index()) {
+            *slot = Some(ty);
+        }
+        if let ExprKind::Paren(inner) = &expr.kind {
+            self.record_type_through_parentheses(inner, ty);
         }
     }
 
@@ -1894,6 +1919,20 @@ impl Checker<'_> {
                 "refused, because salman could not verify that Figure 12 has that edge"
             },
         )
+    }
+}
+
+/// The magnitude of an untyped, unsigned integer literal, through any
+/// parentheses round it.
+fn plain_integer_literal(expr: &Expr) -> Option<i128> {
+    match &expr.kind {
+        ExprKind::Paren(inner) => plain_integer_literal(inner),
+        ExprKind::Literal(LiteralValue::Int {
+            magnitude,
+            negative: false,
+            declared: None,
+        }) => i128::try_from(*magnitude).ok(),
+        _ => None,
     }
 }
 
@@ -2290,7 +2329,10 @@ impl Checker<'_> {
         }
 
         let inputs: Vec<&Formal> = formals.iter().filter(|f| f.input).collect();
-        if positional > 0 && positional != inputs.len() {
+        // Only when the call is purely positional: a mixed call has already
+        // been refused, and counting its arguments would add a second
+        // complaint about one mistake.
+        if positional > 0 && named == 0 && positional != inputs.len() {
             self.diags.push(
                 Diagnostic::error(
                     codes::E_WRONG_ARGUMENT_COUNT,
@@ -2908,7 +2950,12 @@ impl Checker<'_> {
 
     fn case_label_value(&mut self, expr: &Expr, selector: TypeId, usable: bool) -> Option<i128> {
         let ty = self.expr(expr, Some(selector));
-        if usable && !self.types.is_error(ty) && ty != selector {
+        if !usable {
+            // The selector has already been refused. Whatever the labels are,
+            // complaining about them as well would say nothing new.
+            return None;
+        }
+        if !self.types.is_error(ty) && ty != selector {
             let compatible = self
                 .types
                 .as_elementary(ty)
@@ -3542,6 +3589,17 @@ impl Checker<'_> {
             ExprKind::Literal(literal) => self.literal_value(literal, e.id),
             ExprKind::Paren(inner) => self.fold(inner),
             ExprKind::Var(name) => {
+                // An unqualified enumeration value resolved from its context
+                // has no symbol to look up; its number is in the resolution.
+                if let Some(Resolution::EnumValue { ty, value }) =
+                    self.resolutions.get(e.id.index()).copied().flatten()
+                {
+                    let base = match self.types.get(ty) {
+                        TypeData::Enum { base, .. } => *base,
+                        _ => return None,
+                    };
+                    return value_from_int(base, i128::from(value));
+                }
                 let resolution = self.lookup(name.as_str())?;
                 let symbol = match resolution {
                     Resolution::Local { pou, symbol } => self.symbol_at(pou, symbol),
@@ -4014,8 +4072,7 @@ impl Checker<'_> {
 
     fn check_task(&mut self, task: &TaskDecl) -> CheckedTask {
         let interval = task.interval.as_ref().and_then(|expr| {
-            let ty = self.expr(expr, None);
-            let _ = ty;
+            self.expr(expr, None);
             match self.fold(expr).as_ref().and_then(Value::as_duration) {
                 Some(duration) if duration.nanos() > 0 => Some(duration.nanos()),
                 found => {
@@ -4270,4 +4327,1792 @@ fn edit_distance(left: &str, right: &str) -> usize {
         std::mem::swap(&mut previous, &mut current);
     }
     previous.last().copied().unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use salman_core::diag::Severity;
+    use salman_core::span::SourceMap;
+
+    use crate::parser::parse_source;
+
+    /// Codes the parser raises that the checker raises again, knowing more.
+    /// A test source is allowed to carry these out of the parser without the
+    /// helpers below calling it a broken source.
+    const SHARED_WITH_PARSER: &[&str] = &["E0208", "E0209", "E0210"];
+
+    fn check_with(dialect: &Dialect, src: &str) -> (Checked, Diagnostics, SourceMap) {
+        let mut map = SourceMap::new();
+        let file = map.add("t.st", src).expect("a source file");
+        let (unit, parse_diags) = parse_source(file, src, dialect);
+        let unexpected: Vec<&str> = parse_diags
+            .items()
+            .iter()
+            .filter(|d| d.severity == Severity::Error && !SHARED_WITH_PARSER.contains(&d.code.0))
+            .map(|d| d.code.0)
+            .collect();
+        assert!(
+            unexpected.is_empty(),
+            "the test source does not parse: {unexpected:?}\n{}",
+            parse_diags.render(&map)
+        );
+        let (checked, diags) = check(&unit, dialect);
+        (checked, diags, map)
+    }
+
+    fn check_text(src: &str) -> (Checked, Diagnostics, SourceMap) {
+        check_with(&Dialect::generic(), src)
+    }
+
+    fn codes_of(diags: &Diagnostics, severity: Severity) -> Vec<&'static str> {
+        diags
+            .items()
+            .iter()
+            .filter(|d| d.severity == severity)
+            .map(|d| d.code.0)
+            .collect()
+    }
+
+    fn errors(src: &str) -> Vec<&'static str> {
+        let (_, diags, _) = check_text(src);
+        codes_of(&diags, Severity::Error)
+    }
+
+    fn warnings(src: &str) -> Vec<&'static str> {
+        let (_, diags, _) = check_text(src);
+        codes_of(&diags, Severity::Warning)
+    }
+
+    /// Checks a source that must be clean, and hands back what was learned.
+    fn checked_ok(src: &str) -> Checked {
+        let (checked, diags, map) = check_text(src);
+        assert!(
+            !diags.has_errors(),
+            "unexpected errors:\n{src}\n{}",
+            diags.render(&map)
+        );
+        checked
+    }
+
+    /// A `PROGRAM Main` with `body` for its statements.
+    fn in_program(body: &str) -> String {
+        format!("PROGRAM Main\n{body}\nEND_PROGRAM\n")
+    }
+
+    /// A `PROGRAM Main` with one `VAR` block and a body.
+    fn program(vars: &str, body: &str) -> String {
+        format!("PROGRAM Main\nVAR\n{vars}\nEND_VAR\n{body}\nEND_PROGRAM\n")
+    }
+
+    fn program_errors(vars: &str, body: &str) -> Vec<&'static str> {
+        errors(&program(vars, body))
+    }
+
+    /// The message of the first diagnostic carrying `code`.
+    fn message(diags: &Diagnostics, code: &str) -> String {
+        let diag = diags
+            .items()
+            .iter()
+            .find(|d| d.code.0 == code)
+            .unwrap_or_else(|| {
+                panic!(
+                    "no {code} was reported: {:?}",
+                    codes_of(diags, Severity::Error)
+                )
+            });
+        let mut out = diag.message.clone();
+        for note in &diag.notes {
+            out.push('\n');
+            out.push_str(note);
+        }
+        for suggestion in &diag.suggestions {
+            out.push('\n');
+            out.push_str(&suggestion.message);
+        }
+        for label in &diag.labels {
+            out.push('\n');
+            out.push_str(&label.message);
+        }
+        out
+    }
+
+    fn parse_only(src: &str) -> CompilationUnit {
+        let mut map = SourceMap::new();
+        let file = map.add("t.st", src).expect("a source file");
+        let (unit, _) = parse_source(file, src, &Dialect::generic());
+        unit
+    }
+
+    /// The statements of `PROGRAM Main`.
+    fn main_body(unit: &CompilationUnit) -> Vec<Stmt> {
+        unit.pou("Main").expect("PROGRAM Main").body.clone()
+    }
+
+    /// The value expression of the first assignment in `PROGRAM Main`.
+    fn first_value(unit: &CompilationUnit) -> Expr {
+        for stmt in main_body(unit) {
+            if let StmtKind::Assign { value, .. } = stmt.kind {
+                return value;
+            }
+        }
+        panic!("no assignment in Main");
+    }
+
+    fn symbol_of(checked: &Checked, pou: &str, name: &str) -> Symbol {
+        let (_, found) = checked.pou(pou).expect("the POU");
+        found.symbol(name).expect("the symbol").1.clone()
+    }
+
+    // -- pass one: declarations ---------------------------------------------
+
+    #[test]
+    fn a_pou_may_call_one_declared_further_down_the_file() {
+        // Declaration order is not use order in this language: engineers write
+        // the program first and its helpers after it.
+        let checked = checked_ok(
+            "PROGRAM Main VAR x : INT; END_VAR x := Double(2); END_PROGRAM\n\
+             FUNCTION Double : INT VAR_INPUT n : INT; END_VAR Double := n * 2; END_FUNCTION\n",
+        );
+        assert!(checked.pou("Double").is_some());
+    }
+
+    #[test]
+    fn a_type_may_be_declared_after_the_type_that_contains_it() {
+        let checked = checked_ok(
+            "TYPE Outer : STRUCT inner : Inner; END_STRUCT; END_TYPE\n\
+             TYPE Inner : STRUCT count : INT; END_STRUCT; END_TYPE\n\
+             PROGRAM Main VAR o : Outer; n : INT; END_VAR n := o.inner.count; END_PROGRAM\n",
+        );
+        assert!(!checked.types.is_empty());
+    }
+
+    #[test]
+    fn a_type_that_contains_itself_is_refused() {
+        assert_eq!(
+            errors(
+                "TYPE Loop : STRUCT self : Loop; END_STRUCT; END_TYPE\n\
+                 PROGRAM Main END_PROGRAM\n"
+            ),
+            ["E0308"]
+        );
+    }
+
+    #[test]
+    fn two_types_that_contain_each_other_are_refused() {
+        let found = errors(
+            "TYPE A : STRUCT b : B; END_STRUCT; END_TYPE\n\
+             TYPE B : STRUCT a : A; END_STRUCT; END_TYPE\n\
+             PROGRAM Main END_PROGRAM\n",
+        );
+        assert!(found.iter().all(|code| *code == "E0308"), "{found:?}");
+        assert_eq!(found.len(), 2);
+    }
+
+    #[test]
+    fn an_unknown_type_name_is_refused_and_the_nearest_declared_one_is_offered() {
+        let src = "TYPE Speed : INT; END_TYPE\n\
+                   PROGRAM Main VAR v : Sped; END_VAR END_PROGRAM\n";
+        let (_, diags, _) = check_text(src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0301"]);
+        assert!(
+            message(&diags, "E0301").contains("speed"),
+            "{}",
+            message(&diags, "E0301")
+        );
+    }
+
+    #[test]
+    fn a_declared_type_resolves_without_complaint() {
+        let checked = checked_ok(
+            "TYPE Speed : INT; END_TYPE\n\
+             PROGRAM Main VAR v : Speed; END_VAR v := 3; END_PROGRAM\n",
+        );
+        let symbol = symbol_of(&checked, "Main", "v");
+        assert_eq!(
+            checked.types.as_elementary(symbol.ty),
+            Some(ElementaryType::Int)
+        );
+    }
+
+    #[test]
+    fn two_pous_of_one_name_are_refused_and_the_first_one_wins() {
+        let src = "PROGRAM Main END_PROGRAM\nPROGRAM MAIN END_PROGRAM\n";
+        let (checked, diags, _) = check_text(src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0303"]);
+        assert_eq!(checked.pous.len(), 1);
+    }
+
+    #[test]
+    fn two_variables_of_one_name_in_one_pou_are_refused() {
+        assert_eq!(
+            program_errors("a : INT;\na : DINT;", ""),
+            ["E0303"],
+            "IEC identifiers compare without case, so this is one name declared twice"
+        );
+    }
+
+    #[test]
+    fn two_globals_of_one_name_are_refused() {
+        assert_eq!(
+            errors(
+                "VAR_GLOBAL g : INT; END_VAR\nVAR_GLOBAL G : BOOL; END_VAR\nPROGRAM Main END_PROGRAM\n"
+            ),
+            ["E0303"]
+        );
+    }
+
+    #[test]
+    fn several_names_cannot_share_one_direct_address() {
+        assert_eq!(program_errors("a, b AT %IX0.0 : BOOL;", ""), ["E0303"]);
+    }
+
+    // -- types ---------------------------------------------------------------
+
+    #[test]
+    fn a_string_with_no_declared_length_takes_the_dialect_default() {
+        let checked = checked_ok(&program("s : STRING;", ""));
+        let symbol = symbol_of(&checked, "Main", "s");
+        assert_eq!(
+            *checked.types.get(symbol.ty),
+            TypeData::Str {
+                wide: false,
+                max_len: u32::from(Dialect::generic().default_string_length)
+            }
+        );
+    }
+
+    #[test]
+    fn a_string_length_that_is_not_a_usable_constant_is_refused() {
+        assert_eq!(program_errors("s : STRING[0];", ""), ["E0306"]);
+        assert_eq!(program_errors("n : INT;\ns : STRING[n];", ""), ["E0307"]);
+    }
+
+    #[test]
+    fn a_declared_string_length_is_kept() {
+        let checked = checked_ok(&program("s : STRING[12];", ""));
+        let symbol = symbol_of(&checked, "Main", "s");
+        assert_eq!(
+            *checked.types.get(symbol.ty),
+            TypeData::Str {
+                wide: false,
+                max_len: 12
+            }
+        );
+    }
+
+    #[test]
+    fn an_inverted_array_dimension_names_both_bounds() {
+        let src = program("a : ARRAY [5..1] OF INT;", "");
+        let (_, diags, _) = check_text(&src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0304"]);
+        assert!(message(&diags, "E0304").contains("5..1"));
+    }
+
+    #[test]
+    fn an_array_bound_that_is_not_constant_is_refused() {
+        assert_eq!(
+            program_errors("n : INT;\na : ARRAY [1..n] OF INT;", ""),
+            ["E0307"]
+        );
+    }
+
+    #[test]
+    fn an_array_bound_may_be_a_constant_variable() {
+        let checked = checked_ok(&format!(
+            "PROGRAM Main\nVAR CONSTANT Size : INT := 4; END_VAR\nVAR a : ARRAY [1..Size] OF INT; END_VAR\n{}\nEND_PROGRAM\n",
+            "a[4] := 1;"
+        ));
+        let symbol = symbol_of(&checked, "Main", "a");
+        assert_eq!(
+            *checked.types.get(symbol.ty),
+            TypeData::Array {
+                element: checked.types.elementary(ElementaryType::Int),
+                dims: vec![ArrayBounds { low: 1, high: 4 }]
+            }
+        );
+    }
+
+    #[test]
+    fn a_declaration_can_name_a_constant_the_line_above_it_declared() {
+        let checked = checked_ok(
+            "PROGRAM Main\n\
+             VAR CONSTANT Size : INT := 4; Limit : INT := Size - 1; END_VAR\n\
+             VAR a : ARRAY [1..Size] OF INT; END_VAR\n\
+             END_PROGRAM\n",
+        );
+        assert_eq!(
+            symbol_of(&checked, "Main", "Limit").init,
+            Some(Value::Int(3))
+        );
+    }
+
+    #[test]
+    fn a_global_can_name_a_constant_global_declared_before_it() {
+        let checked = checked_ok(
+            "VAR_GLOBAL CONSTANT Size : INT := 4; END_VAR\n\
+             VAR_GLOBAL Limit : INT := Size; END_VAR\n\
+             PROGRAM Main END_PROGRAM\n",
+        );
+        let limit = checked
+            .globals
+            .iter()
+            .find(|s| s.name.ident.eq_str("Limit"))
+            .expect("the global");
+        assert_eq!(limit.init, Some(Value::Int(4)));
+    }
+
+    #[test]
+    fn an_inverted_subrange_is_refused() {
+        assert_eq!(program_errors("v : INT (100..0);", ""), ["E0305"]);
+    }
+
+    #[test]
+    fn a_subrange_of_a_type_that_is_not_an_integer_is_refused() {
+        assert_eq!(program_errors("v : REAL (0..10);", ""), ["E0305"]);
+    }
+
+    #[test]
+    fn a_subrange_bound_outside_its_base_type_is_refused() {
+        assert_eq!(program_errors("v : SINT (0..300);", ""), ["E0305"]);
+    }
+
+    /// The values of the enumeration a variable of `name` is declared with.
+    fn enum_values(checked: &Checked, variable: &str) -> Vec<(String, i64)> {
+        let symbol = symbol_of(checked, "Main", variable);
+        match checked.types.get(symbol.ty) {
+            TypeData::Enum { values, .. } => values
+                .iter()
+                .map(|(name, value)| (name.to_string(), *value))
+                .collect(),
+            other => panic!("not an enumeration: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enumeration_values_continue_from_the_previous_one_starting_at_zero() {
+        // The continuation rule is what every implementation salman looked at
+        // does; salman could not verify which clause of the standard states it.
+        let checked = checked_ok(
+            "TYPE Colour : (Red, Green, Blue); END_TYPE\n\
+             PROGRAM Main VAR c : Colour; END_VAR END_PROGRAM\n",
+        );
+        let values: Vec<i64> = enum_values(&checked, "c")
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect();
+        assert_eq!(values, [0, 1, 2]);
+    }
+
+    #[test]
+    fn an_explicit_enumeration_value_restarts_the_continuation() {
+        let checked = checked_ok(
+            "TYPE Mode : (Off, Manual := 10, Auto); END_TYPE\n\
+             PROGRAM Main VAR m : Mode; END_VAR END_PROGRAM\n",
+        );
+        let values: Vec<i64> = enum_values(&checked, "m")
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect();
+        assert_eq!(values, [0, 10, 11]);
+    }
+
+    #[test]
+    fn a_function_block_instance_type_knows_which_pou_declared_it() {
+        let checked = checked_ok(
+            "FUNCTION_BLOCK Motor VAR_INPUT Run : BOOL; END_VAR END_FUNCTION_BLOCK\n\
+             PROGRAM Main VAR m : Motor; END_VAR m(Run := TRUE); END_PROGRAM\n",
+        );
+        let symbol = symbol_of(&checked, "Main", "m");
+        let (index, _) = checked.pou("Motor").expect("the function block");
+        assert_eq!(
+            *checked.types.get(symbol.ty),
+            TypeData::FunctionBlock {
+                name: checked
+                    .pous
+                    .get(index as usize)
+                    .expect("the POU")
+                    .name
+                    .ident
+                    .to_key(),
+                native: None,
+                pou: Some(index)
+            }
+        );
+    }
+
+    #[test]
+    fn a_standard_block_name_resolves_to_a_native_instance_type() {
+        let checked = checked_ok(&program("t : TON;", "t(IN := TRUE, PT := T#1s);"));
+        let symbol = symbol_of(&checked, "Main", "t");
+        assert_eq!(checked.native_block(symbol.ty), Some(NativeBlock::Ton));
+    }
+
+    // -- the untyped literal rule, which is salman policy ---------------------
+
+    #[test]
+    fn an_untyped_integer_literal_takes_the_type_its_context_requires() {
+        // salman policy: no standard default could be verified, so a literal
+        // takes the type its context needs. `x : SINT := 5;` is what every
+        // vendor accepts, and this is what makes it legal here.
+        let checked = checked_ok(&program("x : SINT := 5;", ""));
+        assert_eq!(symbol_of(&checked, "Main", "x").init, Some(Value::Sint(5)));
+    }
+
+    #[test]
+    fn an_untyped_integer_literal_that_does_not_fit_its_context_names_the_value_and_the_range() {
+        let src = program("x : SINT := 300;", "");
+        let (_, diags, _) = check_text(&src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0404"]);
+        let text = message(&diags, "E0404");
+        assert!(text.contains("300"), "{text}");
+        assert!(text.contains("-128..127"), "{text}");
+    }
+
+    #[test]
+    fn an_untyped_integer_literal_falls_back_to_dint_when_nothing_asks_for_a_type() {
+        let src = in_program("VAR x : DINT; END_VAR x := 5;");
+        let unit = parse_only(&src);
+        let (checked, _, _) = check_text(&src);
+        let value = first_value(&unit);
+        assert_eq!(
+            checked.type_of(value.id),
+            Some(checked.types.elementary(ElementaryType::Dint))
+        );
+        assert_eq!(checked.constant(value.id), Some(&Value::Dint(5)));
+    }
+
+    #[test]
+    fn an_untyped_real_literal_falls_back_to_lreal() {
+        let checked = checked_ok(&program("x : LREAL := 1.5;", ""));
+        assert_eq!(
+            symbol_of(&checked, "Main", "x").init,
+            Some(Value::Lreal(1.5))
+        );
+    }
+
+    #[test]
+    fn a_negative_literal_at_the_edge_of_its_type_is_accepted() {
+        // -128 fits SINT and 128 does not. Whether the sign is part of the
+        // literal or a unary minus applied to it is the lexer's business, and
+        // the answer must not change whether this compiles.
+        assert!(program_errors("x : SINT := -128;", "").is_empty());
+        assert_eq!(program_errors("x : SINT := 128;", ""), ["E0404"]);
+        assert!(program_errors("x : SINT := SINT#-128;", "").is_empty());
+        assert!(program_errors("x : SINT := -(128);", "").is_empty());
+        let checked = checked_ok(&program("x : SINT := -128;", ""));
+        assert_eq!(
+            symbol_of(&checked, "Main", "x").init,
+            Some(Value::Sint(-128))
+        );
+    }
+
+    #[test]
+    fn a_typed_literal_keeps_the_type_its_prefix_names() {
+        let checked = checked_ok(&program("x : DINT := INT#5;", ""));
+        assert_eq!(symbol_of(&checked, "Main", "x").init, Some(Value::Dint(5)));
+    }
+
+    #[test]
+    fn a_typed_literal_whose_value_does_not_fit_is_refused() {
+        assert_eq!(program_errors("x : DINT := SINT#300;", ""), ["E0404"]);
+    }
+
+    #[test]
+    fn a_literal_outside_a_subrange_is_refused() {
+        assert_eq!(program_errors("v : INT (0..10) := 50;", ""), ["E0404"]);
+        assert!(program_errors("v : INT (0..10) := 5;", "").is_empty());
+    }
+
+    #[test]
+    fn a_string_literal_longer_than_its_target_is_refused() {
+        assert_eq!(program_errors("s : STRING[2] := 'abcd';", ""), ["E0404"]);
+        assert!(program_errors("s : STRING[8] := 'abcd';", "").is_empty());
+    }
+
+    #[test]
+    fn a_literal_in_a_real_context_becomes_that_real() {
+        let checked = checked_ok(&program("x : REAL := 3;", ""));
+        assert_eq!(
+            symbol_of(&checked, "Main", "x").init,
+            Some(Value::real(3.0))
+        );
+    }
+
+    // -- implicit conversion --------------------------------------------------
+
+    #[test]
+    fn int_widens_to_real_and_dint_does_not() {
+        // A 24-bit significand cannot hold every 32-bit integer, which is why
+        // IEC 61131-3:2013 Figure 12 has the one edge and not the other.
+        assert!(program_errors("i : INT;\nr : REAL;", "r := i;").is_empty());
+        assert_eq!(
+            program_errors("wide : DINT;\nr : REAL;", "r := wide;"),
+            ["E0401"]
+        );
+    }
+
+    #[test]
+    fn a_narrowing_assignment_names_the_conversion_function() {
+        let src = program("wide : DINT;\ni : INT;", "i := wide;");
+        let (_, diags, _) = check_text(&src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0401"]);
+        assert!(message(&diags, "E0401").contains("DINT_TO_INT"));
+    }
+
+    #[test]
+    fn bool_widening_follows_the_dialect_and_the_diagnostic_says_which_rule_was_applied() {
+        let src = program("flag : BOOL;\nbits : BYTE;", "bits := flag;");
+        assert!(errors(&src).is_empty(), "the generic dialect permits it");
+
+        let (_, diags, _) = check_with(&Dialect::strict_iec(), &src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0401"]);
+        let rule = diags
+            .items()
+            .iter()
+            .find(|d| d.code.0 == "E0401")
+            .and_then(|d| d.dialect_rule.clone())
+            .expect("the dialect rule");
+        assert!(rule.starts_with("iec61131-3:2013-strict:"), "{rule}");
+    }
+
+    #[test]
+    fn a_value_of_an_unrelated_type_cannot_be_assigned() {
+        assert_eq!(
+            program_errors("flag : BOOL;\nn : INT;", "n := flag;"),
+            ["E0401"]
+        );
+        assert_eq!(
+            program_errors("s : STRING;\nn : INT;", "n := s;"),
+            ["E0401"]
+        );
+    }
+
+    // -- name resolution ------------------------------------------------------
+
+    #[test]
+    fn an_unknown_name_is_reported_once_and_a_similar_one_is_offered() {
+        let src = program("Motor_Run : BOOL;", "Motor_Rn := TRUE;");
+        let (_, diags, _) = check_text(&src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0302"]);
+        assert!(message(&diags, "E0302").contains("Motor_Run"));
+    }
+
+    #[test]
+    fn a_local_shadows_a_global_of_the_same_name() {
+        let src = "VAR_GLOBAL Level : INT; END_VAR\n\
+                   PROGRAM Main VAR Level : DINT; END_VAR Level := 1; END_PROGRAM\n";
+        let checked = checked_ok(src);
+        let unit = parse_only(src);
+        let stmt = main_body(&unit).first().cloned().expect("a statement");
+        let StmtKind::Assign { target, .. } = stmt.kind else {
+            panic!("expected an assignment");
+        };
+        assert!(matches!(
+            checked.resolution(target.id),
+            Some(Resolution::Local { .. })
+        ));
+    }
+
+    #[test]
+    fn a_global_is_found_when_no_local_hides_it() {
+        let src = "VAR_GLOBAL Level : INT; END_VAR\n\
+                   PROGRAM Main Level := 1; END_PROGRAM\n";
+        let checked = checked_ok(src);
+        let unit = parse_only(src);
+        let stmt = main_body(&unit).first().cloned().expect("a statement");
+        let StmtKind::Assign { target, .. } = stmt.kind else {
+            panic!("expected an assignment");
+        };
+        assert_eq!(
+            checked.resolution(target.id),
+            Some(Resolution::Global { symbol: 0 })
+        );
+    }
+
+    #[test]
+    fn a_function_name_used_as_a_value_outside_the_function_is_refused() {
+        assert_eq!(
+            errors(
+                "FUNCTION F : INT F := 1; END_FUNCTION\n\
+                 PROGRAM Main VAR n : INT; END_VAR n := F; END_PROGRAM\n"
+            ),
+            ["E0314"]
+        );
+    }
+
+    // -- members --------------------------------------------------------------
+
+    #[test]
+    fn a_timers_output_reads_as_a_member_of_its_instance() {
+        let src = program("t : TON;\nrunning : BOOL;", "running := t.Q;");
+        let checked = checked_ok(&src);
+        let unit = parse_only(&src);
+        let value = first_value(&unit);
+        assert_eq!(
+            checked.type_of(value.id),
+            Some(checked.types.elementary(ElementaryType::Bool))
+        );
+        let Some(Resolution::Member { offset, .. }) = checked.resolution(value.id) else {
+            panic!("Timer.Q did not resolve to a member");
+        };
+        assert_eq!(
+            Some(offset),
+            crate::stdlib::field_offset(NativeBlock::Ton, "Q")
+        );
+    }
+
+    #[test]
+    fn a_timers_preset_can_be_written_from_outside() {
+        assert!(program_errors("t : TON;", "t.PT := T#5s;").is_empty());
+    }
+
+    #[test]
+    fn a_blocks_internal_field_cannot_be_named_in_code() {
+        let src = program("t : TON;\nb : BYTE;", "b := t.PHASE;");
+        let (_, diags, _) = check_text(&src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0311"]);
+        assert!(message(&diags, "E0311").contains("watch list"));
+    }
+
+    #[test]
+    fn a_user_blocks_local_variable_cannot_be_named_from_outside() {
+        assert_eq!(
+            errors(
+                "FUNCTION_BLOCK Motor VAR_INPUT Run : BOOL; END_VAR VAR Ticks : INT; END_VAR END_FUNCTION_BLOCK\n\
+                 PROGRAM Main VAR m : Motor; n : INT; END_VAR n := m.Ticks; END_PROGRAM\n"
+            ),
+            ["E0311"]
+        );
+    }
+
+    #[test]
+    fn a_user_blocks_output_can_be_read_from_outside() {
+        assert!(
+            errors(
+                "FUNCTION_BLOCK Motor VAR_OUTPUT Speed : INT; END_VAR END_FUNCTION_BLOCK\n\
+                 PROGRAM Main VAR m : Motor; n : INT; END_VAR n := m.Speed; END_PROGRAM\n"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_field_a_type_does_not_have_lists_the_ones_it_does() {
+        let src = program("t : TON;\nb : BOOL;", "b := t.Nope;");
+        let (_, diags, _) = check_text(&src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0310"]);
+        let text = message(&diags, "E0310");
+        assert!(
+            text.contains("IN") && text.contains("PT") && text.contains('Q'),
+            "{text}"
+        );
+        assert!(!text.contains("PHASE"), "internals are not offered: {text}");
+    }
+
+    #[test]
+    fn a_structure_field_resolves_and_an_unknown_one_does_not() {
+        let src = "TYPE Point : STRUCT x : INT; y : INT; END_STRUCT; END_TYPE\n\
+                   PROGRAM Main VAR p : Point; n : INT; END_VAR n := p.x; END_PROGRAM\n";
+        assert!(errors(src).is_empty());
+        let bad = "TYPE Point : STRUCT x : INT; END_STRUCT; END_TYPE\n\
+                   PROGRAM Main VAR p : Point; n : INT; END_VAR n := p.z; END_PROGRAM\n";
+        assert_eq!(errors(bad), ["E0310"]);
+    }
+
+    #[test]
+    fn something_with_no_fields_cannot_be_asked_for_one() {
+        assert_eq!(program_errors("n : INT;", "n := n.field;"), ["E0323"]);
+    }
+
+    // -- enumerations ---------------------------------------------------------
+
+    #[test]
+    fn a_qualified_enumeration_value_resolves_to_its_number() {
+        let src = "TYPE Colour : (Red, Green, Blue); END_TYPE\n\
+                   PROGRAM Main VAR c : Colour; END_VAR c := Colour#Green; END_PROGRAM\n";
+        let checked = checked_ok(src);
+        let unit = parse_only(src);
+        let value = first_value(&unit);
+        assert!(matches!(
+            checked.resolution(value.id),
+            Some(Resolution::EnumValue { value: 1, .. })
+        ));
+    }
+
+    #[test]
+    fn an_unqualified_enumeration_value_resolves_from_the_type_the_context_wants() {
+        let src = "TYPE Colour : (Red, Green, Blue); END_TYPE\n\
+                   PROGRAM Main VAR c : Colour; END_VAR c := Blue; END_PROGRAM\n";
+        let checked = checked_ok(src);
+        let unit = parse_only(src);
+        let value = first_value(&unit);
+        assert!(matches!(
+            checked.resolution(value.id),
+            Some(Resolution::EnumValue { value: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn a_value_the_enumeration_does_not_have_is_refused() {
+        assert_eq!(
+            errors(
+                "TYPE Colour : (Red, Green); END_TYPE\n\
+                 PROGRAM Main VAR c : Colour; END_VAR c := Colour#Purple; END_PROGRAM\n"
+            ),
+            ["E0310"]
+        );
+    }
+
+    // -- operators ------------------------------------------------------------
+
+    #[test]
+    fn a_comparison_yields_bool_whatever_its_operands_were() {
+        let src = program("a : INT;\nb : DINT;\nflag : BOOL;", "flag := a < b;");
+        let checked = checked_ok(&src);
+        let unit = parse_only(&src);
+        let value = first_value(&unit);
+        assert_eq!(
+            checked.type_of(value.id),
+            Some(checked.types.elementary(ElementaryType::Bool))
+        );
+    }
+
+    #[test]
+    fn two_operands_with_no_common_type_are_both_named() {
+        // DINT and UDINT are both in ANY_NUM and neither widens to the other:
+        // IEC 61131-3:2013 Figure 12 has no edge either way.
+        let src = program(
+            "wide : DINT;\nunsigned : UDINT;",
+            "wide := wide + unsigned;",
+        );
+        let (_, diags, _) = check_text(&src);
+        assert!(codes_of(&diags, Severity::Error).contains(&"E0402"));
+        let text = message(&diags, "E0402");
+        assert!(text.contains("DINT") && text.contains("UDINT"), "{text}");
+    }
+
+    #[test]
+    fn an_operand_outside_the_operators_domain_names_the_generic_type_it_accepts() {
+        let src = program("r : LREAL;\nn : LREAL;", "n := r MOD r;");
+        let (_, diags, _) = check_text(&src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0403"]);
+        assert!(message(&diags, "E0403").contains("ANY_INT"));
+    }
+
+    #[test]
+    fn each_operand_keeps_its_own_type_and_the_operation_takes_the_common_one() {
+        // This is what tells the compiler where a conversion has to be emitted.
+        let src = program("small : INT;\nwide : DINT;", "wide := wide + small;");
+        let checked = checked_ok(&src);
+        let unit = parse_only(&src);
+        let value = first_value(&unit);
+        let ExprKind::Binary { lhs, rhs, .. } = &value.kind else {
+            panic!("expected a binary operation");
+        };
+        assert_eq!(
+            checked.type_of(value.id),
+            Some(checked.types.elementary(ElementaryType::Dint))
+        );
+        assert_eq!(
+            checked.type_of(lhs.id),
+            Some(checked.types.elementary(ElementaryType::Dint))
+        );
+        assert_eq!(
+            checked.type_of(rhs.id),
+            Some(checked.types.elementary(ElementaryType::Int))
+        );
+    }
+
+    #[test]
+    fn a_literal_operand_takes_the_type_of_the_variable_it_is_combined_with() {
+        let src = program("count : SINT;", "count := count + 1;");
+        let checked = checked_ok(&src);
+        let unit = parse_only(&src);
+        let value = first_value(&unit);
+        let ExprKind::Binary { rhs, .. } = &value.kind else {
+            panic!("expected a binary operation");
+        };
+        assert_eq!(
+            checked.type_of(rhs.id),
+            Some(checked.types.elementary(ElementaryType::Sint))
+        );
+    }
+
+    #[test]
+    fn the_dereference_operator_is_reported_as_not_implemented() {
+        assert_eq!(program_errors("n : INT;", "n := n^;"), ["U0301"]);
+    }
+
+    #[test]
+    fn the_assignment_attempt_is_reported_as_not_implemented() {
+        assert_eq!(program_errors("n : INT;\nm : INT;", "n ?= m;"), ["U0301"]);
+    }
+
+    // -- constant folding -----------------------------------------------------
+
+    #[test]
+    fn arithmetic_on_constants_is_folded_and_recorded() {
+        let src = program("n : DINT;", "n := 2 * 3 + 4;");
+        let checked = checked_ok(&src);
+        let unit = parse_only(&src);
+        let value = first_value(&unit);
+        assert_eq!(checked.constant(value.id), Some(&Value::Dint(10)));
+    }
+
+    #[test]
+    fn folding_wraps_the_way_the_runtime_wraps() {
+        // If the folder saturated where the runtime wraps, a constant and the
+        // same sum computed at run time would disagree.
+        let src = program("n : SINT;", "n := SINT#127 + SINT#1;");
+        let checked = checked_ok(&src);
+        let unit = parse_only(&src);
+        let value = first_value(&unit);
+        assert_eq!(checked.constant(value.id), Some(&Value::Sint(-128)));
+    }
+
+    #[test]
+    fn a_constant_variable_folds_to_its_initial_value() {
+        let src = "PROGRAM Main\nVAR CONSTANT Limit : INT := 7; END_VAR\nVAR n : INT; END_VAR\n\
+                   n := Limit + 1;\nEND_PROGRAM\n";
+        let checked = checked_ok(src);
+        let unit = parse_only(src);
+        let value = first_value(&unit);
+        assert_eq!(checked.constant(value.id), Some(&Value::Int(8)));
+    }
+
+    #[test]
+    fn a_variable_that_is_not_constant_does_not_fold() {
+        let src = program("n : INT;\nm : INT;", "m := n + 1;");
+        let checked = checked_ok(&src);
+        let unit = parse_only(&src);
+        let value = first_value(&unit);
+        assert_eq!(checked.constant(value.id), None);
+    }
+
+    #[test]
+    fn division_by_a_constant_zero_is_found_before_the_program_runs() {
+        assert_eq!(program_errors("n : DINT;", "n := 10 / 0;"), ["E0415"]);
+        assert!(program_errors("n : DINT;\ndivisor : DINT;", "n := 10 / divisor;").is_empty());
+    }
+
+    #[test]
+    fn a_duration_multiplied_by_a_constant_folds() {
+        let src = program("t : TIME;", "t := T#2s * 3;");
+        let checked = checked_ok(&src);
+        let unit = parse_only(&src);
+        let value = first_value(&unit);
+        assert_eq!(
+            checked
+                .constant(value.id)
+                .and_then(Value::as_duration)
+                .map(salman_core::time::Duration::nanos),
+            Some(6_000_000_000)
+        );
+    }
+
+    // -- subscripts -----------------------------------------------------------
+
+    #[test]
+    fn only_an_array_can_be_subscripted() {
+        assert_eq!(program_errors("n : INT;", "n := n[1];"), ["E0406"]);
+    }
+
+    #[test]
+    fn the_number_of_subscripts_must_match_the_number_of_dimensions() {
+        let src = program("a : ARRAY [1..4] OF INT;\nn : INT;", "n := a[1, 2];");
+        let (_, diags, _) = check_text(&src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0407"]);
+        assert!(message(&diags, "E0407").contains("1 dimension"));
+    }
+
+    #[test]
+    fn a_subscript_must_be_an_integer() {
+        assert_eq!(
+            program_errors(
+                "a : ARRAY [1..4] OF INT;\nn : INT;\nflag : BOOL;",
+                "n := a[flag];"
+            ),
+            ["E0408"]
+        );
+    }
+
+    #[test]
+    fn a_constant_subscript_outside_the_declared_bounds_is_a_compile_time_error() {
+        let src = program("a : ARRAY [1..4] OF INT;\nn : INT;", "n := a[9];");
+        let (_, diags, _) = check_text(&src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0409"]);
+        assert!(message(&diags, "E0409").contains("1..4"));
+    }
+
+    #[test]
+    fn a_constant_subscript_inside_the_bounds_is_accepted() {
+        assert!(program_errors("a : ARRAY [1..4] OF INT;\nn : INT;", "n := a[4];").is_empty());
+    }
+
+    #[test]
+    fn a_two_dimensional_array_indexes_by_both_bounds() {
+        assert!(
+            program_errors(
+                "grid : ARRAY [0..3, 0..1] OF INT;\nn : INT;",
+                "n := grid[3, 1];"
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            program_errors(
+                "grid : ARRAY [0..3, 0..1] OF INT;\nn : INT;",
+                "n := grid[3, 2];"
+            ),
+            ["E0409"]
+        );
+    }
+
+    // -- calls ----------------------------------------------------------------
+
+    const ADD: &str =
+        "FUNCTION Add : INT VAR_INPUT a : INT; b : INT; END_VAR Add := a + b; END_FUNCTION\n";
+
+    #[test]
+    fn a_function_takes_positional_or_named_arguments() {
+        // IEC 61131-3:2013 Table 20 "Function call" gives both forms.
+        assert!(errors(&format!("{ADD}{}", program("n : INT;", "n := Add(1, 2);"))).is_empty());
+        assert!(
+            errors(&format!(
+                "{ADD}{}",
+                program("n : INT;", "n := Add(a := 1, b := 2);")
+            ))
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_call_with_the_wrong_number_of_arguments_is_refused() {
+        assert_eq!(
+            errors(&format!("{ADD}{}", program("n : INT;", "n := Add(1);"))),
+            ["E0317"]
+        );
+    }
+
+    #[test]
+    fn a_named_call_that_leaves_a_parameter_unbound_is_refused() {
+        assert_eq!(
+            errors(&format!(
+                "{ADD}{}",
+                program("n : INT;", "n := Add(a := 1);")
+            )),
+            ["E0317"]
+        );
+    }
+
+    #[test]
+    fn an_argument_of_the_wrong_type_is_refused() {
+        assert_eq!(
+            errors(&format!(
+                "{ADD}{}",
+                program("n : INT;\nwide : DINT;", "n := Add(wide, 2);")
+            )),
+            ["E0401"]
+        );
+    }
+
+    #[test]
+    fn a_call_may_not_mix_positional_and_named_arguments() {
+        assert_eq!(
+            errors(&format!(
+                "{ADD}{}",
+                program("n : INT;", "n := Add(1, b := 2);")
+            )),
+            ["E0322"]
+        );
+    }
+
+    #[test]
+    fn an_unknown_function_parameter_lists_the_ones_that_exist() {
+        let src = format!("{ADD}{}", program("n : INT;", "n := Add(a := 1, c := 2);"));
+        let (_, diags, _) = check_text(&src);
+        assert!(codes_of(&diags, Severity::Error).contains(&"E0316"));
+        assert!(message(&diags, "E0316").contains("`a`"));
+    }
+
+    #[test]
+    fn a_functions_result_type_is_the_type_of_the_call() {
+        let src = format!("{ADD}{}", program("n : INT;", "n := Add(1, 2);"));
+        let checked = checked_ok(&src);
+        let unit = parse_only(&src);
+        let value = first_value(&unit);
+        assert_eq!(
+            checked.type_of(value.id),
+            Some(checked.types.elementary(ElementaryType::Int))
+        );
+    }
+
+    #[test]
+    fn positional_arguments_to_a_function_block_are_refused_citing_the_call_table() {
+        let src = program("t : TON;", "t(TRUE, T#1s);");
+        let (_, diags, _) = check_text(&src);
+        assert!(codes_of(&diags, Severity::Error).contains(&"E0315"));
+        let text = message(&diags, "E0315");
+        assert!(text.contains("Table 42"), "{text}");
+        assert!(text.contains("Function block call"), "{text}");
+    }
+
+    #[test]
+    fn an_unknown_function_block_parameter_lists_the_ones_that_exist() {
+        let src = program("t : TON;", "t(IN := TRUE, PRESET := T#1s);");
+        let (_, diags, _) = check_text(&src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0316"]);
+        let text = message(&diags, "E0316");
+        assert!(text.contains("`IN`") && text.contains("`PT`"), "{text}");
+    }
+
+    #[test]
+    fn a_function_block_call_produces_no_value() {
+        assert_eq!(
+            program_errors("t : TON;\nflag : BOOL;", "flag := t(IN := TRUE);"),
+            ["E0318"]
+        );
+    }
+
+    #[test]
+    fn a_program_cannot_be_called() {
+        assert_eq!(
+            errors("PROGRAM Other END_PROGRAM\nPROGRAM Main Other(); END_PROGRAM\n"),
+            ["E0319"]
+        );
+    }
+
+    #[test]
+    fn a_function_block_type_cannot_be_called_in_place_of_an_instance() {
+        assert_eq!(
+            errors(
+                "FUNCTION_BLOCK Motor VAR_INPUT Run : BOOL; END_VAR END_FUNCTION_BLOCK\n\
+                 PROGRAM Main Motor(Run := TRUE); END_PROGRAM\n"
+            ),
+            ["E0319"]
+        );
+    }
+
+    #[test]
+    fn a_standard_block_type_cannot_be_called_in_place_of_an_instance() {
+        assert_eq!(
+            program_errors("flag : BOOL;", "TON(IN := flag);"),
+            ["E0319"]
+        );
+    }
+
+    #[test]
+    fn a_plain_variable_cannot_be_called() {
+        assert_eq!(program_errors("n : INT;", "n();"), ["E0314"]);
+    }
+
+    #[test]
+    fn an_output_binding_writes_the_variable_it_names() {
+        assert!(
+            program_errors(
+                "t : TON;\nrunning : BOOL;",
+                "t(IN := TRUE, PT := T#1s, Q => running);"
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            program_errors("t : TON;\nn : INT;", "t(IN := TRUE, PT := T#1s, Q => n);"),
+            ["E0401"]
+        );
+    }
+
+    #[test]
+    fn an_output_binding_may_not_write_a_constant() {
+        assert_eq!(
+            errors(
+                "PROGRAM Main\nVAR CONSTANT Fixed : BOOL := FALSE; END_VAR\nVAR t : TON; END_VAR\n\
+                 t(IN := TRUE, PT := T#1s, Q => Fixed);\nEND_PROGRAM\n"
+            ),
+            ["E0313"]
+        );
+    }
+
+    #[test]
+    fn a_ton_instance_works_from_declaration_to_output() {
+        let src = program(
+            "Delay : TON;\nStart : BOOL;\nRunning : BOOL;\nElapsed : TIME;",
+            "Delay(IN := Start, PT := T#5s);\nRunning := Delay.Q;\nElapsed := Delay.ET;",
+        );
+        let checked = checked_ok(&src);
+        let symbol = symbol_of(&checked, "Main", "Delay");
+        assert_eq!(checked.native_block(symbol.ty), Some(NativeBlock::Ton));
+        let unit = parse_only(&src);
+        let value = first_value(&unit);
+        assert_eq!(
+            checked.type_of(value.id),
+            Some(checked.types.elementary(ElementaryType::Bool))
+        );
+    }
+
+    #[test]
+    fn a_user_function_block_is_called_through_its_instance() {
+        assert!(
+            errors(
+                "FUNCTION_BLOCK Ramp VAR_INPUT Amount : INT; END_VAR VAR_OUTPUT Level : INT; END_VAR \
+                 Level := Level + Amount; END_FUNCTION_BLOCK\n\
+                 PROGRAM Main VAR r : Ramp; n : INT; END_VAR r(Amount := 2); n := r.Level; END_PROGRAM\n"
+            )
+            .is_empty()
+        );
+    }
+
+    // -- recursion ------------------------------------------------------------
+
+    #[test]
+    fn direct_recursion_is_rejected_statically() {
+        let src =
+            "FUNCTION Fact : DINT VAR_INPUT n : DINT; END_VAR Fact := Fact(n); END_FUNCTION\n";
+        let (_, diags, _) = check_text(src);
+        assert!(codes_of(&diags, Severity::Error).contains(&"E0309"));
+        assert!(message(&diags, "E0309").contains("Fact calls Fact"));
+    }
+
+    #[test]
+    fn mutual_recursion_names_the_whole_cycle() {
+        let src = "FUNCTION A : INT A := B(); END_FUNCTION\n\
+                   FUNCTION B : INT B := A(); END_FUNCTION\n";
+        let (_, diags, _) = check_text(src);
+        assert!(codes_of(&diags, Severity::Error).contains(&"E0309"));
+        let text = message(&diags, "E0309");
+        assert!(text.contains('A') && text.contains('B'), "{text}");
+        assert!(
+            text.contains("salman"),
+            "the refusal is stated as salman's: {text}"
+        );
+    }
+
+    #[test]
+    fn recursion_through_a_function_block_instance_is_rejected() {
+        let src = "FUNCTION_BLOCK Looper VAR self : Looper; END_VAR self(); END_FUNCTION_BLOCK\n";
+        assert!(errors(src).contains(&"E0309"));
+    }
+
+    #[test]
+    fn a_call_graph_without_a_cycle_is_accepted() {
+        assert!(
+            errors(
+                "FUNCTION Inner : INT Inner := 1; END_FUNCTION\n\
+                 FUNCTION Outer : INT Outer := Inner() + Inner(); END_FUNCTION\n\
+                 PROGRAM Main VAR n : INT; END_VAR n := Outer(); END_PROGRAM\n"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn one_cycle_is_reported_once_however_many_ways_round_it_there_are() {
+        let src = "FUNCTION A : INT A := B(); END_FUNCTION\n\
+                   FUNCTION B : INT B := A() + A(); END_FUNCTION\n";
+        let (_, diags, _) = check_text(src);
+        let cycles = codes_of(&diags, Severity::Error)
+            .into_iter()
+            .filter(|code| *code == "E0309")
+            .count();
+        assert_eq!(cycles, 1);
+    }
+
+    // -- assignment -----------------------------------------------------------
+
+    #[test]
+    fn a_pou_may_not_assign_to_its_own_var_input() {
+        let src =
+            "FUNCTION_BLOCK Motor VAR_INPUT Run : BOOL; END_VAR Run := FALSE; END_FUNCTION_BLOCK\n";
+        let (_, diags, _) = check_text(src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0313"]);
+        assert!(message(&diags, "E0313").contains("VAR_INPUT"));
+    }
+
+    #[test]
+    fn a_constant_may_not_be_assigned_to() {
+        let src =
+            "PROGRAM Main\nVAR CONSTANT Limit : INT := 7; END_VAR\nLimit := 8;\nEND_PROGRAM\n";
+        let (_, diags, _) = check_text(src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0313"]);
+        assert!(message(&diags, "E0313").contains("CONSTANT"));
+    }
+
+    #[test]
+    fn a_pou_may_assign_to_its_own_var_output_and_locals() {
+        assert!(
+            errors(
+                "FUNCTION_BLOCK Motor VAR_INPUT Run : BOOL; END_VAR VAR_OUTPUT Speed : INT; END_VAR \
+                 VAR Ticks : INT; END_VAR Speed := 1; Ticks := 2; END_FUNCTION_BLOCK\n"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_literal_cannot_be_assigned_to() {
+        // The parser accepts `1 := 2;` as an assignment so that the checker can
+        // say what is actually wrong with it.
+        assert!(program_errors("n : INT;", "1 := n;").contains(&"E0312"));
+    }
+
+    #[test]
+    fn an_array_element_and_a_field_can_be_assigned_to() {
+        assert!(
+            program_errors(
+                "a : ARRAY [1..4] OF INT;\nt : TON;",
+                "a[1] := 2;\nt.IN := TRUE;"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_direct_address_can_be_assigned_to_and_takes_its_type_from_its_size_letter() {
+        let src = in_program("VAR w : WORD; END_VAR %QW1 := w;");
+        let checked = checked_ok(&src);
+        let unit = parse_only(&src);
+        let stmt = main_body(&unit).first().cloned().expect("a statement");
+        let StmtKind::Assign { target, .. } = stmt.kind else {
+            panic!("expected an assignment");
+        };
+        assert_eq!(
+            checked.type_of(target.id),
+            Some(checked.types.elementary(ElementaryType::Word))
+        );
+    }
+
+    // -- conditions -----------------------------------------------------------
+
+    #[test]
+    fn a_condition_that_is_not_bool_is_refused_and_says_why() {
+        let src = program("count : DINT;", "IF count THEN ; END_IF");
+        let (_, diags, _) = check_text(&src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0405"]);
+        assert!(message(&diags, "E0405").contains("Count > 0"));
+    }
+
+    #[test]
+    fn a_bool_condition_is_accepted_in_all_three_loops_and_in_if() {
+        assert!(
+            program_errors(
+                "flag : BOOL;",
+                "IF flag THEN ; END_IF\n\
+                 WHILE flag DO ; END_WHILE\n\
+                 REPEAT ; UNTIL flag END_REPEAT"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_while_condition_that_is_not_bool_is_refused() {
+        assert_eq!(
+            program_errors("n : INT;", "WHILE n DO ; END_WHILE"),
+            ["E0405"]
+        );
+    }
+
+    #[test]
+    fn a_repeat_condition_that_is_not_bool_is_refused() {
+        assert_eq!(
+            program_errors("n : INT;", "REPEAT ; UNTIL n END_REPEAT"),
+            ["E0405"]
+        );
+    }
+
+    // -- CASE -----------------------------------------------------------------
+
+    #[test]
+    fn duplicate_case_labels_are_refused_by_a_salman_rule() {
+        let src = program("n : INT;", "CASE n OF 1: ; 1: ; END_CASE");
+        let (_, diags, _) = check_text(&src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0208"]);
+        assert!(message(&diags, "E0208").contains("salman rule"));
+    }
+
+    #[test]
+    fn overlapping_case_labels_are_refused_by_a_salman_rule() {
+        assert_eq!(
+            program_errors("n : INT;", "CASE n OF 1..5: ; 4..8: ; END_CASE"),
+            ["E0209"]
+        );
+    }
+
+    #[test]
+    fn two_enumeration_labels_that_are_the_same_value_clash_however_they_are_written() {
+        // The parser cannot see this: `Colour#Red` and `Red` are two spellings
+        // of one value, and only the checker knows the enumeration.
+        assert_eq!(
+            errors(
+                "TYPE Colour : (Red, Green); END_TYPE\n\
+                 PROGRAM Main VAR c : Colour; END_VAR \
+                 CASE c OF Colour#Red: ; Red: ; END_CASE END_PROGRAM\n"
+            ),
+            ["E0208"]
+        );
+    }
+
+    #[test]
+    fn distinct_case_labels_are_accepted() {
+        assert!(
+            program_errors("n : INT;", "CASE n OF 1: ; 2..4: ; 5, 6: ; ELSE ; END_CASE").is_empty()
+        );
+    }
+
+    #[test]
+    fn a_case_selector_must_be_an_integer_or_an_enumeration() {
+        assert_eq!(
+            program_errors("flag : BOOL;", "CASE flag OF 1: ; END_CASE"),
+            ["E0410"]
+        );
+    }
+
+    #[test]
+    fn an_enumeration_selects_a_case_arm() {
+        assert!(
+            errors(
+                "TYPE Colour : (Red, Green); END_TYPE\n\
+                 PROGRAM Main VAR c : Colour; END_VAR CASE c OF Red: ; Green: ; END_CASE END_PROGRAM\n"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_case_label_of_the_wrong_type_is_refused() {
+        assert_eq!(
+            program_errors(
+                "n : INT;\ns : STRING;",
+                "CASE n OF 1: ; END_CASE\nCASE s OF 1: ; END_CASE"
+            ),
+            ["E0410"]
+        );
+        assert_eq!(
+            program_errors("n : INT;", "CASE n OF T#1s: ; END_CASE"),
+            ["E0411"]
+        );
+    }
+
+    #[test]
+    fn a_case_label_that_is_not_constant_is_refused() {
+        assert_eq!(
+            program_errors("n : INT;\nm : INT;", "CASE n OF m: ; END_CASE"),
+            ["E0307"]
+        );
+    }
+
+    #[test]
+    fn a_case_label_may_be_a_constant_variable() {
+        assert!(
+            errors(
+                "PROGRAM Main\nVAR CONSTANT Ready : INT := 3; END_VAR\nVAR n : INT; END_VAR\n\
+                 CASE n OF Ready: ; ELSE ; END_CASE\nEND_PROGRAM\n"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn two_constant_labels_of_one_value_clash_even_though_they_are_spelled_differently() {
+        assert_eq!(
+            errors(
+                "PROGRAM Main\nVAR CONSTANT Ready : INT := 3; END_VAR\nVAR n : INT; END_VAR\n\
+                 CASE n OF Ready: ; 3: ; END_CASE\nEND_PROGRAM\n"
+            ),
+            ["E0208"]
+        );
+    }
+
+    // -- FOR ------------------------------------------------------------------
+
+    #[test]
+    fn a_for_control_variable_must_be_a_variable_of_the_pou() {
+        assert_eq!(
+            program_errors("n : INT;", "FOR missing := 1 TO 3 DO ; END_FOR"),
+            ["E0412"]
+        );
+        assert_eq!(
+            errors(
+                "VAR_GLOBAL i : INT; END_VAR\nPROGRAM Main FOR i := 1 TO 3 DO ; END_FOR END_PROGRAM\n"
+            ),
+            ["E0412"],
+            "a global control variable would be shared between tasks"
+        );
+    }
+
+    #[test]
+    fn a_for_control_variable_must_be_an_integer() {
+        assert_eq!(
+            program_errors("r : REAL;", "FOR r := 1 TO 3 DO ; END_FOR"),
+            ["E0412"]
+        );
+    }
+
+    #[test]
+    fn a_for_control_variable_must_be_writable() {
+        assert_eq!(
+            errors(
+                "FUNCTION_BLOCK B VAR_INPUT i : INT; END_VAR FOR i := 1 TO 3 DO ; END_FOR END_FUNCTION_BLOCK\n"
+            ),
+            ["E0412"]
+        );
+    }
+
+    #[test]
+    fn a_for_bound_that_is_not_an_integer_is_refused() {
+        assert_eq!(
+            program_errors("i : INT;\nr : REAL;", "FOR i := 1 TO r DO ; END_FOR"),
+            ["E0413"]
+        );
+    }
+
+    #[test]
+    fn a_for_loop_with_a_constant_step_of_zero_is_refused() {
+        assert_eq!(
+            program_errors("i : INT;", "FOR i := 1 TO 10 BY 0 DO ; END_FOR"),
+            ["E0414"]
+        );
+        assert!(program_errors("i : INT;", "FOR i := 1 TO 10 BY 2 DO ; END_FOR").is_empty());
+    }
+
+    #[test]
+    fn the_body_of_a_for_loop_may_not_assign_to_its_control_variable() {
+        let src = program("i : INT;", "FOR i := 1 TO 10 DO i := 4; END_FOR");
+        let (_, diags, _) = check_text(&src);
+        assert_eq!(codes_of(&diags, Severity::Error), ["E0210"]);
+        assert!(message(&diags, "E0210").contains("salman rule"));
+    }
+
+    #[test]
+    fn a_for_loops_control_variable_is_recorded_against_the_statement() {
+        let src = program("i : INT;", "FOR i := 1 TO 10 DO ; END_FOR");
+        let checked = checked_ok(&src);
+        let unit = parse_only(&src);
+        let stmt = main_body(&unit).first().cloned().expect("a statement");
+        assert!(matches!(
+            checked.resolution(stmt.id),
+            Some(Resolution::Local { .. })
+        ));
+    }
+
+    // -- EXIT, CONTINUE and RETURN --------------------------------------------
+
+    #[test]
+    fn exit_outside_a_loop_is_refused() {
+        assert_eq!(program_errors("n : INT;", "EXIT;"), ["E0320"]);
+    }
+
+    #[test]
+    fn continue_outside_a_loop_is_refused() {
+        // CONTINUE is standard in Edition 3 (Table 72 row 9); salman does not
+        // warn about the statement itself, only about where it is.
+        assert_eq!(program_errors("n : INT;", "CONTINUE;"), ["E0320"]);
+    }
+
+    #[test]
+    fn exit_and_continue_inside_a_loop_are_accepted() {
+        assert!(
+            program_errors(
+                "i : INT;\nflag : BOOL;",
+                "FOR i := 1 TO 3 DO IF flag THEN EXIT; ELSE CONTINUE; END_IF END_FOR\n\
+                 WHILE flag DO EXIT; END_WHILE\n\
+                 REPEAT CONTINUE; UNTIL flag END_REPEAT"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn return_is_accepted_anywhere_including_inside_a_function() {
+        assert!(errors("FUNCTION F : INT F := 1; RETURN; END_FUNCTION\n").is_empty());
+        assert!(program_errors("n : INT;", "RETURN;").is_empty());
+    }
+
+    #[test]
+    fn a_function_that_never_assigns_its_result_gets_a_warning_and_not_an_error() {
+        let src = "FUNCTION F : INT VAR n : INT; END_VAR n := 1; END_FUNCTION\n";
+        assert!(errors(src).is_empty());
+        assert_eq!(warnings(src), ["W0301"]);
+    }
+
+    #[test]
+    fn a_function_that_assigns_its_result_on_one_branch_only_is_not_warned_about() {
+        // salman policy: this is not a definite-assignment analysis, and says so.
+        assert!(
+            warnings(
+                "FUNCTION F : INT VAR_INPUT flag : BOOL; END_VAR IF flag THEN F := 1; END_IF END_FUNCTION\n"
+            )
+            .is_empty()
+        );
+    }
+
+    // -- configurations -------------------------------------------------------
+
+    const PLANT: &str = "PROGRAM Conveyor VAR n : INT; END_VAR n := 1; END_PROGRAM\n\
+                         VAR_GLOBAL Trigger : BOOL; END_VAR\n";
+
+    fn configuration(body: &str) -> String {
+        format!(
+            "{PLANT}CONFIGURATION Plant\nRESOURCE R1 ON CPU\n{body}\nEND_RESOURCE\nEND_CONFIGURATION\n"
+        )
+    }
+
+    #[test]
+    fn a_configuration_produces_its_tasks_and_the_programs_bound_to_them() {
+        let src = configuration(
+            "TASK Fast (INTERVAL := T#10ms, PRIORITY := 1);\nPROGRAM P1 WITH Fast : Conveyor;",
+        );
+        let checked = checked_ok(&src);
+        assert_eq!(checked.configurations.len(), 1);
+        let config = checked.configurations.first().expect("the configuration");
+        assert_eq!(config.name.as_str(), "plant");
+        assert_eq!(config.tasks.len(), 1);
+        let task = config.tasks.first().expect("the task");
+        assert_eq!(
+            task.trigger,
+            CheckedTrigger::Cyclic {
+                interval_ns: 10_000_000
+            }
+        );
+        assert_eq!(task.priority, 1);
+        assert_eq!(task.programs.len(), 1);
+        assert!(config.untasked.is_empty());
+    }
+
+    #[test]
+    fn a_program_with_no_task_runs_freewheeling_and_is_listed_as_untasked() {
+        let src = configuration("PROGRAM P1 : Conveyor;");
+        let checked = checked_ok(&src);
+        let config = checked.configurations.first().expect("the configuration");
+        assert!(config.tasks.is_empty());
+        assert_eq!(config.untasked.len(), 1);
+        let instance = config.untasked.first().expect("the instance");
+        assert_eq!(instance.name.as_str(), "p1");
+        assert_eq!(
+            checked.pous.get(instance.pou as usize).map(|p| p.kind),
+            Some(PouKind::Program)
+        );
+    }
+
+    #[test]
+    fn a_unit_with_no_configuration_produces_none() {
+        let checked = checked_ok("PROGRAM Main END_PROGRAM\n");
+        assert!(checked.configurations.is_empty());
+    }
+
+    #[test]
+    fn an_interval_that_is_not_a_positive_constant_duration_is_refused() {
+        assert_eq!(
+            errors(&configuration("TASK Fast (INTERVAL := 10);")),
+            ["E0321"]
+        );
+        assert_eq!(
+            errors(&configuration("TASK Fast (INTERVAL := T#0s);")),
+            ["E0321"]
+        );
+    }
+
+    #[test]
+    fn a_priority_that_does_not_fit_sixteen_bits_is_refused() {
+        assert_eq!(
+            errors(&configuration(
+                "TASK Fast (INTERVAL := T#1s, PRIORITY := 70000);"
+            )),
+            ["E0321"]
+        );
+    }
+
+    #[test]
+    fn a_single_trigger_must_name_a_global_bool() {
+        let src =
+            configuration("TASK OnEvent (SINGLE := Trigger);\nPROGRAM P1 WITH OnEvent : Conveyor;");
+        let checked = checked_ok(&src);
+        let config = checked.configurations.first().expect("the configuration");
+        let task = config.tasks.first().expect("the task");
+        assert!(matches!(task.trigger, CheckedTrigger::Event { .. }));
+    }
+
+    #[test]
+    fn a_single_trigger_that_names_something_else_is_refused() {
+        assert_eq!(
+            errors(&format!(
+                "{PLANT}VAR_GLOBAL Level : INT; END_VAR\n\
+                 CONFIGURATION Plant\nRESOURCE R1 ON CPU\nTASK T (SINGLE := Level);\n\
+                 END_RESOURCE\nEND_CONFIGURATION\n"
+            )),
+            ["E0321"]
+        );
+    }
+
+    #[test]
+    fn a_task_that_is_both_cyclic_and_event_triggered_is_refused() {
+        assert_eq!(
+            errors(&configuration(
+                "TASK Both (SINGLE := Trigger, INTERVAL := T#1s);"
+            )),
+            ["E0321"]
+        );
+    }
+
+    #[test]
+    fn a_program_instance_must_name_a_pou_that_is_a_program() {
+        assert_eq!(
+            errors(
+                "FUNCTION_BLOCK Motor VAR_INPUT Run : BOOL; END_VAR END_FUNCTION_BLOCK\n\
+                 CONFIGURATION Plant\nRESOURCE R1 ON CPU\nPROGRAM P1 : Motor;\n\
+                 END_RESOURCE\nEND_CONFIGURATION\n"
+            ),
+            ["E0321"]
+        );
+        assert_eq!(errors(&configuration("PROGRAM P1 : Missing;")), ["E0321"]);
+    }
+
+    #[test]
+    fn a_with_clause_naming_no_task_is_refused() {
+        assert_eq!(
+            errors(&configuration("PROGRAM P1 WITH Nothing : Conveyor;")),
+            ["E0321"]
+        );
+    }
+
+    #[test]
+    fn two_tasks_of_one_name_are_refused() {
+        assert_eq!(
+            errors(&configuration(
+                "TASK Fast (INTERVAL := T#1s);\nTASK FAST (INTERVAL := T#2s);"
+            )),
+            ["E0303"]
+        );
+    }
+
+    #[test]
+    fn a_configuration_global_is_visible_to_a_pou_body() {
+        // salman flattens the three global scopes into one at v0.1, and this is
+        // what that buys: a POU can name a variable the configuration declares.
+        assert!(
+            errors(
+                "PROGRAM Conveyor Level := 1; END_PROGRAM\n\
+                 CONFIGURATION Plant\nVAR_GLOBAL Level : INT; END_VAR\n\
+                 RESOURCE R1 ON CPU\nPROGRAM P1 : Conveyor;\nEND_RESOURCE\nEND_CONFIGURATION\n"
+            )
+            .is_empty()
+        );
+    }
+
+    // -- robustness -----------------------------------------------------------
+
+    #[test]
+    fn check_never_panics_on_a_unit_the_parser_could_not_finish() {
+        // Each of these produces parse errors and an incomplete tree. The
+        // checker has to run on it without a second failure mode, because
+        // every editor feature downstream runs on exactly this.
+        let broken = [
+            "",
+            "PROGRAM",
+            "PROGRAM Main",
+            "PROGRAM Main VAR x : END_VAR END_PROGRAM",
+            "PROGRAM Main x := ; END_PROGRAM",
+            "PROGRAM Main IF THEN END_IF END_PROGRAM",
+            "FUNCTION F : END_FUNCTION",
+            "FUNCTION_BLOCK",
+            "TYPE T : END_TYPE",
+            "TYPE T : STRUCT END_TYPE",
+            "CONFIGURATION",
+            "CONFIGURATION C RESOURCE R TASK T ( END_RESOURCE END_CONFIGURATION",
+            "PROGRAM Main FOR := 1 TO DO END_FOR END_PROGRAM",
+            "PROGRAM Main CASE OF END_CASE END_PROGRAM",
+            "PROGRAM Main a[ := 1; END_PROGRAM",
+            "))) *** &&&",
+            "PROGRAM Main VAR a : ARRAY [ ] OF ; END_VAR END_PROGRAM",
+            "PROGRAM Main t(IN := ); END_PROGRAM",
+        ];
+        for src in broken {
+            let mut map = SourceMap::new();
+            let file = map.add("broken.st", src).expect("a source file");
+            let (unit, _) = parse_source(file, src, &Dialect::generic());
+            let (checked, _) = check(&unit, &Dialect::generic());
+            // A Checked always comes back, however broken the input was.
+            assert_eq!(
+                checked.expr_types.len(),
+                usize::try_from(unit.node_count).unwrap_or(0)
+            );
+        }
+    }
+
+    #[test]
+    fn a_program_with_ten_distinct_errors_reports_about_ten_diagnostics_not_one() {
+        let src = "PROGRAM Main\n\
+                   VAR\n\
+                   a : INT;\n\
+                   flag : BOOL;\n\
+                   arr : ARRAY [1..4] OF INT;\n\
+                   t : TON;\n\
+                   END_VAR\n\
+                   VAR CONSTANT k : INT := 3; END_VAR\n\
+                   Missing := 1;\n\
+                   a := TRUE;\n\
+                   k := 2;\n\
+                   IF a THEN ; END_IF\n\
+                   arr[9] := 1;\n\
+                   a := arr[1, 2];\n\
+                   t(5);\n\
+                   a := flag.Nope;\n\
+                   EXIT;\n\
+                   a := t.PHASE;\n\
+                   END_PROGRAM\n";
+        let (_, diags, map) = check_text(src);
+        let mut codes = codes_of(&diags, Severity::Error);
+        let count = codes.len();
+        codes.sort_unstable();
+        codes.dedup();
+        assert!(
+            codes.len() >= 10,
+            "expected ten distinct errors, got {codes:?}\n{}",
+            diags.render(&map)
+        );
+        assert!(
+            (10..=16).contains(&count),
+            "one mistake should produce about one diagnostic, got {count}\n{}",
+            diags.render(&map)
+        );
+    }
+
+    #[test]
+    fn every_expression_in_a_clean_program_is_given_a_type() {
+        let src = program(
+            "a : INT;\nb : DINT;\nflag : BOOL;\narr : ARRAY [0..3] OF INT;\nt : TON;",
+            "b := b + a;\n\
+             flag := a < b;\n\
+             arr[2] := a;\n\
+             t(IN := flag, PT := T#1s);\n\
+             flag := t.Q;\n\
+             IF flag THEN a := -a; END_IF",
+        );
+        let checked = checked_ok(&src);
+        let unit = parse_only(&src);
+        let mut untyped = Vec::new();
+        for stmt in &main_body(&unit) {
+            for_each_expr(std::slice::from_ref(stmt), &mut |expr| {
+                // A callee that is a function block instance has a type; the
+                // call node itself is the one thing with no value.
+                if checked.type_of(expr.id).is_none() {
+                    untyped.push(expr.span);
+                }
+            });
+        }
+        assert!(untyped.is_empty(), "{untyped:?}");
+    }
+
+    #[test]
+    fn checking_the_same_unit_twice_produces_the_same_diagnostics() {
+        // Determinism is the whole promise; a checker whose output depended on
+        // a hash order would break it before the runtime ever ran.
+        let src = program(
+            "a : INT;\nb : BOOL;",
+            "a := b;\nUnknown := 1;\nIF a THEN ; END_IF",
+        );
+        let (_, first, map) = check_text(&src);
+        let (_, second, _) = check_text(&src);
+        assert_eq!(first.render(&map), second.render(&map));
+    }
 }

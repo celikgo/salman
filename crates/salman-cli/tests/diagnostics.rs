@@ -55,7 +55,10 @@ fn assert_rejected(source: &str, why: &str) {
         build.diagnostics.has_errors(),
         "expected an error ({why}) but the program was accepted:\n{source}"
     );
-    assert!(build.compiled.is_none(), "a program with errors must not be compiled ({why})");
+    assert!(
+        build.compiled.is_none(),
+        "a program with errors must not be compiled ({why})"
+    );
 }
 
 // -- things that must be accepted ---------------------------------------
@@ -110,7 +113,10 @@ fn every_standard_function_block_can_be_declared_and_called() {
         ("TON", "B(IN := X, PT := T#1s);"),
         ("TOF", "B(IN := X, PT := T#1s);"),
     ] {
-        let source = program(&format!("  X : BOOL;\n  Y : BOOL;\n  B : {name};"), &format!("  {call}"));
+        let source = program(
+            &format!("  X : BOOL;\n  Y : BOOL;\n  B : {name};"),
+            &format!("  {call}"),
+        );
         let build = compile(&source);
         assert!(
             !build.diagnostics.has_errors(),
@@ -166,31 +172,55 @@ fn an_undeclared_variable_is_rejected() {
 #[test]
 fn assigning_a_narrower_type_is_rejected() {
     // DINT does not fit in an INT, and salman will not truncate silently.
-    assert_rejected(&program("  A : INT;\n  B : DINT;", "  A := B;"), "narrowing");
+    assert_rejected(
+        &program("  A : INT;\n  B : DINT;", "  A := B;"),
+        "narrowing",
+    );
 }
 
 #[test]
 fn assigning_across_type_families_is_rejected() {
-    assert_rejected(&program("  A : DINT;\n  B : BOOL;", "  A := B;"), "BOOL is not a number");
-    assert_rejected(&program("  A : DINT;\n  B : WORD;", "  A := B;"), "a bit string is not a number");
-    assert_rejected(&program("  A : TIME;\n  B : DINT;", "  A := B;"), "an integer is not a duration");
+    assert_rejected(
+        &program("  A : DINT;\n  B : BOOL;", "  A := B;"),
+        "BOOL is not a number",
+    );
+    assert_rejected(
+        &program("  A : DINT;\n  B : WORD;", "  A := B;"),
+        "a bit string is not a number",
+    );
+    assert_rejected(
+        &program("  A : TIME;\n  B : DINT;", "  A := B;"),
+        "an integer is not a duration",
+    );
 }
 
 #[test]
 fn arithmetic_on_a_bit_string_is_rejected() {
-    assert_rejected(&program("  A : WORD;", "  A := A + A;"), "arithmetic takes numbers");
+    assert_rejected(
+        &program("  A : WORD;", "  A := A + A;"),
+        "arithmetic takes numbers",
+    );
 }
 
 #[test]
 fn a_condition_that_is_not_a_bool_is_rejected() {
     // A common mistake coming from C, where any non-zero value is true.
-    assert_rejected(&program("  N : DINT;", "  IF N THEN N := 1; END_IF;"), "IF needs a BOOL");
-    assert_rejected(&program("  N : DINT;", "  WHILE N DO N := 1; END_WHILE;"), "WHILE needs a BOOL");
+    assert_rejected(
+        &program("  N : DINT;", "  IF N THEN N := 1; END_IF;"),
+        "IF needs a BOOL",
+    );
+    assert_rejected(
+        &program("  N : DINT;", "  WHILE N DO N := 1; END_WHILE;"),
+        "WHILE needs a BOOL",
+    );
 }
 
 #[test]
 fn a_literal_that_does_not_fit_its_target_is_rejected() {
-    assert_rejected(&program("  A : SINT;", "  A := 300;"), "300 does not fit a SINT");
+    assert_rejected(
+        &program("  A : SINT;", "  A := 300;"),
+        "300 does not fit a SINT",
+    );
     assert_clean(&program("  A : SINT;", "  A := 5;"));
 }
 
@@ -223,12 +253,18 @@ fn positional_arguments_to_a_function_block_are_rejected() {
 
 #[test]
 fn an_unknown_parameter_of_a_function_block_is_rejected() {
-    assert_rejected(&program("  T1 : TON;", "  T1(INN := TRUE, PT := T#1s);"), "INN is not a parameter");
+    assert_rejected(
+        &program("  T1 : TON;", "  T1(INN := TRUE, PT := T#1s);"),
+        "INN is not a parameter",
+    );
 }
 
 #[test]
 fn reading_an_output_that_does_not_exist_is_rejected() {
-    assert_rejected(&program("  B : BOOL;\n  T1 : TON;", "  B := T1.Running;"), "TON has no Running");
+    assert_rejected(
+        &program("  B : BOOL;\n  T1 : TON;", "  B := T1.Running;"),
+        "TON has no Running",
+    );
 }
 
 #[test]
@@ -256,8 +292,14 @@ fn mutual_recursion_is_rejected() {
 fn a_constant_subscript_outside_the_declared_bounds_is_rejected_at_compile_time() {
     // Far better than a runtime fault: the engineer finds out before the plant
     // does.
-    assert_rejected(&program("  Buffer : ARRAY [0..9] OF DINT;", "  Buffer[10] := 1;"), "out of bounds");
-    assert_clean(&program("  Buffer : ARRAY [0..9] OF DINT;", "  Buffer[9] := 1;"));
+    assert_rejected(
+        &program("  Buffer : ARRAY [0..9] OF DINT;", "  Buffer[10] := 1;"),
+        "out of bounds",
+    );
+    assert_clean(&program(
+        "  Buffer : ARRAY [0..9] OF DINT;",
+        "  Buffer[9] := 1;",
+    ));
 }
 
 #[test]
@@ -270,7 +312,10 @@ fn located_variables_report_that_the_io_mapping_layer_does_not_exist() {
     // The syntax parses; what does not exist is anything to bind it to. Giving
     // it an ordinary slot would produce a variable that looks located and never
     // changes when the input does.
-    let build = compile(&program("  Sensor AT %IX0.0 : BOOL;", "  Sensor := Sensor;"));
+    let build = compile(&program(
+        "  Sensor AT %IX0.0 : BOOL;",
+        "  Sensor := Sensor;",
+    ));
     assert!(codes(&build).contains(&"U0301"), "{:?}", codes(&build));
 }
 
@@ -298,7 +343,11 @@ fn one_broken_file_reports_many_errors_not_one() {
   B := B + B;",
     );
     let count = errors(&source).len();
-    assert!(count >= 5, "expected several errors, found {count}: {:?}", errors(&source));
+    assert!(
+        count >= 5,
+        "expected several errors, found {count}: {:?}",
+        errors(&source)
+    );
 }
 
 #[test]
@@ -306,7 +355,10 @@ fn a_diagnostic_points_at_the_line_that_is_wrong() {
     let source = "PROGRAM Main\nVAR A : INT; END_VAR\n  A := TRUE;\nEND_PROGRAM\n";
     let build = compile(source);
     let rendered = build.render_diagnostics();
-    assert!(rendered.contains("t.st:3:"), "the caret is on the wrong line:\n{rendered}");
+    assert!(
+        rendered.contains("t.st:3:"),
+        "the caret is on the wrong line:\n{rendered}"
+    );
 }
 
 #[test]
@@ -322,7 +374,10 @@ fn the_strict_dialect_names_the_rule_it_applied() {
     let source = program("  A : WORD;", "  A := 16#ff;");
     let build = build("t.st", &source, &Dialect::strict_iec()).expect("not too large");
     let rendered = build.render_diagnostics();
-    assert!(build.diagnostics.has_errors(), "strict should reject lowercase hex:\n{rendered}");
+    assert!(
+        build.diagnostics.has_errors(),
+        "strict should reject lowercase hex:\n{rendered}"
+    );
     assert!(
         rendered.contains("dialect rule applied: iec61131-3:2013-strict"),
         "a dialect-dependent diagnostic must name the rule:\n{rendered}"

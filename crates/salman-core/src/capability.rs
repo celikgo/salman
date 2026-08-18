@@ -327,6 +327,25 @@ pub static REGISTRY: &[Capability] = &[
                is a compile error, not a CI job.",
     },
     Capability {
+        id: "lang.st.dialects",
+        area: "Language",
+        title: "Dialects as configuration, with every diagnostic naming the rule it applied",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-lang/src/dialect.rs",
+                test: "the_strict_dialect_differs_from_generic_on_the_unverified_points",
+            },
+            Evidence {
+                file: "crates/salman-cli/tests/diagnostics.rs",
+                test: "the_strict_dialect_names_the_rule_it_applied",
+            },
+        ],
+        note: "Two profiles ship: generic and iec61131-3:2013-strict. No vendor profile exists, \
+               and DialectId does not contain one.",
+    },
+    Capability {
         id: "lang.st.lexer-fuzzing",
         area: "Language",
         title: "libFuzzer targets for the Structured Text lexer, asserting its postconditions",
@@ -375,6 +394,216 @@ pub static REGISTRY: &[Capability] = &[
                unspecified. Inline structures and enumerations, VAR_CONFIG instance paths, \
                single-resource configurations, references and the object-oriented extensions \
                are parsed far enough to be named and are not implemented.",
+    },
+    Capability {
+        id: "test.declarative-tests",
+        area: "Testing",
+        title: "Declarative unit tests for POUs, on a virtual clock, with no vendor runtime",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-cli/tests/conveyor_example.rs",
+                test: "every_test_in_the_example_passes",
+            },
+            Evidence {
+                file: "crates/salman-test/src/value.rs",
+                test: "every_literal_form_the_language_accepts_works_in_a_test_file",
+            },
+            Evidence {
+                file: "crates/salman-test/src/spec.rs",
+                test: "an_unknown_key_is_rejected_rather_than_ignored",
+            },
+        ],
+        note: "One source file per run. Multi-file projects are not implemented.",
+    },
+    Capability {
+        id: "test.golden-traces",
+        area: "Testing",
+        title: "Golden-trace tests against a reviewable text file",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-cli/tests/conveyor_example.rs",
+                test: "the_recorded_trace_matches_the_committed_golden_file",
+            },
+            Evidence {
+                file: "crates/salman-cli/tests/conveyor_example.rs",
+                test: "a_golden_trace_file_contains_no_carriage_returns",
+            },
+        ],
+        note: "--update-golden rewrites them. Read the diff before committing it.",
+    },
+    Capability {
+        id: "test.junit-report",
+        area: "Testing",
+        title: "JUnit XML report and a real exit code, for a build server",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-test/src/report.rs",
+                test: "junit_output_reports_failures_and_errors_as_different_elements",
+            },
+            Evidence {
+                file: "crates/salman-test/src/report.rs",
+                test: "xml_escaping_survives_anything_an_engineer_might_type",
+            },
+        ],
+        note: "Targets the Jenkins junit-10 schema, the strictest of the three in circulation.",
+    },
+    Capability {
+        id: "vm.compiler",
+        area: "Runtime",
+        title: "Bytecode compiler with static instance layout and no run-time allocation",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-cli/tests/conveyor_example.rs",
+                test: "the_compiled_program_is_byte_identical_across_two_compilations",
+            },
+            Evidence {
+                file: "crates/salman-cli/tests/diagnostics.rs",
+                test: "every_statement_form_compiles",
+            },
+            Evidence {
+                file: "crates/salman-cli/tests/diagnostics.rs",
+                test: "a_constant_subscript_outside_the_declared_bounds_is_rejected_at_compile_time",
+            },
+        ],
+        note: "Exponentiation and AT %-located variables are reported as not implemented rather \
+               than compiled to something approximate.",
+    },
+    Capability {
+        id: "vm.interpreter",
+        area: "Runtime",
+        title: "Bytecode interpreter that faults rather than panics, with a scan watchdog",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-vm/src/exec.rs",
+                test: "integer_overflow_wraps_because_that_is_what_a_controller_does",
+            },
+            Evidence {
+                file: "crates/salman-vm/src/exec.rs",
+                test: "the_most_negative_integer_divided_by_minus_one_does_not_abort",
+            },
+            Evidence {
+                file: "crates/salman-vm/src/exec.rs",
+                test: "the_watchdog_stops_a_routine_that_jumps_to_itself",
+            },
+        ],
+        note: "Integer overflow wraps and division by zero faults; both are salman decisions, \
+               documented in docs/CONFORMANCE.md.",
+    },
+    Capability {
+        id: "vm.process-image",
+        area: "Runtime",
+        title: "Scan semantics with a correct process image, and a visible force list",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-vm/src/memory.rs",
+                test: "an_input_read_mid_scan_sees_the_value_it_had_at_scan_start",
+            },
+            Evidence {
+                file: "crates/salman-vm/src/memory.rs",
+                test: "bit_byte_and_word_addresses_overlay_each_other_as_they_do_on_a_controller",
+            },
+            Evidence {
+                file: "crates/salman-vm/src/memory.rs",
+                test: "a_force_records_what_the_program_wanted_so_the_difference_is_visible",
+            },
+        ],
+        note: "Nothing maps a located variable to the image yet; the image is reachable only \
+               through a directly represented variable in an expression.",
+    },
+    Capability {
+        id: "vm.retain-simulation",
+        area: "Runtime",
+        title: "RETAIN and PERSISTENT across simulated warm and cold restarts",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-vm/src/memory.rs",
+                test: "a_warm_restart_keeps_retain_and_persistent_and_clears_the_rest",
+            },
+            Evidence {
+                file: "crates/salman-vm/src/memory.rs",
+                test: "a_cold_restart_keeps_only_persistent",
+            },
+        ],
+        note: "The runtime models it; no command line surface exposes a restart yet.",
+    },
+    Capability {
+        id: "vm.scan-scheduler",
+        area: "Runtime",
+        title: "Cyclic, event and freewheeling tasks with priority and overrun detection",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-vm/src/task.rs",
+                test: "tasks_released_together_run_in_priority_order_lower_number_first",
+            },
+            Evidence {
+                file: "crates/salman-vm/src/task.rs",
+                test: "a_scan_that_outlasts_its_period_is_counted_as_an_overrun",
+            },
+            Evidence {
+                file: "crates/salman-vm/src/task.rs",
+                test: "an_event_task_runs_on_a_rising_edge_and_not_otherwise",
+            },
+        ],
+        note: "Pre-emption is NOT modelled: a scan is atomic. A race that depends on being \
+               interrupted mid-scan cannot be reproduced here.",
+    },
+    Capability {
+        id: "vm.standard-function-blocks",
+        area: "Runtime",
+        title: "All ten IEC standard function blocks, with their awkward edge cases asserted",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-vm/src/stdfb.rs",
+                test: "a_fresh_f_trig_emits_one_spurious_pulse_with_its_clock_low",
+            },
+            Evidence {
+                file: "crates/salman-vm/src/stdfb.rs",
+                test: "a_fresh_tof_with_its_input_low_does_not_start_an_off_delay",
+            },
+            Evidence {
+                file: "crates/salman-vm/src/stdfb.rs",
+                test: "ctu_keeps_counting_past_its_preset_and_saturates_at_the_type_limit",
+            },
+        ],
+        note: "SEMA is also provided and is NOT an IEC standard function block; see \
+               docs/CONFORMANCE.md.",
+    },
+    Capability {
+        id: "vm.virtual-clock",
+        area: "Runtime",
+        title: "Virtual clock, so a ten-minute sequence tests in milliseconds, identically",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-vm/src/clock.rs",
+                test: "the_clock_never_runs_backwards",
+            },
+            Evidence {
+                file: "crates/salman-vm/src/clock.rs",
+                test: "the_wall_clock_comes_from_a_configured_epoch_not_from_the_host",
+            },
+        ],
+        note: "A real-time mode exists in the type and reports its measured jitter; nothing \
+               drives it yet, because there is no hardware to be in the loop with.",
     },
 ];
 
@@ -537,5 +766,25 @@ mod tests {
     #[test]
     fn rendered_status_is_deterministic() {
         assert_eq!(render_markdown(), render_markdown());
+    }
+
+    #[test]
+    fn the_committed_status_document_matches_what_the_registry_renders() {
+        // docs/STATUS.md is generated by `salman status --markdown`. Checking
+        // it here rather than only in CI means the drift is caught by
+        // `cargo test`, which is what a contributor runs before pushing.
+        let path = repo_root().join("docs/STATUS.md");
+        let committed = std::fs::read_to_string(&path).unwrap_or_else(|err| {
+            panic!(
+                "cannot read {}: {err}. Regenerate it with `salman status --markdown > docs/STATUS.md`",
+                path.display()
+            )
+        });
+        assert_eq!(
+            committed,
+            render_markdown(),
+            "docs/STATUS.md is out of date. Regenerate it with \
+             `salman status --markdown > docs/STATUS.md`"
+        );
     }
 }

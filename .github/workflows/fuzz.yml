@@ -6,7 +6,7 @@
 # checks list with the fuzzing gate silently absent from it. So it failed with
 # a message naming what was missing, and said so in this comment.
 #
-# The targets exist now — fuzz/fuzz_targets/lex_*.rs — and this workflow does
+# The targets exist now — fuzz/fuzz_targets/{lex,parse,check}_*.rs — and this workflow does
 # real work. The guard below survives from that arrangement in a different
 # role: it no longer reports an unwritten thing, it catches fuzz/ being deleted
 # or emptied. Without it, removing every target turns this job green, because a

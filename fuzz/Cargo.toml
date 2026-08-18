@@ -91,3 +91,17 @@ path = "fuzz_targets/lex_differential.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "parse_utf8"
+path = "fuzz_targets/parse_utf8.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "check_utf8"
+path = "fuzz_targets/check_utf8.rs"
+test = false
+doc = false
+bench = false
