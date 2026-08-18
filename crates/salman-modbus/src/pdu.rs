@@ -694,6 +694,23 @@ impl Pdu {
         Self { bytes, len: 1 }
     }
 
+    /// Takes PDU bytes as they arrived, without interpreting them.
+    ///
+    /// Returns `None` for an empty slice, which carries no function code, and
+    /// for one longer than [`MAX_PDU`].
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.is_empty() || bytes.len() > MAX_PDU {
+            return None;
+        }
+        let mut pdu = Self {
+            bytes: [0; MAX_PDU],
+            len: bytes.len() as u16,
+        };
+        pdu.bytes.get_mut(..bytes.len())?.copy_from_slice(bytes);
+        Some(pdu)
+    }
+
     /// The bytes, as they go on the wire.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {

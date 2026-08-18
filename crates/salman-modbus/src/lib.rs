@@ -31,7 +31,11 @@ pub mod crc;
 pub mod function;
 pub mod limits;
 pub mod pdu;
+pub mod rtu;
+pub mod tcp;
 
 pub use crc::Crc16;
 pub use function::{ExceptionCode, FunctionCode};
 pub use pdu::{Bits, DecodeError, Pdu, Request, Response, Words};
+pub use rtu::{RtuAdu, RtuError};
+pub use tcp::{Framer, MbapHeader, TcpAdu};

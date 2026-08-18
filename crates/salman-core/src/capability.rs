@@ -352,6 +352,37 @@ pub static REGISTRY: &[Capability] = &[
                Modbus layer.",
     },
     Capability {
+        id: "io.modbus.framing",
+        area: "Protocols",
+        title: "Modbus TCP stream framing and RTU serial frames",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-modbus/tests/framing.rs",
+                test: "any_split_of_a_stream_frames_identically",
+            },
+            Evidence {
+                file: "crates/salman-modbus/tests/framing.rs",
+                test: "a_length_field_larger_than_any_frame_is_fatal_and_reserves_nothing",
+            },
+            Evidence {
+                file: "crates/salman-modbus/tests/rtu.rs",
+                test: "every_single_bit_error_in_a_frame_is_caught",
+            },
+            Evidence {
+                file: "crates/salman-modbus/tests/rtu.rs",
+                test: "every_error_a_serial_frame_can_have_requires_silence",
+            },
+        ],
+        note: "TCP: frames are reassembled from a byte stream, and what comes out does not \
+               depend on where the segments were cut. A bad length or a non-zero protocol \
+               id is fatal to the connection, because a Modbus TCP stream carries no sync \
+               word and resynchronising would mean guessing. RTU: an ADU with its CRC, and \
+               the timing rules that delimit one — but a byte stream alone cannot be framed \
+               as RTU, and salman says so rather than pretending otherwise.",
+    },
+    Capability {
         id: "io.modbus.pdu",
         area: "Protocols",
         title: "Modbus protocol data units, decoded and encoded, with no allocation",

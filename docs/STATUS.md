@@ -41,6 +41,7 @@ A capability is only marked *implemented and tested* if it names tests that exis
 
 | | Capability | Status | Milestone | Notes |
 |---|---|---|---|---|
+| `[x]` | Modbus TCP stream framing and RTU serial frames | implemented and tested | v0.2 | TCP: frames are reassembled from a byte stream, and what comes out does not depend on where the segments were cut. A bad length or a non-zero protocol id is fatal to the connection, because a Modbus TCP stream carries no sync word and resynchronising would mean guessing. RTU: an ADU with its CRC, and the timing rules that delimit one — but a byte stream alone cannot be framed as RTU, and salman says so rather than pretending otherwise. |
 | `[x]` | Modbus protocol data units, decoded and encoded, with no allocation | implemented and tested | v0.2 | Eight function codes: read and write, bits and words. The rest decode by number and are reported as not implemented rather than guessed at. Nothing here opens a socket or reads a file — no transport, no client and no server exists yet. Addresses are the PDU addresses on the wire; salman applies no 4xxxx offset anywhere, see docs/adr/ADR-0012-modbus-addressing.md. |
 
 ## Runtime
