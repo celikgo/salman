@@ -441,6 +441,12 @@ pub struct Memory {
     physical_outputs: ProcessImage,
     markers: ProcessImage,
     forces: BTreeMap<SlotId, Force>,
+    /// Declared initial values that belong to a location rather than a slot.
+    ///
+    /// A variable declared `AT %QX0.0 : BOOL := TRUE;` has no slot to hold its
+    /// initial value, so the image has to carry it — and has to put it back
+    /// after a restart, which clears the image.
+    image_initial: Vec<(DirectAddress, Value)>,
 }
 
 impl Memory {
@@ -462,6 +468,7 @@ impl Memory {
             physical_outputs: ProcessImage::new(image_bytes, layout),
             markers: ProcessImage::new(image_bytes, layout),
             forces: BTreeMap::new(),
+            image_initial: Vec::new(),
         }
     }
 
@@ -473,6 +480,20 @@ impl Memory {
         if let Some(cell) = self.slots.get_mut(slot.index()) {
             *cell = value;
         }
+    }
+
+    /// Records a declared initial value for a location, and applies it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AddressError`] if the address cannot be resolved.
+    pub fn set_initial_at(
+        &mut self,
+        address: &DirectAddress,
+        value: &Value,
+    ) -> Result<bool, AddressError> {
+        self.image_initial.push((address.clone(), value.clone()));
+        self.write_address(address, value)
     }
 
     /// Declares how a slot survives a restart.
@@ -697,6 +718,14 @@ impl Memory {
             self.markers.clear();
         }
         self.forces.clear();
+        // The image has just been cleared, so any declared initial value that
+        // lives in it has to be put back. A located variable with an
+        // initialiser that came back as zero would be the same quiet loss as
+        // one that never received it.
+        for (address, value) in std::mem::take(&mut self.image_initial) {
+            let _ = self.write_address(&address, &value);
+            self.image_initial.push((address, value));
+        }
     }
 }
 

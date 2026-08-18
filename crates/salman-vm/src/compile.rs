@@ -35,7 +35,7 @@ use salman_lang::ast::{
     UnaryOp, VarSection,
 };
 use salman_lang::dialect::Dialect;
-use salman_lang::sema::{Checked, CheckedTrigger, Resolution};
+use salman_lang::sema::{Checked, CheckedTrigger, Resolution, Symbol};
 use salman_lang::stdlib;
 use salman_lang::types::{BoolWidening, TypeData, TypeId, common_type};
 
@@ -104,6 +104,7 @@ pub fn compile(
         slot_names: Vec::new(),
         persistence: Vec::new(),
         initial: Vec::new(),
+        image_initial: Vec::new(),
         global_offsets: Vec::new(),
         function_bases: BTreeMap::new(),
         routines: BTreeMap::new(),
@@ -137,6 +138,8 @@ struct Compiler<'a> {
     slot_names: Vec<String>,
     persistence: Vec<Persistence>,
     initial: Vec<(u32, Value)>,
+    /// Declared initial values for located variables, which have no slot.
+    image_initial: Vec<(DirectAddress, Value)>,
     global_offsets: Vec<u32>,
     function_bases: BTreeMap<u32, u32>,
     routines: BTreeMap<u32, u32>,
@@ -215,6 +218,11 @@ impl Compiler<'_> {
         let mut memory = Memory::new(&self.slot_types, IMAGE_BYTES, ImageLayout::default());
         for (slot, value) in &self.initial {
             memory.set_initial(SlotId(*slot), value.clone());
+        }
+        for (address, value) in &self.image_initial {
+            // Checked in `check_located_variables`: an address that did not
+            // resolve there was reported, and compilation stops on an error.
+            let _ = memory.set_initial_at(address, value);
         }
         for (slot, persistence) in self.persistence.iter().enumerate() {
             if *persistence != Persistence::Volatile {
@@ -646,36 +654,40 @@ impl Compiler<'_> {
     /// two the engineer meant, the declaration as written cannot be honoured,
     /// and reading it would silently give the low bit of a word.
     fn check_located_variables(&mut self) {
-        let mut located: Vec<(Span, DirectAddress, ElementaryType, String)> = Vec::new();
-        for symbol in &self.checked.globals {
+        let mut located: Vec<Located> = Vec::new();
+        let mut collect = |symbol: &Symbol, ty: ElementaryType| {
             if let Some(address) = &symbol.address {
-                let ty = self.slot_type(symbol.ty);
-                located.push((
-                    symbol.name.span,
-                    address.clone(),
+                located.push(Located {
+                    span: symbol.name.span,
+                    address: DirectAddress::clone(address),
                     ty,
-                    symbol.name.to_string(),
-                ));
+                    name: symbol.name.to_string(),
+                    init: symbol.init.clone(),
+                });
             }
+        };
+        for symbol in &self.checked.globals {
+            let ty = self.slot_type(symbol.ty);
+            collect(symbol, ty);
         }
         for pou in &self.checked.pous {
             for symbol in &pou.symbols {
-                if let Some(address) = &symbol.address {
-                    let ty = self.slot_type(symbol.ty);
-                    located.push((
-                        symbol.name.span,
-                        address.clone(),
-                        ty,
-                        symbol.name.to_string(),
-                    ));
-                }
+                let ty = self.slot_type(symbol.ty);
+                collect(symbol, ty);
             }
         }
 
         // One scratch image, only to resolve addresses against the same layout
         // and size the runtime will use.
         let image = ProcessImage::new(IMAGE_BYTES, ImageLayout::default());
-        for (span, address, ty, name) in located {
+        for Located {
+            span,
+            address,
+            ty,
+            name,
+            init,
+        } in located
+        {
             let written = address.to_string();
             match image.resolve(&address) {
                 Err(error) => {
@@ -722,7 +734,37 @@ impl Compiler<'_> {
                          sixteen, %ID thirty-two and %IL sixty-four.",
                     ),
                 );
+                continue;
             }
+
+            // A located variable has no slot, so an initialiser cannot be
+            // applied the way every other one is: the image has to carry it.
+            let Some(init) = init else { continue };
+            if address.location == AddressLocation::Input {
+                // Every scan begins by latching the physical inputs over the
+                // input image, so a value written here before the first scan is
+                // gone before the program can read it. Applying it would be a
+                // lie that looks like an assignment.
+                self.diags.push(
+                    Diagnostic::error(
+                        E_WRITE_TO_INPUT,
+                        format!(
+                            "`{name}` is located at an input and cannot be given an initial value"
+                        ),
+                    )
+                    .with_primary(
+                        span,
+                        format!("{written} is read from the world, not written"),
+                    )
+                    .with_note(
+                        "Every scan starts by latching the inputs, so this value would be \
+                         overwritten before the first statement ran. Drive the input from a \
+                         test or a device instead.",
+                    ),
+                );
+                continue;
+            }
+            self.image_initial.push((address, init));
         }
     }
 
@@ -2721,4 +2763,13 @@ fn literal_value(literal: &salman_lang::token::LiteralValue, ty: ElementaryType)
         L::String(bytes) => Value::string(bytes),
         L::WString(units) => Value::wstring(units),
     })
+}
+
+/// One `AT %...` declaration, gathered for checking.
+struct Located {
+    span: Span,
+    address: DirectAddress,
+    ty: ElementaryType,
+    name: String,
+    init: Option<Value>,
 }

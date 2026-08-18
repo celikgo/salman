@@ -258,3 +258,84 @@ fn a_recorded_trace_can_name_a_location() {
     assert_eq!(trace.len(), 2);
     assert!(trace.render().contains("%QX0.0"), "{}", trace.render());
 }
+
+// -- initial values ------------------------------------------------------
+
+#[test]
+fn an_initial_value_on_a_located_output_reaches_the_image() {
+    // A located variable has no slot, so the ordinary initial-value path — set
+    // the slot before the first scan — cannot carry it. Dropping it silently is
+    // exactly the class of quiet loss the `AT` binding exists to stop.
+    let compiled = compiled(
+        "PROGRAM P\n\
+         VAR Motor AT %QX0.0 : BOOL := TRUE; Level AT %MW2 : UINT := 7; END_VAR\n\
+           ;\n\
+         END_PROGRAM\n",
+    );
+    let mut runtime = Runtime::new(
+        compiled.program.clone(),
+        compiled.memory.clone(),
+        Clock::virtual_default(),
+        compiled.tasks.clone(),
+    );
+    runtime.run_scans(1);
+    let motor = salman_test::runner::parse_address_public("%QX0.0").unwrap();
+    let level = salman_test::runner::parse_address_public("%MW2").unwrap();
+    assert_eq!(
+        runtime.memory().read_address(&motor).unwrap(),
+        Some(Value::Bool(true))
+    );
+    assert_eq!(
+        runtime.memory().read_address(&level).unwrap(),
+        Some(Value::Word(7))
+    );
+}
+
+#[test]
+fn a_cold_restart_puts_a_located_initial_value_back() {
+    // A cold restart clears the image. Everything else that carries an initial
+    // value is restored there, and a located variable that came back as zero
+    // would be the same loss one restart later.
+    let compiled = compiled(
+        "PROGRAM P\n\
+         VAR Level AT %MW2 : UINT := 7; END_VAR\n\
+           Level := 99;\n\
+         END_PROGRAM\n",
+    );
+    let mut runtime = Runtime::new(
+        compiled.program.clone(),
+        compiled.memory.clone(),
+        Clock::virtual_default(),
+        compiled.tasks.clone(),
+    );
+    let level = salman_test::runner::parse_address_public("%MW2").unwrap();
+    runtime.run_scans(1);
+    assert_eq!(
+        runtime.memory().read_address(&level).unwrap(),
+        Some(Value::Word(99))
+    );
+    runtime
+        .memory_mut()
+        .restart(salman_vm::memory::Restart::Cold);
+    assert_eq!(
+        runtime.memory().read_address(&level).unwrap(),
+        Some(Value::Word(7)),
+        "a cold restart restores the declared initial value"
+    );
+}
+
+#[test]
+fn an_initial_value_on_a_located_input_is_refused() {
+    // Every scan begins by latching the physical inputs over the input image,
+    // so this value would be gone before the first statement ran. Accepting it
+    // would look like an assignment and behave like nothing.
+    assert_eq!(
+        refused(
+            "PROGRAM P\n\
+             VAR Sensor AT %IX0.0 : BOOL := TRUE; END_VAR\n\
+               ;\n\
+             END_PROGRAM\n"
+        ),
+        ["E0504"]
+    );
+}

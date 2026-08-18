@@ -195,7 +195,8 @@ fn check(path: &Path, dialect: &str) -> Result<u8, String> {
         print!("{rendered}");
     }
     if built.diagnostics.has_errors() {
-        println!("{} errors", built.diagnostics.error_count());
+        let count = built.diagnostics.error_count();
+        println!("{count} error{}", if count == 1 { "" } else { "s" });
         return Ok(EXIT_PROBLEM);
     }
     println!("{}: no errors", path.display());
