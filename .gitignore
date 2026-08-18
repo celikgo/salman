@@ -33,3 +33,9 @@ fuzz/corpus/
 # OS
 .DS_Store
 Thumbs.db
+
+# Scratch files a review agent leaves in a crate's tests/ directory while it is
+# working. They are named so they sort last and so this pattern can catch them:
+# one was committed by a `git add -A` mid-review, which is how this line came to
+# exist.
+crates/*/tests/zz_*.rs
