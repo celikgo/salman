@@ -30,12 +30,14 @@
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
 pub mod address;
+pub mod ast;
 pub mod codes;
 pub mod dialect;
 pub mod lexer;
 pub mod token;
 
 pub use address::DirectAddress;
+pub use ast::{CompilationUnit, Expr, ExprKind, Item, Pou, Stmt, StmtKind};
 pub use dialect::{Dialect, DialectId};
 pub use lexer::{TokenStream, lex};
 pub use token::{Keyword, LiteralValue, Punct, Token, TokenKind};

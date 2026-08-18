@@ -96,7 +96,7 @@ jobs:
           PY
 
   cargo-deny:
-    name: cargo-deny (${{ matrix.checks }})
+    name: cargo-deny (${{ matrix.check }})
     runs-on: ubuntu-latest
     strategy:
       # Split so that the run log says which policy failed without anyone
@@ -104,14 +104,31 @@ jobs:
       # people and different fixes.
       fail-fast: false
       matrix:
-        checks: [advisories, licenses, bans, sources]
+        include:
+          - check: advisories
+            extra: ""
+          - check: licenses
+            # `license-not-encountered` fires for every entry in deny.toml's
+            # allowlist that nothing in the graph currently uses, and
+            # `--deny warnings` would turn that into a build failure. That is
+            # backwards for this repository: the allowlist is deliberately
+            # forward-looking. NCSA is listed for a libfuzzer-sys that has not
+            # arrived yet (see deny.toml), and at 0.0.1 the graph is small
+            # enough that most of the list is unused. An allowlist entry with
+            # nothing to match is not a supply-chain problem; an unlisted
+            # licence is, and that check is untouched by this.
+            extra: "--allow license-not-encountered"
+          - check: bans
+            extra: ""
+          - check: sources
+            extra: ""
     steps:
       - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          command: check ${{ matrix.checks }}
-          # Warnings are errors here. `unmaintained = "all"` in deny.toml
-          # reports through the warning channel for some advisory kinds, and a
-          # policy that only reports is not a gate.
+          command: check ${{ matrix.check }}
           arguments: --all-features
-          command-arguments: --deny warnings
+          # Warnings are errors. `unmaintained = "all"` and several ban and
+          # source violations report through the warning channel, and a policy
+          # that only reports is not a gate.
+          command-arguments: --deny warnings ${{ matrix.extra }}
