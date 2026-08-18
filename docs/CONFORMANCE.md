@@ -1264,6 +1264,15 @@ would mean the stream salman reported and the stream salman decoded were differe
   packet twice, and nothing on the network resent anything. salman distinguishes a
   byte-identical duplicate from a genuine retransmission, because counting frames rather than
   reassembling them makes a mirrored capture double-count every transaction.
+- **What was in an IP fragment.** salman does not reassemble IP fragments and does not decode
+  them. Both halves of that are deliberate. A fragment past the first carries **no transport
+  header at all** — the bytes where a TCP header would be are application data from the middle
+  of the packet, so decoding one yields invented ports, an invented sequence number and a
+  payload cut from the middle of something: entirely plausible and entirely false. A *first*
+  fragment does carry a header and carries only part of its payload, and handing that to a
+  stream reassembler puts a hole in the byte stream that the sequence numbers do not account
+  for. Fragment reassembly is real work with an overlap policy of its own — it is what evasion
+  techniques target — and salman says it has not done it rather than half-doing it.
 
 ---
 

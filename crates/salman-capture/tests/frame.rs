@@ -479,3 +479,85 @@ fn a_payload_is_never_longer_than_the_frame_it_came_from() {
         }
     }
 }
+
+// -- fragments -----------------------------------------------------------
+
+/// Sets the flags-and-offset word of an IPv4 packet inside an Ethernet frame.
+fn with_fragment_word(frame: &mut [u8], word: u16) {
+    // 14 bytes of Ethernet, then the word is at offset 6 of the IP header.
+    frame[14 + 6..14 + 8].copy_from_slice(&word.to_be_bytes());
+}
+
+#[test]
+fn a_fragment_that_is_not_the_first_is_not_decoded_as_tcp() {
+    // Found by review. A fragment with a non-zero offset carries **no
+    // transport header at all** — the bytes where a TCP header would be are
+    // application data from the middle of the packet. Decoding it produces a
+    // segment with invented ports, an invented sequence number and a payload
+    // cut from the middle of something: entirely plausible and entirely false.
+    let mut frame = ethernet(0x0800, &ipv4_tcp(b"continuation bytes", 0, 0));
+    // Offset 185 eight-byte units, which is 1480 bytes in.
+    with_fragment_word(&mut frame, 185);
+
+    let decoded = decode(LinkType::ETHERNET, &frame, false).unwrap();
+    let Decoded::NotDecoded { what } = decoded else {
+        panic!("a non-first fragment was decoded as TCP: {decoded:?}")
+    };
+    assert!(
+        matches!(
+            what,
+            NotDecoded::Fragmented {
+                offset: 1480,
+                more_fragments: false
+            }
+        ),
+        "{what:?}"
+    );
+    assert!(
+        what.to_string().contains("no transport header at all"),
+        "{what}"
+    );
+}
+
+#[test]
+fn the_first_of_several_fragments_is_not_decoded_either() {
+    // Less obvious and just as wrong. A first fragment does carry a TCP
+    // header, and carries only part of the payload — handing that to a stream
+    // reassembler puts a hole in the middle of the byte stream that the
+    // sequence numbers do not account for.
+    let mut frame = ethernet(0x0800, &ipv4_tcp(b"the first part", 0, 0));
+    // More fragments, offset zero.
+    with_fragment_word(&mut frame, 0x2000);
+
+    let decoded = decode(LinkType::ETHERNET, &frame, false).unwrap();
+    let Decoded::NotDecoded { what } = decoded else {
+        panic!("a first fragment was decoded as a whole segment: {decoded:?}")
+    };
+    assert!(
+        matches!(
+            what,
+            NotDecoded::Fragmented {
+                offset: 0,
+                more_fragments: true
+            }
+        ),
+        "{what:?}"
+    );
+    assert!(
+        what.to_string().contains("only part of its payload"),
+        "{what}"
+    );
+}
+
+#[test]
+fn an_unfragmented_packet_is_still_decoded_however_its_flags_are_set() {
+    // Don't-fragment is set on a great deal of ordinary traffic, and it does
+    // not make a packet a fragment. Refusing those would be worse than the bug
+    // this fix is for.
+    for word in [0x0000_u16, 0x4000] {
+        let mut frame = ethernet(0x0800, &ipv4_tcp(b"whole", 0, 0));
+        with_fragment_word(&mut frame, word);
+        let segment = tcp_of(decode(LinkType::ETHERNET, &frame, false).unwrap());
+        assert_eq!(segment.payload, b"whole", "flags 0x{word:04X}");
+    }
+}

@@ -190,6 +190,30 @@ pub enum NotDecoded {
     /// incomplete. Nothing is wrong with the frame; the capture kept too
     /// little of it.
     TruncatedBeforeHeaders,
+    /// The packet is a fragment, and salman does not reassemble fragments.
+    ///
+    /// Both halves of this matter and both are wrong to decode.
+    ///
+    /// A fragment with a non-zero offset carries **no transport header at
+    /// all** — it is a continuation of one, and the bytes where a TCP header
+    /// would be are application data. Decoding it produces a segment with
+    /// invented ports, an invented sequence number and a payload cut from the
+    /// middle of something: entirely plausible and entirely false.
+    ///
+    /// A first fragment does carry a TCP header, and carries only part of the
+    /// payload. Handing that to a stream reassembler puts a hole in the
+    /// middle of the byte stream that the sequence numbers do not account
+    /// for.
+    ///
+    /// Reassembling IP fragments is a real piece of work with an overlap
+    /// policy of its own — it is what evasion techniques target — and salman
+    /// does not do it. Saying so beats half-doing it.
+    Fragmented {
+        /// Where in the original packet this fragment starts, in bytes.
+        offset: u32,
+        /// Whether more fragments follow.
+        more_fragments: bool,
+    },
 }
 
 impl fmt::Display for NotDecoded {
@@ -201,6 +225,29 @@ impl fmt::Display for NotDecoded {
             Self::Protocol(protocol) => write!(f, "IP protocol {protocol} is not TCP"),
             Self::TruncatedBeforeHeaders => {
                 f.write_str("the capture kept too few bytes to reach the headers")
+            }
+            Self::Fragmented {
+                offset,
+                more_fragments,
+            } => {
+                if *offset == 0 {
+                    f.write_str(
+                        "this is the first of several IP fragments and carries only part of \
+                         its payload; salman does not reassemble IP fragments",
+                    )
+                } else {
+                    write!(
+                        f,
+                        "this is an IP fragment starting {offset} bytes into its packet, so \
+                         it carries no transport header at all{}; salman does not reassemble \
+                         IP fragments",
+                        if *more_fragments {
+                            " and more follow"
+                        } else {
+                            ""
+                        }
+                    )
+                }
             }
         }
     }
@@ -425,6 +472,22 @@ fn decode_ipv4(packet: &[u8], truncated: bool) -> Result<Decoded<'_>, FrameError
     let Some(protocol) = packet.get(9).copied() else {
         return Ok(not_decoded(NotDecoded::TruncatedBeforeHeaders));
     };
+
+    // Bytes 6 and 7 are three flag bits then a thirteen-bit fragment offset,
+    // counted in eight-byte units. A packet that is fragmented at all is one
+    // salman will not decode; see `NotDecoded::Fragmented` for why both halves
+    // of that are wrong to decode rather than only the obvious half.
+    let Some(fragment_word) = be16(packet, 6) else {
+        return Ok(not_decoded(NotDecoded::TruncatedBeforeHeaders));
+    };
+    let more_fragments = fragment_word & 0x2000 != 0;
+    let fragment_offset = u32::from(fragment_word & 0x1FFF) * 8;
+    if more_fragments || fragment_offset != 0 {
+        return Ok(not_decoded(NotDecoded::Fragmented {
+            offset: fragment_offset,
+            more_fragments,
+        }));
+    }
     let source = packet
         .get(12..16)
         .and_then(|b| b.try_into().ok())
