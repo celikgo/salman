@@ -7,10 +7,17 @@
 # machines, and that is only meaningful with a locked dependency graph.
 # (Do not add Cargo.lock here.)
 
-# Fuzzing
+# Fuzzing.
+#
+# fuzz/seeds/ is committed: a small, hand-written, meaningfully-named corpus
+# that says what a target is meant to explore. fuzz/corpus/ is NOT: libFuzzer
+# grows it by thousands of machine-named files per session, and committing that
+# turns every fuzzing run into a repository the size of a small operating
+# system. CI caches the grown corpus between runs instead.
 fuzz/target/
 fuzz/artifacts/
 fuzz/coverage/
+fuzz/corpus/
 
 # Local scratch
 /scratch/

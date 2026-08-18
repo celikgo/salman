@@ -223,6 +223,10 @@ cargo test --workspace
 Requires the toolchain pinned in `rust-toolchain.toml`, which `rustup` installs
 automatically. Nothing else: no C compiler, no vendor SDK, no licence server.
 
+The shipped binary is **31 crates** including salman's own five, and contains no
+`unsafe` — the workspace forbids it. `cargo deny` runs in CI over advisories,
+licences, bans and sources.
+
 ## Documentation
 
 | | |

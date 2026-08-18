@@ -117,7 +117,7 @@ jobs:
       # Restore-only would be enough to be useful; the save on the way out is
       # what makes it compound. Cache entries are immutable once written, so the
       # key carries the run id and `restore-keys` picks the most recent previous
-      # entry by prefix. The seed corpus committed under fuzz/corpus/ is checked
+      # entry by prefix. The seed corpus committed under fuzz/seeds/ is copied
       # out first and the restore unpacks on top of it, so the seeds are present
       # whether or not a cache entry exists.
       - name: Restore and persist the corpus
@@ -127,6 +127,21 @@ jobs:
           key: fuzz-corpus-${{ github.run_id }}
           restore-keys: |
             fuzz-corpus-
+
+      # fuzz/corpus/ is not committed — libFuzzer grows it by thousands of
+      # machine-named files per session. fuzz/seeds/ is: a small, hand-written
+      # corpus whose file names say what each case is for. Copy the seeds in
+      # before every run, so a cold cache still starts from something better
+      # than an empty directory.
+      - name: Seed the corpus
+        run: |
+          set -euo pipefail
+          for dir in fuzz/seeds/*/; do
+            target=$(basename "$dir")
+            mkdir -p "fuzz/corpus/$target"
+            cp -n "$dir"* "fuzz/corpus/$target/" 2>/dev/null || true
+          done
+          echo "Seeded $(find fuzz/corpus -type f | wc -l) corpus entries."
 
       - uses: taiki-e/install-action@v2
         with:
