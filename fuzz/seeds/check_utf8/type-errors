@@ -1,0 +1,8 @@
+PROGRAM P VAR A : INT; B : DINT; C : BOOL; W : WORD; END_VAR
+  A := B;
+  A := C;
+  A := W;
+  IF A THEN A := 1; END_IF;
+  A := 300000;
+  A := Undeclared;
+END_PROGRAM

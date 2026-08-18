@@ -1,0 +1,1 @@
+PROGRAM P VAR X : DINT; END_VAR X := ((((((((((1)))))))))); END_PROGRAM

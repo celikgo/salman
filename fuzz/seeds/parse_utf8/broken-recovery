@@ -1,0 +1,6 @@
+PROGRAM P VAR X : DINT; END_VAR
+  X := ;
+  X := 1
+  Y := 2;
+  IF THEN END_IF;
+END_PROGRAM

@@ -180,8 +180,9 @@ Safe, because each is a factual statement about what salman reads or aims at:
 - "salman imports Rockwell L5X files"
 - "salman reads the PLCopen XML exchange format"
 - "based on the OPC UA specifications"
-- "aims at IEC 61131-3:2013 Structured Text; see `CONFORMANCE.md`" — that file is not
-  written at 0.0.1, and the claim is not to be made in that form until it is
+- "aims at IEC 61131-3:2013 Structured Text; see `CONFORMANCE.md`" — `docs/CONFORMANCE.md`
+  exists and states, feature by feature, what is implemented, what is tested, what is
+  absent, and what salman decided for itself
 
 Never, because each asserts a relationship or an approval that does not exist:
 
@@ -192,9 +193,14 @@ Never, because each asserts a relationship or an approval that does not exist:
 - vendor logos, wordmarks, or brand colours anywhere in the project
 - any product name or crate name containing a third-party mark
 
-At 0.0.1 salman uses none of these names anywhere except in this file and in roadmap
-documents, for the straightforward reason that it implements none of those formats or
-protocols yet.
+At 0.0.1 salman implements none of those formats or protocols. The names above do appear
+elsewhere in the repository: in `README.md`, `docs/ROADMAP.md`, `docs/CONFORMANCE.md`,
+`docs/STATUS.md`, `docs/adr/ADR-0003-plcopen-xml-canonical.md` and
+`docs/adr/ADR-0007-dialects.md`, and in source comments and diagnostic text in
+`crates/salman-lang` and `crates/salman-vm` where a dialect divergence is named — CODESYS
+and Beckhoff on the binding strength of `**`, for instance. In every case the name is used
+as a factual statement about what another tool does or about work not yet started, and
+never joined to salman in any of the forms forbidden above.
 
 ---
 
@@ -208,7 +214,7 @@ and the SPDX identifier is `Apache-2.0` (<https://spdx.org/licenses/Apache-2.0.h
   `license = "Apache-2.0"` in the root `Cargo.toml`. The fuzzing crate declares it
   literally.
 - Source files carry an `SPDX-License-Identifier: Apache-2.0` line. This is **not yet
-  uniform**: at 0.0.1, 19 of 37 source files carry one and the rest do not. That is a defect
+  uniform**: at 0.0.1, 31 of 48 source files carry one and the rest do not. That is a defect
   in the tree, it is recorded here rather than described as finished, and it is closed by
   adding the missing lines, not by softening this paragraph.
 - There is no `NOTICE` file at 0.0.1. Apache-2.0 §4(d) is conditional — it obliges a

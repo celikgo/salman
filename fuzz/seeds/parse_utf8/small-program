@@ -1,0 +1,9 @@
+PROGRAM Main
+VAR
+    Start : BOOL;
+    Count : DINT := 0;
+    T1    : TON;
+END_VAR
+    T1(IN := Start, PT := T#5s);
+    IF T1.Q THEN Count := Count + 1; END_IF;
+END_PROGRAM
