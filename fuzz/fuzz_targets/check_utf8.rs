@@ -30,8 +30,7 @@ fuzz_target!(|source: &str| {
         // Side tables must cover every node the parser allocated, or a later
         // pass indexes past the end of one.
         assert!(
-            checked.expr_types.len() >= unit.node_count as usize
-                || checked.expr_types.is_empty(),
+            checked.expr_types.len() >= unit.node_count as usize || checked.expr_types.is_empty(),
             "the type side table is shorter than the tree"
         );
 

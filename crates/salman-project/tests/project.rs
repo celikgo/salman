@@ -444,3 +444,106 @@ fn a_table_knows_how_it_is_addressed() {
     assert_eq!(Flow::of(Table::HoldingRegisters), Flow::Word);
     assert_eq!(Flow::of(Table::InputRegisters), Flow::Word);
 }
+
+// -- addresses that alias silently ---------------------------------------
+
+#[test]
+fn a_bit_number_above_seven_is_refused_rather_than_carried_into_the_next_byte() {
+    // Found by review, not by me. `%IX0.9` was accepted and computed to bit 9,
+    // which is `%IX1.1` — two declarations meaning one place with neither
+    // saying so. The process image refuses the address anyway, so accepting it
+    // here only moved the failure to the first scan against real equipment.
+    let found = problems(&with_map(&[
+        "{ table: discrete-inputs, from: 0, count: 1, to: \"%IX0.9\" }",
+    ]));
+    assert!(
+        found
+            .iter()
+            .any(|p| p.contains("eight bits numbered 0 to 7")),
+        "{found:?}"
+    );
+
+    // And bit 7 is still fine, which is the boundary that must not move.
+    parse(&with_map(&[
+        "{ table: discrete-inputs, from: 0, count: 1, to: \"%IX0.7\" }",
+    ]))
+    .expect("bit 7 is the last bit of a byte");
+}
+
+#[test]
+fn a_word_address_carrying_a_bit_number_is_refused() {
+    // Also found by review. `%IW0.0` was accepted and its `.0` silently
+    // ignored, so `%IW0`, `%IW0.0` and `%IW0.1` were three ways of writing one
+    // place while whoever wrote them believed they had written three.
+    let found = problems(&with_map(&[
+        "{ table: input-registers, from: 0, count: 1, to: \"%IW0.0\" }",
+    ]));
+    assert!(
+        found.iter().any(|p| p.contains("a bit inside a word")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn two_spellings_of_one_bit_can_no_longer_both_be_accepted() {
+    // The property behind both fixes: if two mappings resolve to the same
+    // image bit, one of them is refused rather than quietly overlapping.
+    let found = problems(&with_map(&[
+        "{ table: discrete-inputs, from: 0, count: 1, to: \"%IX1.1\" }",
+        "{ table: discrete-inputs, from: 10, count: 1, to: \"%IX0.9\" }",
+    ]));
+    assert!(!found.is_empty(), "%IX0.9 and %IX1.1 both named bit 9");
+}
+
+#[test]
+fn a_bit_address_with_no_bit_number_is_a_flat_bit_number() {
+    // Found by review, and the most dangerous of the three address bugs.
+    // `%IX13` written without a bit is not byte 13 — the process image reads
+    // it as bit 13, which is byte 1 bit 5. This computed byte 13, bit 104, so
+    // a mapping would have written where the overlap check was not watching
+    // and where the program was not reading. Both places are silent.
+    let flat = Mapping {
+        table: Table::DiscreteInputs,
+        device_start: 0,
+        count: 1,
+        image: address("%IX13"),
+    };
+    assert_eq!(flat.image_bit_range().unwrap(), (13, 1));
+
+    // And the two spellings of the same bit must collide.
+    let spelled = Mapping {
+        table: Table::DiscreteInputs,
+        device_start: 0,
+        count: 1,
+        image: address("%IX1.5"),
+    };
+    assert_eq!(spelled.image_bit_range().unwrap(), (13, 1));
+    assert!(
+        flat.overlaps(&spelled).unwrap(),
+        "%IX13 and %IX1.5 are the same bit and must be reported as overlapping"
+    );
+}
+
+#[test]
+fn a_flat_bit_mapping_agrees_with_the_process_image_about_where_it_lands() {
+    // The property behind the fix, stated against the image itself rather than
+    // against salman's own arithmetic: whatever the mapping thinks its first
+    // bit is, that is where the image resolves the address it will write to.
+    use salman_vm::memory::{ImageLayout, ProcessImage};
+    let image = ProcessImage::new(1024, ImageLayout::default());
+    for written in ["%IX13", "%IX1.5", "%IX0.0", "%IX7", "%IX8", "%IX255"] {
+        let mapping = Mapping {
+            table: Table::DiscreteInputs,
+            device_start: 0,
+            count: 1,
+            image: address(written),
+        };
+        let (first_bit, _) = mapping.image_bit_range().unwrap();
+        let position = image.resolve(&mapping.image).unwrap();
+        assert_eq!(
+            first_bit,
+            u64::from(position.byte) * 8 + u64::from(position.bit),
+            "{written}: the mapping and the process image disagree"
+        );
+    }
+}

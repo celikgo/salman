@@ -36,12 +36,18 @@ fuzz_target!(|data: &[u8]| {
         // canonical form is a fixed point. Byte-identity with `data` is not
         // asserted, because a sender may set padding bits that carry no
         // meaning and salman clears them.
-        let encoded = request.encode();
+        // Anything that decoded must re-encode: the decoder's limits and the
+        // encoder's have to be the same set, or salman would accept a frame it
+        // could not write back.
+        let encoded = request
+            .encode()
+            .expect("a request that decoded must be one salman can write");
+        assert!(!encoded.overflowed());
         let again = Request::decode(encoded.as_bytes())
             .expect("what salman encoded, salman must be able to decode");
         assert_eq!(again, request, "the round trip changed the request");
         assert_eq!(
-            again.encode().as_bytes(),
+            again.encode().expect("still encodable").as_bytes(),
             encoded.as_bytes(),
             "encoding is not a fixed point for {data:02X?}"
         );

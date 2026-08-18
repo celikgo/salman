@@ -26,7 +26,7 @@ use std::time::Duration;
 use salman_core::posture::{DenialReason, Effect, Permit, PostureState, UserConfirmation};
 use salman_modbus::function::ExceptionCode;
 use salman_modbus::limits::MAX_TCP_ADU;
-use salman_modbus::pdu::{DecodeError, Request, Response};
+use salman_modbus::pdu::{DecodeError, EncodeError, Request, Response};
 use salman_modbus::tcp::{FrameError, Framer, TcpAdu};
 
 /// How long to wait for a response when nothing else is said.
@@ -200,7 +200,7 @@ impl Client {
     /// Sends one request and waits for the response that answers it.
     fn exchange(&mut self, unit: u8, request: &Request) -> Result<Response, ClientError> {
         let transaction = self.allocate_transaction();
-        let adu = TcpAdu::new(transaction, unit, request.encode());
+        let adu = TcpAdu::new(transaction, unit, request.encode()?);
         self.stream.write_all(&adu.to_vec())?;
         self.stream.flush()?;
 
@@ -263,6 +263,9 @@ pub enum ClientError {
     Framing(FrameError),
     /// The response could not be decoded.
     Decode(DecodeError),
+    /// The request holds more than its function permits, so salman will not
+    /// put it on the wire.
+    Encode(EncodeError),
     /// The server refused, and said why.
     Exception {
         /// What the server said.
@@ -299,6 +302,12 @@ impl From<DecodeError> for ClientError {
     }
 }
 
+impl From<EncodeError> for ClientError {
+    fn from(error: EncodeError) -> Self {
+        Self::Encode(error)
+    }
+}
+
 impl std::fmt::Display for ClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -306,6 +315,7 @@ impl std::fmt::Display for ClientError {
             Self::ConnectionClosed => f.write_str("the server closed the connection"),
             Self::Framing(error) => write!(f, "{error}"),
             Self::Decode(error) => write!(f, "{error}"),
+            Self::Encode(error) => write!(f, "{error}"),
             Self::Exception { code, unit } => {
                 write!(f, "unit {unit} refused the request: {code}")
             }
@@ -329,6 +339,7 @@ impl std::error::Error for ClientError {
             Self::Io(error) => Some(error),
             Self::Framing(error) => Some(error),
             Self::Decode(error) => Some(error),
+            Self::Encode(error) => Some(error),
             _ => None,
         }
     }

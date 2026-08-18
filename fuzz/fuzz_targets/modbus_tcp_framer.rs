@@ -79,7 +79,13 @@ fuzz_target!(|data: &[u8]| {
 
     // Now the same bytes cut differently. Split-independence is the property
     // the design exists to give, and the only one worth this much machinery.
-    for pattern in [&[1_usize][..], &[2][..], &[3, 1][..], &[7][..], &[5, 11][..]] {
+    for pattern in [
+        &[1_usize][..],
+        &[2][..],
+        &[3, 1][..],
+        &[7][..],
+        &[5, 11][..],
+    ] {
         assert_eq!(
             frames(data, pattern),
             whole,

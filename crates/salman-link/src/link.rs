@@ -170,6 +170,7 @@ impl Link {
                 device: self.name.clone(),
                 image: mapping.image.to_string(),
                 item,
+                why: "the address run passes the end of the address space".to_string(),
             })?;
             let value = match response {
                 Response::ReadCoils(bits) | Response::ReadDiscreteInputs(bits) => {
@@ -188,13 +189,28 @@ impl Link {
                     item,
                 });
             };
-            memory
-                .drive_input(&address, &value)
-                .map_err(|_| LinkError::AddressRun {
+            // `drive_input` says both whether the address resolved and whether
+            // the value landed. Discarding the second is a silent drop: the
+            // device reported a value, salman did not store it, and the
+            // program reads whatever was there before while everything appears
+            // to have worked.
+            let stored =
+                memory
+                    .drive_input(&address, &value)
+                    .map_err(|error| LinkError::AddressRun {
+                        device: self.name.clone(),
+                        image: address.to_string(),
+                        item,
+                        why: error.to_string(),
+                    })?;
+            if !stored {
+                return Err(LinkError::StoreRefused {
                     device: self.name.clone(),
-                    image: mapping.image.to_string(),
+                    image: address.to_string(),
                     item,
-                })?;
+                    value: format!("{value:?}"),
+                });
+            }
         }
         Ok(())
     }
@@ -209,20 +225,23 @@ impl Link {
                 device: self.name.clone(),
                 image: mapping.image.to_string(),
                 item,
+                why: "the address run passes the end of the address space".to_string(),
             })?;
             let position = outputs
                 .resolve(&address)
-                .map_err(|_| LinkError::AddressRun {
+                .map_err(|error| LinkError::AddressRun {
                     device: self.name.clone(),
-                    image: mapping.image.to_string(),
+                    image: address.to_string(),
                     item,
+                    why: error.to_string(),
                 })?;
             let value = outputs
                 .read(position)
                 .ok_or_else(|| LinkError::AddressRun {
                     device: self.name.clone(),
-                    image: mapping.image.to_string(),
+                    image: address.to_string(),
                     item,
+                    why: "the process image holds nothing there".to_string(),
                 })?;
             match value {
                 Value::Bool(bit) => bits.push(bit),
@@ -297,12 +316,16 @@ pub fn nth(first: &DirectAddress, n: u16) -> Option<DirectAddress> {
     let mut moved = first.clone();
     match first.size {
         AddressSize::Bit => {
-            let (byte, bit) = match path.as_slice() {
-                [byte] => (*byte, 0),
-                [byte, bit] => (*byte, *bit),
+            // `%IX1.5` is byte 1 bit 5; `%IX13` with no bit is the flat bit
+            // number 13. The process image draws that distinction, so this
+            // must draw it identically or an address run would walk away from
+            // where the program is reading. See
+            // `salman_vm::memory::ProcessImage::resolve`.
+            let index = match path.as_slice() {
+                [flat] => u64::from(*flat),
+                [byte, bit] => u64::from(*byte) * 8 + u64::from(*bit),
                 _ => return None,
-            };
-            let index = u64::from(byte) * 8 + u64::from(bit) + u64::from(n);
+            } + u64::from(n);
             moved.path = Some(vec![u32::try_from(index / 8).ok()?, (index % 8) as u32]);
             Some(moved)
         }
@@ -359,10 +382,27 @@ pub enum LinkError {
     AddressRun {
         /// What the project calls the device.
         device: String,
-        /// The image address the mapping started at.
+        /// The image address that failed.
         image: String,
         /// Which item could not be placed.
         item: u16,
+        /// What the process image said about it.
+        why: String,
+    },
+    /// The process image refused to store a value the device reported.
+    ///
+    /// Distinct from an address that does not resolve: the address was fine
+    /// and the value did not land, which means the widths disagree or the run
+    /// has walked past the end of the area.
+    StoreRefused {
+        /// What the project calls the device.
+        device: String,
+        /// The image address written to.
+        image: String,
+        /// Which item.
+        item: u16,
+        /// The value that was refused.
+        value: String,
     },
     /// The image gave back a value of a width the mapping cannot carry.
     UnexpectedWidth {
@@ -421,9 +461,21 @@ impl core::fmt::Display for LinkError {
                 device,
                 image,
                 item,
+                why,
             } => write!(
                 f,
-                "{device}: the mapping at {image} has no place for item {item}"
+                "{device}: item {item} of a mapping would go to {image}, and {why}"
+            ),
+            Self::StoreRefused {
+                device,
+                image,
+                item,
+                value,
+            } => write!(
+                f,
+                "{device}: the process image refused {value} at {image} for item {item}. \
+                 The device reported it and salman did not store it, so the program would \
+                 have read what was there before"
             ),
             Self::UnexpectedWidth {
                 device,

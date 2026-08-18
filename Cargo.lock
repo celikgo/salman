@@ -155,6 +155,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "salman-capture"
+version = "0.0.1"
+dependencies = [
+ "salman-core",
+]
+
+[[package]]
 name = "salman-cli"
 version = "0.0.1"
 dependencies = [
@@ -211,6 +218,7 @@ dependencies = [
  "salman-core",
  "salman-lang",
  "salman-modbus",
+ "salman-vm",
  "serde",
  "serde-saphyr",
 ]

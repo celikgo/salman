@@ -428,7 +428,7 @@ fn a_request_encoded_decoded_applied_and_answered_round_trips() {
         start: 0,
         quantity: 3,
     };
-    let on_the_wire = request.encode();
+    let on_the_wire = request.encode().unwrap();
     let received = Request::decode(on_the_wire.as_bytes()).unwrap();
     assert_eq!(received, request);
 

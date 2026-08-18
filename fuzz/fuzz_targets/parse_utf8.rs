@@ -51,7 +51,10 @@ fn walk_statement(statement: &Stmt, limit: u32) {
             walk_expr(value, limit);
         }
         StmtKind::Call(call) => walk_expr(call, limit),
-        StmtKind::If { branches, else_body } => {
+        StmtKind::If {
+            branches,
+            else_body,
+        } => {
             for branch in branches {
                 walk_expr(&branch.condition, limit);
                 for s in &branch.body {
@@ -64,7 +67,11 @@ fn walk_statement(statement: &Stmt, limit: u32) {
                 }
             }
         }
-        StmtKind::Case { selector, arms, else_body } => {
+        StmtKind::Case {
+            selector,
+            arms,
+            else_body,
+        } => {
             walk_expr(selector, limit);
             for arm in arms {
                 for s in &arm.body {
@@ -77,7 +84,9 @@ fn walk_statement(statement: &Stmt, limit: u32) {
                 }
             }
         }
-        StmtKind::For { from, to, by, body, .. } => {
+        StmtKind::For {
+            from, to, by, body, ..
+        } => {
             walk_expr(from, limit);
             walk_expr(to, limit);
             if let Some(e) = by {

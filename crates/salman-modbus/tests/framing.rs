@@ -272,7 +272,8 @@ fn the_length_field_counts_the_unit_identifier_as_well_as_the_protocol_data_unit
         start: 0,
         quantity: 1,
     }
-    .encode();
+    .encode()
+    .unwrap();
     assert_eq!(pdu.len(), 5);
     let adu = TcpAdu::new(0, 1, pdu);
     assert_eq!(adu.header.length, 6);

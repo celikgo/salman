@@ -206,22 +206,58 @@ impl Mapping {
         let flow = Flow::of_size(self.image.size).ok_or_else(|| MappingError::SizeUnusable {
             image: self.image.to_string(),
         })?;
-        let (index, bit) = match path.as_slice() {
-            [index] => (u64::from(*index), 0),
-            [index, bit] => (u64::from(*index), u64::from(*bit)),
-            _ => {
-                return Err(MappingError::HierarchicalAddress {
-                    image: self.image.to_string(),
-                });
-            }
-        };
         match flow {
-            Flow::Bit => Ok((index * 8 + bit, u64::from(self.count))),
+            Flow::Bit => {
+                // Two forms, and they do not mean the same thing. `%IX1.5` is
+                // byte 1 bit 5; `%IX13` written with no bit is a **flat bit
+                // number**, which is bit 13 — byte 1 bit 5 again, by
+                // coincidence of the example. Reading the single index as a
+                // byte would put `%IX13` at bit 104 while the process image
+                // puts it at bit 13, so the mapping would write somewhere the
+                // overlap check was not watching and the program was not
+                // reading. The image's own rule is in
+                // `salman_vm::memory::ProcessImage::resolve`, and this has to
+                // agree with it exactly.
+                let (byte, bit) = match path.as_slice() {
+                    [flat] => (u64::from(*flat) / 8, u64::from(*flat) % 8),
+                    [byte, bit] => (u64::from(*byte), u64::from(*bit)),
+                    _ => {
+                        return Err(MappingError::HierarchicalAddress {
+                            image: self.image.to_string(),
+                        });
+                    }
+                };
+                // A byte has eight bits. `%IX0.9` is not the ninth bit of byte
+                // zero — there is no such thing — and computing 0 * 8 + 9
+                // would silently make it bit 9, which is `%IX1.1`. Two
+                // declarations meaning the same location without either
+                // saying so is exactly the quiet aliasing this layer exists to
+                // stop, and the process image refuses the address anyway, so
+                // accepting it here only moves the failure to the first scan
+                // against real equipment.
+                if bit > 7 {
+                    return Err(MappingError::BitNumberOutOfRange {
+                        image: self.image.to_string(),
+                        bit,
+                    });
+                }
+                Ok((byte * 8 + bit, u64::from(self.count)))
+            }
             // A word address counts words, so word 4 begins at bit 64. That is
             // the ElementIndex layout, which is salman's default; a project
             // that needs the ByteOffset layout is not yet expressible, and
             // saying so beats silently applying the wrong one.
-            Flow::Word => Ok((index * 16, u64::from(self.count) * 16)),
+            //
+            // Exactly one index, and no more. `%IW0.0` reads as a bit inside a
+            // word, and taking the word and dropping the rest would make
+            // `%IW0`, `%IW0.0` and `%IW0.1` three ways of writing one place
+            // while the person who wrote them believed they had written three.
+            Flow::Word => match path.as_slice() {
+                [index] => Ok((u64::from(*index) * 16, u64::from(self.count) * 16)),
+                _ => Err(MappingError::SizedAddressWithBit {
+                    image: self.image.to_string(),
+                }),
+            },
         }
     }
 
@@ -294,6 +330,18 @@ pub enum MappingError {
         /// The address as written.
         image: String,
     },
+    /// A bit address named a bit above seven.
+    BitNumberOutOfRange {
+        /// The address as written.
+        image: String,
+        /// The bit number found.
+        bit: u64,
+    },
+    /// A word address carried a bit number, which means nothing.
+    SizedAddressWithBit {
+        /// The address as written.
+        image: String,
+    },
     /// The image address has a hierarchical path, which a mapping cannot use.
     HierarchicalAddress {
         /// The address as written.
@@ -352,6 +400,17 @@ impl fmt::Display for MappingError {
                 f,
                 "{count} items at {image} need bit {needs_bit} of the process image, \
                  and it holds {image_bits}"
+            ),
+            Self::BitNumberOutOfRange { image, bit } => write!(
+                f,
+                "{image} names bit {bit}, and a byte has eight bits numbered 0 to 7. \
+                 Bit {bit} of that byte would be bit {} of the next one",
+                bit % 8
+            ),
+            Self::SizedAddressWithBit { image } => write!(
+                f,
+                "{image} names a bit inside a word, and a mapping places whole registers: \
+                 write %IW0 for the word or %IX0.0 for a bit"
             ),
             Self::PartlySpecified { image } => write!(
                 f,

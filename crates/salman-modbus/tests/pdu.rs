@@ -11,8 +11,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use salman_modbus::function::{ExceptionCode, FunctionCode};
-use salman_modbus::limits::{MAX_READ_BITS, MAX_READ_REGISTERS, MAX_WRITE_BITS};
-use salman_modbus::pdu::{Bits, DecodeError, Request, Response, Words};
+use salman_modbus::limits::{
+    MAX_READ_BITS, MAX_READ_REGISTERS, MAX_WRITE_BITS, MAX_WRITE_REGISTERS,
+};
+use salman_modbus::pdu::{Bits, DecodeError, EncodeError, Request, Response, Words};
 
 /// Every request salman implements, one of each, for the round-trip tests.
 fn one_of_each_request() -> Vec<Request> {
@@ -104,7 +106,10 @@ fn the_conformance_specifications_read_coils_frame() {
         start: 0,
         quantity: 1,
     };
-    assert_eq!(request.encode().as_bytes(), [0x01, 0x00, 0x00, 0x00, 0x01]);
+    assert_eq!(
+        request.encode().unwrap().as_bytes(),
+        [0x01, 0x00, 0x00, 0x00, 0x01]
+    );
 
     let response = Response::decode(&[0x01, 0x01, 0x01], &request).unwrap();
     let Response::ReadCoils(bits) = response else {
@@ -119,7 +124,7 @@ fn the_conformance_specifications_read_coils_frame() {
 #[test]
 fn every_request_survives_being_written_and_read_back() {
     for request in one_of_each_request() {
-        let encoded = request.encode();
+        let encoded = request.encode().unwrap();
         let decoded = Request::decode(encoded.as_bytes())
             .unwrap_or_else(|e| panic!("{request:?} encoded to {encoded:?} and failed: {e}"));
         assert_eq!(decoded, request);
@@ -162,7 +167,7 @@ fn multi_byte_fields_are_big_endian() {
         quantity: 0x0056,
     };
     assert_eq!(
-        request.encode().as_bytes(),
+        request.encode().unwrap().as_bytes(),
         [0x03, 0x12, 0x34, 0x00, 0x56],
         "APS §4.2: the high byte first"
     );
@@ -213,12 +218,18 @@ fn write_single_coil_uses_the_two_values_the_specification_gives() {
         address: 0x00AC,
         on: true,
     };
-    assert_eq!(on.encode().as_bytes(), [0x05, 0x00, 0xAC, 0xFF, 0x00]);
+    assert_eq!(
+        on.encode().unwrap().as_bytes(),
+        [0x05, 0x00, 0xAC, 0xFF, 0x00]
+    );
     let off = Request::WriteSingleCoil {
         address: 0x00AC,
         on: false,
     };
-    assert_eq!(off.encode().as_bytes(), [0x05, 0x00, 0xAC, 0x00, 0x00]);
+    assert_eq!(
+        off.encode().unwrap().as_bytes(),
+        [0x05, 0x00, 0xAC, 0x00, 0x00]
+    );
 }
 
 #[test]
@@ -267,7 +278,7 @@ fn a_quantity_above_the_limit_is_refused_at_the_limit_and_not_one_past_it() {
         start: 0,
         quantity: MAX_READ_REGISTERS,
     };
-    assert!(Request::decode(at_limit.encode().as_bytes()).is_ok());
+    assert!(Request::decode(at_limit.encode().unwrap().as_bytes()).is_ok());
 
     let over = [
         0x03,
@@ -285,7 +296,7 @@ fn a_quantity_above_the_limit_is_refused_at_the_limit_and_not_one_past_it() {
         start: 0,
         quantity: MAX_READ_BITS,
     };
-    assert!(Request::decode(bits_at_limit.encode().as_bytes()).is_ok());
+    assert!(Request::decode(bits_at_limit.encode().unwrap().as_bytes()).is_ok());
 }
 
 #[test]
@@ -314,6 +325,7 @@ fn trailing_bytes_after_a_complete_frame_are_refused() {
         quantity: 1,
     }
     .encode()
+    .unwrap()
     .as_bytes()
     .to_vec();
     bytes.push(0xFF);
@@ -401,7 +413,7 @@ fn every_prefix_of_a_valid_frame_is_refused() {
     // decode, the framer would deliver half a frame and resynchronise onto
     // nothing.
     for request in one_of_each_request() {
-        let encoded = request.encode();
+        let encoded = request.encode().unwrap();
         let bytes = encoded.as_bytes();
         for cut in 0..bytes.len() {
             let prefix = &bytes[..cut];
@@ -455,9 +467,9 @@ fn a_decoded_frame_re_encodes_to_the_bytes_it_came_from() {
     // Stronger than a round trip through the typed form: it says the decoder
     // did not quietly drop a field it failed to model.
     for request in one_of_each_request() {
-        let bytes = request.encode();
+        let bytes = request.encode().unwrap();
         let decoded = Request::decode(bytes.as_bytes()).unwrap();
-        assert_eq!(decoded.encode(), bytes);
+        assert_eq!(decoded.encode().unwrap(), bytes);
     }
     for (request, response) in one_of_each_response() {
         let bytes = response.encode();
@@ -528,4 +540,82 @@ fn the_largest_legal_frame_of_each_kind_fits() {
         Response::decode(response.as_bytes(), &registers).unwrap(),
         Response::ReadHoldingRegisters(words)
     );
+}
+
+// -- encoding refuses to write a frame that lies -------------------------
+
+#[test]
+fn a_write_of_more_items_than_the_function_permits_is_refused_not_truncated() {
+    // Found by review. `Words` holds up to 125 because that is the largest
+    // **read**, and a write permits 123. A request built by hand could
+    // therefore hold 125, and the encoder — which stopped writing at the end
+    // of its buffer — emitted a frame declaring 250 data bytes with 247 behind
+    // it. Every reader resolves that differently, and salman's own decoder
+    // would have called it malformed. A frame that lies is worse than no frame.
+    let too_many = Words::new(&[0xAAAA; 125]).unwrap();
+    let request = Request::WriteMultipleRegisters {
+        start: 0,
+        values: too_many,
+    };
+    assert_eq!(
+        request.encode().unwrap_err(),
+        EncodeError::QuantityOutOfRange {
+            function: FunctionCode::WRITE_MULTIPLE_REGISTERS,
+            quantity: 125,
+            min: 1,
+            max: MAX_WRITE_REGISTERS,
+        }
+    );
+
+    // And 123 still encodes, which is the boundary that must not move.
+    let at_limit = Words::new(&[0xAAAA; MAX_WRITE_REGISTERS as usize]).unwrap();
+    let encoded = Request::WriteMultipleRegisters {
+        start: 0,
+        values: at_limit,
+    }
+    .encode()
+    .expect("123 registers is the limit and fits");
+    assert_eq!(encoded.len(), 252);
+    assert!(!encoded.overflowed());
+}
+
+#[test]
+fn a_coil_write_above_its_own_limit_is_refused_even_though_a_read_would_allow_it() {
+    let too_many = Bits::zeroed(MAX_READ_BITS).unwrap();
+    let request = Request::WriteMultipleCoils {
+        start: 0,
+        values: too_many,
+    };
+    assert!(matches!(
+        request.encode().unwrap_err(),
+        EncodeError::QuantityOutOfRange { max, .. } if max == MAX_WRITE_BITS
+    ));
+}
+
+#[test]
+fn a_write_of_nothing_is_refused_by_the_encoder_as_well_as_the_decoder() {
+    // It encoded to a frame declaring zero items, which then failed to decode.
+    // Refusing at both ends means salman never produces bytes it would itself
+    // reject.
+    let request = Request::WriteMultipleRegisters {
+        start: 5,
+        values: Words::new(&[]).unwrap(),
+    };
+    assert!(matches!(
+        request.encode().unwrap_err(),
+        EncodeError::QuantityOutOfRange { quantity: 0, .. }
+    ));
+}
+
+#[test]
+fn everything_the_encoder_produces_the_decoder_accepts() {
+    // The property behind the fix, over every request in the fixtures: if
+    // salman was willing to write it, salman must be willing to read it back.
+    // The bug was exactly a violation of this.
+    for request in one_of_each_request() {
+        let encoded = request.encode().expect("the fixtures are all legal");
+        assert!(!encoded.overflowed());
+        Request::decode(encoded.as_bytes())
+            .unwrap_or_else(|e| panic!("salman wrote {encoded:?} and refused to read it: {e}"));
+    }
 }

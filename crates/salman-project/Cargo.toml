@@ -14,5 +14,8 @@ salman-modbus.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde-saphyr = "1"
 
+[dev-dependencies]
+salman-vm.workspace = true
+
 [lints]
 workspace = true

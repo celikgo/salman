@@ -355,8 +355,19 @@ impl Request {
     }
 
     /// Writes the request as a PDU.
-    #[must_use]
-    pub fn encode(&self) -> Pdu {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] if the request carries more items than the
+    /// function permits. That is possible because [`Bits`] and [`Words`] are
+    /// sized for the largest **read**, and every write has a smaller limit —
+    /// 123 registers against 125, and 1968 coils against 2000. A request built
+    /// by hand can therefore hold more than one frame can carry, and the
+    /// alternative to refusing here is a PDU whose declared byte count is
+    /// larger than the data behind it: a frame that is a lie, which every
+    /// reader resolves differently.
+    pub fn encode(&self) -> Result<Pdu, EncodeError> {
+        self.check_encodable()?;
         let mut pdu = Pdu::new(self.function());
         match self {
             Self::ReadCoils { start, quantity }
@@ -389,7 +400,36 @@ impl Request {
                 }
             }
         }
-        pdu
+        if pdu.overflowed() {
+            // Cannot be reached once `check_encodable` has passed, and checked
+            // anyway: a silent overflow here is the exact failure this method
+            // exists to prevent, so it is not left to an argument about
+            // reachability.
+            return Err(EncodeError::TooLongForAFrame {
+                function: self.function(),
+            });
+        }
+        Ok(pdu)
+    }
+
+    /// Whether this request fits the limits its function gives.
+    fn check_encodable(&self) -> Result<(), EncodeError> {
+        let (quantity, max) = match self {
+            Self::WriteMultipleCoils { values, .. } => (values.count(), MAX_WRITE_BITS),
+            Self::WriteMultipleRegisters { values, .. } => (values.count(), MAX_WRITE_REGISTERS),
+            // Every other function's payload is one item or a pair of 16-bit
+            // fields, neither of which can outgrow a frame.
+            _ => return Ok(()),
+        };
+        if quantity < 1 || quantity > max {
+            return Err(EncodeError::QuantityOutOfRange {
+                function: self.function(),
+                quantity,
+                min: 1,
+                max,
+            });
+        }
+        Ok(())
     }
 
     /// Reads a request from PDU bytes.
@@ -703,6 +743,14 @@ impl Response {
 pub struct Pdu {
     bytes: [u8; MAX_PDU],
     len: u16,
+    /// Set if anything was written past the end.
+    ///
+    /// A buffer that quietly stopped accepting bytes would produce a frame
+    /// whose declared byte count did not match the data behind it — a lie on
+    /// the wire that every reader would resolve differently. Nothing may hand
+    /// out such a PDU, so the fact is recorded and [`Request::encode`] turns
+    /// it into a refusal.
+    overflowed: bool,
 }
 
 impl Pdu {
@@ -711,7 +759,11 @@ impl Pdu {
     pub const fn new(function: FunctionCode) -> Self {
         let mut bytes = [0; MAX_PDU];
         bytes[0] = function.0;
-        Self { bytes, len: 1 }
+        Self {
+            bytes,
+            len: 1,
+            overflowed: false,
+        }
     }
 
     /// Takes PDU bytes as they arrived, without interpreting them.
@@ -726,6 +778,7 @@ impl Pdu {
         let mut pdu = Self {
             bytes: [0; MAX_PDU],
             len: bytes.len() as u16,
+            overflowed: false,
         };
         pdu.bytes.get_mut(..bytes.len())?.copy_from_slice(bytes);
         Some(pdu)
@@ -756,10 +809,21 @@ impl Pdu {
         FunctionCode(self.bytes[0])
     }
 
+    /// Whether anything was written past the end of this PDU.
+    ///
+    /// A PDU that overflowed is not a frame and must never be sent.
+    #[must_use]
+    pub const fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+
     fn push_u8(&mut self, value: u8) {
-        if let Some(slot) = self.bytes.get_mut(self.len as usize) {
-            *slot = value;
-            self.len += 1;
+        match self.bytes.get_mut(self.len as usize) {
+            Some(slot) => {
+                *slot = value;
+                self.len += 1;
+            }
+            None => self.overflowed = true,
         }
     }
 
@@ -791,6 +855,56 @@ impl PartialEq for Pdu {
 }
 
 impl Eq for Pdu {}
+
+/// Why a request could not be written as a frame.
+///
+/// Decoding has many ways to fail and encoding has one shape of failure: the
+/// value holds more than the function permits. It has its own type rather than
+/// sharing [`DecodeError`] because a caller handles the two in entirely
+/// different places — one is about bytes that arrived, the other about a value
+/// this program built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncodeError {
+    /// The request carries a quantity outside what the function permits.
+    QuantityOutOfRange {
+        /// Which function.
+        function: FunctionCode,
+        /// How many items the request holds.
+        quantity: u16,
+        /// The smallest the function permits.
+        min: u16,
+        /// The largest the function permits.
+        max: u16,
+    },
+    /// The encoded form ran past the end of a protocol data unit.
+    TooLongForAFrame {
+        /// Which function.
+        function: FunctionCode,
+    },
+}
+
+impl fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::QuantityOutOfRange {
+                function,
+                quantity,
+                min,
+                max,
+            } => write!(
+                f,
+                "{function} carries {quantity} items and permits {min} to {max}"
+            ),
+            Self::TooLongForAFrame { function } => write!(
+                f,
+                "a {function} of this size does not fit in the {MAX_PDU} bytes a protocol \
+                 data unit may hold"
+            ),
+        }
+    }
+}
+
+impl core::error::Error for EncodeError {}
 
 /// Why a PDU could not be decoded.
 ///

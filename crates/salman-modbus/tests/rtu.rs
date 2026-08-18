@@ -24,7 +24,7 @@ fn read_holding() -> Request {
 
 #[test]
 fn an_adu_is_the_address_the_pdu_and_the_crc_low_byte_first() {
-    let adu = RtuAdu::new(0x11, read_holding().encode());
+    let adu = RtuAdu::new(0x11, read_holding().encode().unwrap());
     let bytes = adu.to_vec();
     assert_eq!(bytes[..6], [0x11, 0x03, 0x00, 0x6B, 0x00, 0x03]);
     // salman's own arithmetic over those six bytes, low byte first.
@@ -36,14 +36,14 @@ fn an_adu_is_the_address_the_pdu_and_the_crc_low_byte_first() {
 #[test]
 fn an_adu_survives_the_round_trip() {
     for address in [BROADCAST, 1, 0x11, 247] {
-        let adu = RtuAdu::new(address, read_holding().encode());
+        let adu = RtuAdu::new(address, read_holding().encode().unwrap());
         assert_eq!(RtuAdu::decode(&adu.to_vec()).unwrap(), adu);
     }
 }
 
 #[test]
 fn a_corrupted_frame_is_refused_rather_than_answered() {
-    let adu = RtuAdu::new(0x11, read_holding().encode());
+    let adu = RtuAdu::new(0x11, read_holding().encode().unwrap());
     let mut bytes = adu.to_vec();
     bytes[3] ^= 0x01;
     let error = RtuAdu::decode(&bytes).unwrap_err();
@@ -56,7 +56,7 @@ fn a_corrupted_frame_is_refused_rather_than_answered() {
 
 #[test]
 fn every_single_bit_error_in_a_frame_is_caught() {
-    let adu = RtuAdu::new(0x11, read_holding().encode());
+    let adu = RtuAdu::new(0x11, read_holding().encode().unwrap());
     let bytes = adu.to_vec();
     for byte in 0..bytes.len() {
         for bit in 0..8 {
@@ -119,8 +119,8 @@ fn addresses_are_classified_as_the_specification_gives_them() {
     assert_eq!(classify_address(247), AddressKind::Device);
     assert_eq!(classify_address(248), AddressKind::Reserved);
     assert_eq!(classify_address(255), AddressKind::Reserved);
-    assert!(RtuAdu::new(BROADCAST, read_holding().encode()).is_broadcast());
-    assert!(!RtuAdu::new(1, read_holding().encode()).is_broadcast());
+    assert!(RtuAdu::new(BROADCAST, read_holding().encode().unwrap()).is_broadcast());
+    assert!(!RtuAdu::new(1, read_holding().encode().unwrap()).is_broadcast());
 }
 
 #[test]
@@ -196,7 +196,7 @@ fn no_byte_string_makes_the_serial_decoder_panic() {
 
 #[test]
 fn a_frame_that_decodes_re_encodes_to_the_bytes_it_came_from() {
-    let adu = RtuAdu::new(0x11, read_holding().encode());
+    let adu = RtuAdu::new(0x11, read_holding().encode().unwrap());
     let bytes = adu.to_vec();
     assert_eq!(RtuAdu::decode(&bytes).unwrap().to_vec(), bytes);
 }

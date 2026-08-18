@@ -38,6 +38,6 @@ pub mod tcp;
 pub use crc::Crc16;
 pub use device::{BitTable, Device, Table, WordTable};
 pub use function::{ExceptionCode, FunctionCode};
-pub use pdu::{Bits, DecodeError, Pdu, Request, Response, Words};
+pub use pdu::{Bits, DecodeError, EncodeError, Pdu, Request, Response, Words};
 pub use rtu::{RtuAdu, RtuError};
 pub use tcp::{Framer, MbapHeader, TcpAdu};

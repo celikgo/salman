@@ -21,6 +21,7 @@ use salman_modbus_net::client::Client;
 use salman_modbus_net::server::{Server, ServerHandle};
 use salman_project::spec::Project;
 use salman_vm::clock::Clock;
+use salman_vm::compile::IMAGE_BYTES as RUNTIME_IMAGE_BYTES;
 use salman_vm::project::build_all;
 use salman_vm::task::Runtime;
 
@@ -369,4 +370,109 @@ fn a_width_no_modbus_table_fills_has_no_run() {
     // honest answer to "what is the next one".
     let first = salman_test::runner::parse_address_public("%ID0").unwrap();
     assert!(nth(&first, 1).is_none());
+}
+
+#[test]
+fn a_flat_bit_address_advances_the_way_the_process_image_reads_it() {
+    // `%IX13` is bit 13, not byte 13, so the next item is bit 14 — which is
+    // written `%IX1.6`. Advancing it as though it were byte 13 walked the run
+    // off to bit 104 and away from wherever the program was reading.
+    let first = salman_test::runner::parse_address_public("%IX13").unwrap();
+    assert_eq!(nth(&first, 0).unwrap().to_string(), "%IX1.5");
+    assert_eq!(nth(&first, 1).unwrap().to_string(), "%IX1.6");
+    assert_eq!(nth(&first, 3).unwrap().to_string(), "%IX2.0");
+}
+
+#[test]
+fn every_step_of_a_bit_run_lands_where_the_process_image_puts_it() {
+    // The run and the image have to agree at every item, not only the first.
+    use salman_vm::memory::{ImageLayout, ProcessImage};
+    let image = ProcessImage::new(1024, ImageLayout::default());
+    for start in ["%QX0.0", "%QX13", "%QX1.5", "%QX7"] {
+        let first = salman_test::runner::parse_address_public(start).unwrap();
+        let base = image.resolve(&first).unwrap();
+        let base_bit = u64::from(base.byte) * 8 + u64::from(base.bit);
+        for step in 0..20_u16 {
+            let moved = nth(&first, step).unwrap();
+            let at = image.resolve(&moved).unwrap();
+            assert_eq!(
+                u64::from(at.byte) * 8 + u64::from(at.bit),
+                base_bit + u64::from(step),
+                "{start} + {step} landed in the wrong place"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_value_the_process_image_will_not_store_is_reported_rather_than_dropped() {
+    // Found by review. `drive_input` says both whether the address resolved
+    // and whether the value landed, and the second answer was discarded — so
+    // a device could report a value, salman could fail to store it, and the
+    // program would read whatever was there before with nothing anywhere
+    // saying so.
+    //
+    // The case that provokes it: a mapping whose run walks past the end of the
+    // process image. The project file checks that against the size it was
+    // given; this checks it against the image the runtime actually has.
+    let handle = simulator(
+        Device::empty()
+            .with_registers(WordTable::InputRegisters, 0, 200)
+            .with_bits(BitTable::Coils, 0, 10),
+    );
+    let image_words = RUNTIME_IMAGE_BYTES / 2;
+    let project = Project::parse(
+        &format!(
+            "sources: [a.st]\ndevices:\n  - name: tank\n    protocol: modbus-tcp\n    address: \"x\"\n    unit: 1\n    map:\n      - {{ table: input-registers, from: 0, count: 4, to: \"%IW{}\" }}\n",
+            image_words - 2
+        ),
+        // Declared as twice the size it really is, which is how a mapping that
+        // does not fit gets past the file check at all.
+        RUNTIME_IMAGE_BYTES * 2,
+    )
+    .expect("the file check passes against the size it was told");
+
+    let client = Client::connect(handle.address(), Duration::from_millis(500)).unwrap();
+    let mut link = Link::new(
+        "tank",
+        client,
+        1,
+        Peer::Simulated,
+        project.devices[0].mappings.clone(),
+        &simulating(),
+        0,
+    )
+    .unwrap();
+
+    let built = build_all(
+        &[(
+            "t.st",
+            "PROGRAM P\nVAR X : INT; END_VAR\n  X := 1;\nEND_PROGRAM\n",
+        )],
+        &Dialect::generic(),
+    )
+    .unwrap();
+    let compiled = built.compiled.unwrap();
+    let mut runtime = Runtime::new(
+        compiled.program.clone(),
+        compiled.memory.clone(),
+        Clock::virtual_default(),
+        compiled.tasks.clone(),
+    );
+
+    let error = link
+        .poll_inputs(runtime.memory_mut())
+        .expect_err("this mapping does not fit the image the runtime has");
+    let said = error.to_string();
+    assert!(
+        said.contains("tank"),
+        "the message must name the device: {said}"
+    );
+    assert!(
+        matches!(
+            error,
+            LinkError::AddressRun { .. } | LinkError::StoreRefused { .. }
+        ),
+        "{error}"
+    );
 }

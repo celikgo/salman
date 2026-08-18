@@ -332,6 +332,39 @@ pub static REGISTRY: &[Capability] = &[
                is a compile error, not a CI job.",
     },
     Capability {
+        id: "io.capture.pcap",
+        area: "Protocols",
+        title: "Reading and writing classic pcap captures",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-capture/tests/pcap.rs",
+                test: "all_four_magics_are_read_and_each_says_what_it_means",
+            },
+            Evidence {
+                file: "crates/salman-capture/tests/pcap.rs",
+                test: "a_variant_with_a_longer_record_header_is_refused_by_name",
+            },
+            Evidence {
+                file: "crates/salman-capture/tests/pcap.rs",
+                test: "the_timestamp_scale_changes_what_the_fraction_means",
+            },
+            Evidence {
+                file: "crates/salman-capture/tests/pcap.rs",
+                test: "a_record_claiming_more_than_the_file_holds_is_refused_and_reserves_nothing",
+            },
+        ],
+        note: "Written in-crate: it is a few hundred lines, and it buys a fuzz target salman \
+               owns and no unsafe code anywhere between a file and a decoded frame. All four \
+               magics, both byte orders, both timestamp scales. The libpcap variants salman \
+               will not read are refused **by name** rather than as unknown, because one of \
+               them has a longer record header and guessing would misparse every record while \
+               looking entirely plausible. Verified against real captures and cross-checked \
+               against tcpdump -r. Nothing decodes what is inside a frame yet, and pcapng is \
+               not read.",
+    },
+    Capability {
         id: "io.located-variables",
         area: "Runtime",
         title: "AT %IX0.0 binds a variable to the process image, with no copy",
@@ -385,8 +418,11 @@ pub static REGISTRY: &[Capability] = &[
                set: %I is read from the device and %Q is written to it. Widths must agree, \
                ranges must exist, no two mappings may claim the same image bits, and a \
                misspelt key is refused rather than ignored — an ignored one would leave a \
-               program reading zeros from an input it believed was live. Nothing yet runs a \
-               mapping: this reads and checks one.",
+               program reading zeros from an input it believed was live. Bit addressing \
+               follows the process image exactly: %IX13 is the flat bit 13, not byte 13, and \
+               a bit number above seven or a bit suffix on a word address is refused rather \
+               than silently aliasing another location. Nothing yet runs a mapping: this \
+               reads and checks one.",
     },
     Capability {
         id: "io.mapping-runs",
