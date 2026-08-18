@@ -42,11 +42,14 @@
 //! and not finding permission is not permission. It also makes no conformance
 //! claim: PLCopen runs no conformance programme for this format.
 
+pub mod compat;
 pub mod model;
 pub mod read;
+pub mod write;
 
 pub use model::{Body, Interface, Pou, PouKind, Project, VarSection, Variable};
 pub use read::{ReadError, read};
+pub use write::{WriteError, write};
 
 /// The namespace of the version salman modelled: v2.01.
 pub const NAMESPACE: &str = "http://www.plcopen.org/xml/tc6_0201";
