@@ -1,5 +1,11 @@
 # salman
 
+[![ci](https://github.com/celikgo/salman/actions/workflows/ci.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/ci.yml)
+[![determinism](https://github.com/celikgo/salman/actions/workflows/determinism.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/determinism.yml)
+[![performance budget](https://github.com/celikgo/salman/actions/workflows/perf.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/perf.yml)
+[![supply chain](https://github.com/celikgo/salman/actions/workflows/supply-chain.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/supply-chain.yml)
+[![docs links](https://github.com/celikgo/salman/actions/workflows/docs-links.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/docs-links.yml)
+
 A vendor-neutral, text-first, git-native workbench for IEC 61131-3 PLC engineering,
 industrial communication, and deterministic-network simulation.
 
@@ -16,7 +22,7 @@ itself because no source available to it settled the question.
 ## Sixty seconds
 
 ```
-$ cargo build --release            # about 20 s from a cold cargo cache
+$ cargo build --release            # 11 s from an empty target directory
 $ target/release/salman check examples/conveyor/conveyor.st
 examples/conveyor/conveyor.st: no errors
 
@@ -118,20 +124,25 @@ Rule 5: the lightweight budget is a tested gate, not a slogan.
 `.github/workflows/perf.yml` measures the four rows below and fails when a
 measurement exceeds the threshold in [`perf-budget.toml`](perf-budget.toml).
 
-| Measurement | Budget | Measured |
-|---|---|---|
-| Cold start (`salman version`, warm page cache, median of 20) | 2 s | **2.6 ms** |
-| Release binary on disk | 120 MB* | **2.4 MB** |
-| Peak resident set (`salman version`) | 350 MB | **2.1 MB** |
-| `cargo test --workspace`, excluding the build | 60 s | **0.4 s** |
+| Measurement | Budget | Linux x86-64 | macOS aarch64 | Windows x86-64 |
+|---|---|---|---|---|
+| Cold start of `salman version` | 2 s | **0.70 ms** | **3.6 ms** | **6.7 ms** |
+| Release binary on disk | 120 MB* | **2.80 MB** | **2.38 MB** | **2.52 MB** |
+| Peak resident set | 350 MB | **2.87 MB** | **1.93 MB** | not gated† |
+| `cargo test --workspace`, excluding the build | 60 s | **< 1 s** | **1 s** | **0.91 s** |
 
-Measured on an Apple M-series laptop with the pinned toolchain. The numbers on a
-shared-tenant CI runner are worse and noisier, which is why the committed
-thresholds are ceilings rather than targets.
+Those are the numbers the `performance budget` job measured on GitHub-hosted
+runners for the commit this README describes, not numbers from a developer's
+laptop. One more, measured locally because no CI job benchmarks throughput yet:
+a **1000-rung program scans in 60 µs**, or 0.6 % of one core at a 10 ms period.
 
 \* The 120 MB figure is an **installer** budget. There is no installer yet, so
 that job currently weighs the CLI binary against the same number; `perf-budget.toml`
 says so rather than letting a passing run be read as evidence the installer fits.
+
+† Peak resident set is not gated on Windows. Reading it reliably after a process
+exits is awkward there, and a measurement salman is not confident in is worse
+than an admitted gap. Linux and macOS are gated.
 
 Two things this table is not. The peak resident set is measured on
 `salman version`, which is the smallest thing the binary does; a longer run costs
@@ -186,9 +197,10 @@ What salman does claim, in the only shapes the evidence supports:
    this paragraph. *(salman does not implement this yet either — it is the
    workbench milestone.)*
 2. **The gap, not the idea.** Every open-source PLC unit-testing framework we
-   found requires a proprietary runtime: TwinCAT, CODESYS, Sysmac Studio or TIA
-   Portal. PLC unit testing in CI is not new. What is absent is doing it without
-   a vendor licence, and that part works today.
+   found requires a proprietary runtime: TwinCAT, CODESYS, or TIA Portal with
+   PLCSIM Advanced. PLC unit testing in CI is not new. What is absent is doing it
+   without a vendor licence, and that part works today. `docs/ROADMAP.md` names
+   the three frameworks the search found.
 3. **Integration stated as integration.** No single tool we found combines
    compiler, deterministic runtime, semantic diff, CI unit tests and network
    co-simulation. Integration is the contribution; salman did not invent the
