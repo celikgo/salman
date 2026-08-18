@@ -668,6 +668,24 @@ pub static REGISTRY: &[Capability] = &[
                as RTU, and salman says so rather than pretending otherwise.",
     },
     Capability {
+        id: "io.modbus.interoperability",
+        area: "Protocols",
+        title: "Checked against pymodbus, in both roles, in CI",
+        status: Status::ImplementedUntested,
+        milestone: "v0.2",
+        evidence: &[],
+        note: ".github/workflows/interop.yml runs salman's Modbus TCP against pymodbus 3.15.0 \
+               in both directions: pymodbus's client against salman's simulator, and salman's \
+               client against pymodbus's server. Both check reads of all four tables, single \
+               and multiple writes read back, and that an address outside the map produces \
+               exception 2 rather than a plausible value. This matters because every other \
+               test here checks salman against salman, and a decoder and an encoder written \
+               by one person from one reading of one specification agree about a mistake as \
+               readily as about the truth. Not ImplementedTested because this registry's \
+               evidence rule wants a named test function in this repository, and a workflow \
+               driving another project is not one.",
+    },
+    Capability {
         id: "io.modbus.pdu",
         area: "Protocols",
         title: "Modbus protocol data units, decoded and encoded, with no allocation",

@@ -1,0 +1,115 @@
+# Does salman's Modbus agree with an implementation nobody here wrote?
+#
+# Every other test in this repository checks salman against salman. That is
+# necessary and it is not sufficient: a decoder and an encoder written by the
+# same person, from the same reading of the same specification, will agree with
+# each other about a mistake as readily as about the truth. The only way to
+# find that class of error is to put salman opposite something independent.
+#
+# pymodbus is that something. It is widely deployed, it is not a derivative of
+# anything salman shares code with, and it has its own reading of the same
+# documents. Both roles are exercised, because being a correct client and being
+# a correct server are different claims:
+#
+#   * pymodbus's client against salman's simulator
+#   * salman's client against pymodbus's server
+#
+# The version is pinned. An interoperability check whose other side moves is a
+# check that can start failing for reasons that have nothing to do with this
+# repository, and a flaky gate is a gate people learn to ignore.
+name: interop
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: interop-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pinned. See the note above about a moving other side.
+  PYMODBUS_VERSION: "3.15.0"
+
+jobs:
+  modbus:
+    name: salman against pymodbus
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install pymodbus
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "pymodbus==${PYMODBUS_VERSION}"
+          python -c "import pymodbus; print('pymodbus', pymodbus.__version__)"
+
+      - name: Build the harness
+        run: cargo build -p salman-modbus-net --examples
+
+      # ---------------------------------------------------------------
+      # pymodbus's client against salman's simulator.
+      #
+      # The simulator serves for a fixed period rather than until a signal or
+      # a closed pipe, because those behave differently in every runner and
+      # this has to work the same on a laptop and here.
+      # ---------------------------------------------------------------
+      - name: pymodbus reads and writes salman's simulator
+        run: |
+          set -euo pipefail
+          PORT=15502
+          ./target/debug/examples/simulator "$PORT" 60 > simulator.log 2>&1 &
+          SIM=$!
+          # Wait for the line that says it is listening, rather than sleeping a
+          # guessed number of seconds.
+          for _ in $(seq 1 100); do
+            grep -q listening simulator.log && break
+            sleep 0.1
+          done
+          grep -q listening simulator.log || { echo "::error title=Simulator did not start::"; cat simulator.log; exit 1; }
+          python .github/interop/drive_salman.py "$PORT"
+          kill "$SIM" 2>/dev/null || true
+
+      # ---------------------------------------------------------------
+      # salman's client against pymodbus's server.
+      # ---------------------------------------------------------------
+      - name: salman reads and writes pymodbus's server
+        run: |
+          set -euo pipefail
+          PORT=15503
+          python .github/interop/serve_for_salman.py "$PORT" > server.log 2>&1 &
+          SRV=$!
+          for _ in $(seq 1 200); do
+            grep -q ready server.log && break
+            sleep 0.1
+          done
+          grep -q ready server.log || { echo "::error title=pymodbus server did not start::"; cat server.log; exit 1; }
+          ./target/debug/examples/client "$PORT" | python .github/interop/check_salman_client.py
+          kill "$SRV" 2>/dev/null || true
+
+      - name: Say what was checked
+        if: always()
+        run: |
+          {
+            echo "### Interoperability"
+            echo
+            echo "salman's Modbus TCP against **pymodbus ${PYMODBUS_VERSION}**, in both roles:"
+            echo
+            echo "- pymodbus's client reading and writing salman's simulator"
+            echo "- salman's client reading and writing pymodbus's server"
+            echo
+            echo "Both directions check reads of all four tables, single and multiple writes"
+            echo "read back, and that an address outside the map produces exception 2 rather"
+            echo "than a plausible value."
+          } >> "$GITHUB_STEP_SUMMARY"

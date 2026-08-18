@@ -171,7 +171,7 @@ variables bound to it with no copy. Several source files build as one program.
 Modbus TCP and RTU framing, a client, and a simulator to point it at — with
 every write gated by the posture model. Reading a packet capture and saying
 what happened on it, with findings that carry their evidence and say how sure
-salman is. A project file that binds a device's
+salman is. The Modbus stack is checked against pymodbus in CI, in both roles. A project file that binds a device's
 registers to `%I` and `%Q`, so a program reads a real device through the
 process image. salman **reads** live equipment and will not drive its outputs;
 see [`docs/adr/ADR-0014-salman-does-not-drive-a-plant.md`](docs/adr/ADR-0014-salman-does-not-drive-a-plant.md).

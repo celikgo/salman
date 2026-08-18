@@ -148,6 +148,12 @@ The first version that leaves the process. Two items are done; the rest is futur
 The posture model already in the tree is what governs this milestone: read-only by default,
 writes only from an armed posture and only with per-call confirmation.
 
+`[x]` **Checked against an implementation nobody here wrote.**
+`.github/workflows/interop.yml` runs salman's Modbus against pymodbus in both roles — its
+client against salman's simulator, and salman's client against its server. Everything else in
+this repository checks salman against salman, which finds a great deal and cannot find the
+class of error where a decoder and an encoder agree about the same misreading.
+
 ## v0.3 — the workbench
 
 - A **Tauri desktop application** over the same headless core, so nothing is reachable only
