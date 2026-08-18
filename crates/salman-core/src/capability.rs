@@ -352,6 +352,33 @@ pub static REGISTRY: &[Capability] = &[
                Modbus layer.",
     },
     Capability {
+        id: "io.modbus.device",
+        area: "Protocols",
+        title: "A Modbus server's data model and the exceptions it answers with",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-modbus/tests/device.rs",
+                test: "a_read_that_ends_exactly_at_the_end_of_the_map_is_legal",
+            },
+            Evidence {
+                file: "crates/salman-modbus/tests/device.rs",
+                test: "a_multiple_write_that_runs_off_the_end_changes_nothing_at_all",
+            },
+            Evidence {
+                file: "crates/salman-modbus/tests/device.rs",
+                test: "a_quantity_that_is_wrong_is_reported_before_an_address_that_is_also_wrong",
+            },
+        ],
+        note: "Four tables, each a declared range rather than a full 65536 items, so that \
+               exception 02 — an address outside the map — is something salman can actually \
+               produce. A multi-register write that fails validation changes nothing. The \
+               order of the checks is salman's decision: APS Figure 9 and the per-function \
+               figures of §6 disagree, and salman follows §6. Nothing here opens a socket; \
+               this decides the answer and something else will carry it.",
+    },
+    Capability {
         id: "io.modbus.framing",
         area: "Protocols",
         title: "Modbus TCP stream framing and RTU serial frames",

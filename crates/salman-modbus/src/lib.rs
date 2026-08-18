@@ -28,6 +28,7 @@
 //! conformance-tested by, and not affiliated with either. See `LEGAL.md`.
 
 pub mod crc;
+pub mod device;
 pub mod function;
 pub mod limits;
 pub mod pdu;
@@ -35,6 +36,7 @@ pub mod rtu;
 pub mod tcp;
 
 pub use crc::Crc16;
+pub use device::{BitTable, Device, Table, WordTable};
 pub use function::{ExceptionCode, FunctionCode};
 pub use pdu::{Bits, DecodeError, Pdu, Request, Response, Words};
 pub use rtu::{RtuAdu, RtuError};
