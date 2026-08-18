@@ -1,0 +1,21 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock IS committed: salman gates on bit-identical output across
+# machines, and that is only meaningful with a locked dependency graph.
+# (Do not add Cargo.lock here.)
+
+# Fuzzing
+fuzz/target/
+fuzz/artifacts/
+fuzz/coverage/
+
+# Local scratch
+/scratch/
+*.local.toml
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,19 @@
+[package]
+name = "salman-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "salman command line interface"
+
+[[bin]]
+name = "salman"
+path = "src/main.rs"
+
+[dependencies]
+salman-core.workspace = true
+clap = { version = "4", features = ["derive"] }
+
+[lints]
+workspace = true

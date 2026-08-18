@@ -1,0 +1,8 @@
+# Pinned deliberately. salman's determinism gate compares simulation traces
+# byte-for-byte across Linux, macOS and Windows; that comparison is only
+# meaningful if every machine runs the same compiler. Bumping this pin is a
+# reviewed change, not a drive-by.
+[toolchain]
+channel = "1.94.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

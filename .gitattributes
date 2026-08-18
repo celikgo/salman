@@ -1,0 +1,20 @@
+# salman compares simulation traces byte-for-byte across Linux, macOS and
+# Windows (see docs/adr/ADR-0005-determinism.md). Git must never rewrite the
+# bytes of a tracked file, or the determinism gate becomes a line-ending test.
+
+* text=auto eol=lf
+
+*.rs      text eol=lf
+*.toml    text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.md      text eol=lf
+*.st      text eol=lf
+*.iecst   text eol=lf
+
+# Golden artefacts are compared as bytes and must never be normalised.
+golden/**    -text
+examples/**/golden/** -text
+*.golden     -text
+*.trace      -text
+*.pcap       -text -diff
