@@ -13,6 +13,7 @@ members = [
     "crates/salman-core",
     "crates/salman-lang",
     "crates/salman-vm",
+    "crates/salman-modbus",
     "crates/salman-test",
     "crates/salman-cli",
 ]
@@ -31,6 +32,7 @@ categories = ["development-tools", "simulation"]
 salman-core = { path = "crates/salman-core", version = "0.0.1" }
 salman-lang = { path = "crates/salman-lang", version = "0.0.1" }
 salman-vm = { path = "crates/salman-vm", version = "0.0.1" }
+salman-modbus = { path = "crates/salman-modbus", version = "0.0.1" }
 salman-test = { path = "crates/salman-test", version = "0.0.1" }
 
 [workspace.lints.rust]

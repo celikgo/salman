@@ -37,6 +37,12 @@ A capability is only marked *implemented and tested* if it names tests that exis
 | `[x]` | IEC clause citation registry with explicit provenance | implemented and tested | v0.1 | 43 citations are registered — 22 clauses, 18 tables and 3 figures of IEC 61131-3:2013 (Edition 3.0) — each with a number cross-checked against a public source and a requirement paraphrased in salman's own words. docs/IEC_CITATIONS.md is generated from the registry and cannot drift from it. A citation being registered does not mean the behaviour it names is implemented. |
 | `[x]` | One source of version truth, checked when the crate compiles | implemented and tested | v0.1 | The root VERSION file and Cargo's version cannot disagree: the mismatch is a compile error, not a CI job. |
 
+## Protocols
+
+| | Capability | Status | Milestone | Notes |
+|---|---|---|---|---|
+| `[x]` | Modbus protocol data units, decoded and encoded, with no allocation | implemented and tested | v0.2 | Eight function codes: read and write, bits and words. The rest decode by number and are reported as not implemented rather than guessed at. Nothing here opens a socket or reads a file — no transport, no client and no server exists yet. Addresses are the PDU addresses on the wire; salman applies no 4xxxx offset anywhere, see docs/adr/ADR-0012-modbus-addressing.md. |
+
 ## Runtime
 
 | | Capability | Status | Milestone | Notes |

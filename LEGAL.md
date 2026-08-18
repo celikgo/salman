@@ -156,22 +156,57 @@ sponsored by any third party named below, or by the IEC.
 | OPC UA, OPC Foundation | OPC Foundation |
 | CANopen | CAN in Automation |
 | PLCopen | PLCopen |
-| Modbus | its owner — see below |
+| MODBUS | Schneider Electric USA, Inc. — used under licence by Modbus Organization, Inc. |
 
 All other trademarks are the property of their respective owners.
 
-### Why the Modbus row names nobody
+### The Modbus row, and how it came to be filled in
 
-It would be easy to write "Modbus is a trademark of Schneider Electric" and it is written
-that way in a great many places. We could not establish it from a primary source. The legal
-notice published by modbus.org lists Schneider Electric marks, and "Modbus" is not among
-them. That page is not linked here because it refuses the automated link checker this
-repository runs, so a reader should look it up rather than take our word for the contents.
+Earlier versions of this file named nobody in that row. It would have been easy to write
+"Modbus is a trademark of Schneider Electric", because it is written that way in a great
+many places, but we could not establish it from a primary source, and naming the wrong
+owner of a mark in a legal file is a worse error than declining to name one. The hedge
+stayed until a primary source settled it.
 
-Naming the wrong owner of a mark in a legal file is a worse error than declining to name
-one, so the hedge stays until a primary source settles it. This is the same rule the
-citation registry follows for clause numbers it could not confirm: state the uncertainty in
-the record instead of resolving it by guessing.
+Two settled it, and both were fetched rather than repeated:
+
+- **USPTO**, Trademark Status and Document Retrieval, serial number 73331239: mark
+  **MODBUS**, registration number **1241871**, registered 14 June 1983, status
+  *LIVE/REGISTRATION/Issued and Active*, renewed 7 December 2023, current owner
+  **"SCHNEIDER ELECTRIC USA, INC."**, a corporation.
+- The **MODBUS/TCP Security Protocol Specification** published by the Modbus Organization
+  carries, on its title page: *"MODBUS® is a registered trademark of Schneider Electric
+  USA, Inc., used under license by Modbus Organization, Inc."* — which answers the second
+  question, of what the Organization's own relationship to the mark is. It is the licensee.
+
+Note that MODBUS Application Protocol Specification V1.1b3 Annex A carries an older form of
+the same notice naming "Schneider Automation Inc.". It is consistent with the above and out
+of date; salman cites the two sources above rather than that one alone.
+
+One earlier statement in this file was **wrong in emphasis** and is corrected here: it said
+that modbus.org's legal notice lists Schneider Electric marks and that "Modbus" is not among
+them, which invited the reading that no owner exists. The notice does name Modicon, Merlin
+Gerin, Square D and Telemecanique and does not name Modbus; what follows from that is only
+that *that page* does not settle the question, not that the mark is unowned. It is owned,
+and the row above now says by whom.
+
+We could not find a published trademark or logo use policy at modbus.org's `/legal`,
+`/faq`, `/about-us` or `/conformance-testing`. The honest statement is that **none is
+published at those URLs**, not that none exists; a members-only policy may.
+
+### Attribution line
+
+Any salman document that discusses Modbus carries this line, and `crates/salman-modbus`
+carries it in its crate documentation:
+
+> MODBUS® is a registered trademark of Schneider Electric USA, Inc., used under licence by
+> Modbus Organization, Inc.
+
+salman is not certified by, conformant to the certification programme of, nor affiliated
+with either. Conformance testing is a separate programme run for member companies and
+approved laboratories, and salman has not been through it. salman may say that it mirrors
+assertions drawn from the published Conformance Test Specification; it may not say it is
+conformant, and it does not.
 
 ### Phrasing rules
 
@@ -191,9 +226,20 @@ Never, because each asserts a relationship or an approval that does not exist:
   salman in connection with any vendor, any trade association, or the IEC
 - "IEC 61131-3 compliant", full stop, with or without qualification
 - vendor logos, wordmarks, or brand colours anywhere in the project
-- any product name or crate name containing a third-party mark
+- any **product** name, binary name, or domain containing a third-party mark — `Modbus
+  Studio` and the like
 
-At 0.0.1 salman implements none of those formats or protocols. The names above do appear
+**One rule here was narrowed, deliberately.** It previously forbade "any product name or
+crate name containing a third-party mark", and `crates/salman-modbus` breaks it as written.
+The rule was too broad: it conflated branding with description. Naming the component that
+implements a protocol after the protocol is descriptive use — it says what the code does and
+claims nothing about who made it — and it is what `libmodbus`, `tokio-modbus` and `rmodbus`
+all do. What is forbidden is using a mark to name the *product*, or in a way that suggests
+the mark's owner stands behind it. An internal crate path does neither. The narrower rule is
+the one above, and this paragraph records that it was changed rather than quietly relaxed.
+
+At 0.0.1 salman implements none of those formats or protocols beyond the Modbus wire format
+in `crates/salman-modbus`, which opens no socket. The names above do appear
 elsewhere in the repository: in `README.md`, `docs/ROADMAP.md`, `docs/CONFORMANCE.md`,
 `docs/STATUS.md`, `docs/adr/ADR-0003-plcopen-xml-canonical.md` and
 `docs/adr/ADR-0007-dialects.md`, and in source comments and diagnostic text in

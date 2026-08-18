@@ -352,6 +352,36 @@ pub static REGISTRY: &[Capability] = &[
                Modbus layer.",
     },
     Capability {
+        id: "io.modbus.pdu",
+        area: "Protocols",
+        title: "Modbus protocol data units, decoded and encoded, with no allocation",
+        status: Status::ImplementedTested,
+        milestone: "v0.2",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-modbus/tests/pdu.rs",
+                test: "the_conformance_specifications_read_coils_frame",
+            },
+            Evidence {
+                file: "crates/salman-modbus/tests/pdu.rs",
+                test: "every_prefix_of_a_valid_frame_is_refused",
+            },
+            Evidence {
+                file: "crates/salman-modbus/tests/pdu.rs",
+                test: "no_byte_string_makes_the_decoder_panic",
+            },
+            Evidence {
+                file: "crates/salman-modbus/src/crc.rs",
+                test: "the_one_vector_the_specification_publishes",
+            },
+        ],
+        note: "Eight function codes: read and write, bits and words. The rest decode by \
+               number and are reported as not implemented rather than guessed at. Nothing \
+               here opens a socket or reads a file — no transport, no client and no server \
+               exists yet. Addresses are the PDU addresses on the wire; salman applies no \
+               4xxxx offset anywhere, see docs/adr/ADR-0012-modbus-addressing.md.",
+    },
+    Capability {
         id: "lang.project.multi-file",
         area: "Language",
         title: "Several source files build as one program",

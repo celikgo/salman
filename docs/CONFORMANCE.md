@@ -1171,6 +1171,59 @@ checker as it does at run time, which is the part that has to agree.
 `a_string_with_no_declared_length_is_truncated_at_the_dialect_default`, which fixes the length
 of a `STRING` written without one at the dialect's 80.
 
+### 26. Where salman's Modbus decoder is stricter than the specification
+
+> MODBUS® is a registered trademark of Schneider Electric USA, Inc., used under licence by
+> Modbus Organization, Inc. salman is not certified by, conformance-tested by, or affiliated
+> with either. See `LEGAL.md`.
+
+Sources cited in this section: **APS** = MODBUS Application Protocol Specification V1.1b3,
+26 April 2012; **SL** = MODBUS over Serial Line V1.02, 20 December 2006; **MG** = MODBUS
+Messaging on TCP/IP Implementation Guide V1.0b, 24 October 2006.
+
+**What salman does.** Four of the decoder's refusals are stricter than the letter of the
+specification. Each is salman's decision, and each is here because a reader would otherwise
+reasonably assume it came from APS.
+
+1. **A declared byte count must agree with the declared quantity.** APS states both fields
+   and never tells an implementation to cross-check them. salman refuses a frame where they
+   disagree instead of trusting one of them. The two obvious choices — trust the byte count,
+   trust the quantity — are both taken by real implementations, so a frame in which they
+   disagree is one where two conforming readers get different answers. That is the shape of
+   a fault, and reporting it beats resolving it.
+2. **Bytes after the end of a frame are refused.** APS defines each function's fields and
+   stops. A frame with more bytes after the last field is most often two frames run
+   together, and silently ignoring the tail is how a framing fault becomes a wrong reading
+   ten frames later.
+3. **Write Single Coil accepts exactly `0xFF00` and `0x0000`.** This one *is* APS §6.5, and
+   it is listed here because the common implementation — treat any non-zero value as "on" —
+   is so widespread that salman's stricter reading looks like the deviation. It is not.
+4. **Padding bits are cleared on the way in.** APS says the unused high bits of the last
+   data byte are zero. Not every device zeroes them. salman clears them when decoding, so
+   two readings of the same coils compare equal even if one device left them set. The bits
+   are meaningless by definition, and a difference in them is not a difference in the data.
+
+**Two things salman decodes without claiming they are defined.**
+
+- **Exception code `0x07`.** It is absent from the APS §7 table of exception codes, and the
+  same document refers to it twice — §6.10 names it, §6.8 counts it. salman decodes it and
+  its description says exactly that. It will not invent a definition APS does not give, and
+  it will not pretend the byte is meaningless when APS uses it.
+- **Function codes salman does not implement.** They decode by number and are reported as
+  not implemented, distinguished from codes APS does not name at all. A device may put
+  anything in the user-defined ranges, so a name salman cannot cite is a name salman does
+  not print.
+
+**A response cannot be decoded without its request.** This is a property of Modbus rather
+than a decision. A read response carries a byte count and never the quantity, so five coils
+and eight coils are byte-identical on the wire. `salman-modbus` therefore requires the
+request when decoding a response, and a response whose request was never captured cannot be
+fully decoded by anyone.
+
+**Addresses.** The PDU address, zero-based, everywhere, with no offset applied at any point.
+See `docs/adr/ADR-0012-modbus-addressing.md`, which records that the `4xxxx` convention
+appears zero times in any of the four Modbus Organization documents salman consulted.
+
 ---
 
 ## UNVERIFIED
