@@ -462,8 +462,9 @@ pub static REGISTRY: &[Capability] = &[
                must name a reason from a closed list with no free-text escape. A `Pass` is a \
                real answer, because without one a report cannot distinguish nothing being \
                wrong from salman not having looked. Confidence is first-class, which is why \
-               SARIF is an export and not the model: that schema cannot express it. Eleven \
-               findings ship, four of which are salman describing its own limits.",
+               SARIF is an export and not the model: that schema cannot express it. Fifteen \
+               findings ship; four of the eleven groups exist so salman can describe its own \
+               limits rather than the wire's.",
     },
     Capability {
         id: "io.findings.timeline",
