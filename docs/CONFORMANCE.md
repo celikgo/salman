@@ -43,20 +43,135 @@ defect, not a style choice.
 
 ## The state of the whole pipeline, before any table
 
-At 0.0.1 **no Structured Text source file can be executed by salman.** This is the single
-most important fact on this page and no row below should be read without it.
+At 0.0.1 a Structured Text source file **is lexed, parsed, type-checked, compiled to bytecode
+and executed.** `salman check`, `salman run` and `salman test` all do what their names say,
+and the worked example in `examples/conveyor/` passes eight declarative tests including one
+that compares a recorded trace against a committed golden file. Earlier versions of this page
+said that no source file could be executed and that there was no checker and no code
+generator; that was true when it was written and it is false now, and every row below has
+been rewritten against the whole pipeline rather than against the parser.
 
-- The front end lexes and parses ST into an AST. It reports errors well and recovers.
-- The runtime executes bytecode, runs a scan, and implements the standard function blocks.
-- **Nothing joins the two.** There is no semantic-analysis pass and no code generator.
-  `crates/salman-lang/src/sema.rs` holds the data structures a checker will fill in and no
-  pass that fills them; the type rules in `crates/salman-lang/src/types.rs` are written as
-  data and tested as data, but nothing yet applies them to a parsed program. Every bytecode
-  program in this repository was written by hand in a test.
-- The `salman` binary has one subcommand: `version`.
+That is the good half. Here is the other half, which belongs beside it rather than in a
+footnote:
 
-So a row saying `[x]` in the *statements* table means "this statement form parses into the
-tree it should, and a test says so". It does not mean the statement runs.
+- **One source file per invocation.** `salman_vm::project::build` compiles one file. There is
+  no project model, no multi-file compilation unit, no import and no namespace. A second file
+  is not merged; it is not read.
+- **Five subcommands**: `version`, `status`, `check`, `run` and `test`. There is no formatter,
+  no language server, no debugger, no project file and no graphical interface.
+- **Not one standard *function* is implemented.** No `*_TO_*` conversions, no `ABS`, no
+  `SQRT`, no `SEL`/`MAX`/`MIN`/`LIMIT`/`MUX`, no shifts or rotates, no string functions. The
+  ten standard function *blocks* are all there; the function library is not started. A
+  narrowing-assignment diagnostic names the conversion function IEC would use and then says
+  that salman does not implement it, which is the honest thing to say and is also
+  inconvenient.
+- **Three stages can refuse a program, and they refuse different things.** A construct that
+  parses is not thereby compiled, and a construct the compiler refuses is refused by name.
+  See *What each stage refuses*, below.
+- **Three constructs are accepted without carrying their meaning.** A subrange and a
+  `STRING[n]` length are not enforced at run time, and `EN` is an ordinary input with no
+  enable semantics. They are named in their own section immediately below, because a wrong
+  answer is worse than a refusal and a reader should meet it before any table.
+
+So a row marked `[x]` in the *statements* table now means "this form parses, is type-checked,
+is compiled and runs, and a test in this repository says so". Where a row means less than
+that, the row says which stage stops and what the diagnostic is called.
+
+## Where salman accepts something and does not mean it
+
+Three constructs are accepted by every stage, run without a fault, and do not carry the
+meaning the standard gives them. None is a policy — a policy is a choice salman defends — and
+none is refused, so nothing tells a reader at the time. They are named here, before any table,
+because a wrong answer is worse than a refusal.
+
+**A subrange is not enforced at run time.** `Sub : INT (0..10);` is checked when the value
+assigned is a constant — `Sub := 50;` is refused as `E0404` — and not otherwise. Assign the
+same 50 through a variable and the subrange holds 50. The declared bounds are used for
+checking constants and for nothing else; there is no range check in the emitted code.
+
+**A `STRING[n]` maximum length is not enforced at run time either.** A literal too long for
+its target is refused (`sema.rs: a_string_literal_longer_than_its_target_is_refused`), but
+assigning a longer `STRING` variable into a shorter one copies the whole value, so a
+`STRING[4]` will hold ten characters and report them.
+
+**`EN` is an ordinary input.** IEC 61131-3:2013 Table 18 "Execution control graphically using
+EN and ENO" (Ed 3.0) makes `EN` the input that decides whether a call happens at all. salman
+implements none of that. A POU may declare a `VAR_INPUT` called `EN`, salman accepts it, and
+`F(EN := FALSE, N := 7)` calls `F` and returns 7. The name is not reserved and the semantics
+are not there. It is the sharpest of the three cases here: the other two declare a constraint
+salman does not enforce, while this one accepts a name that means something in the standard
+and gives it no meaning at all.
+
+One smaller thing, true rather than wrong, that will still surprise: **`--record` splits its
+argument on commas**, so a multidimensional slot name such as `Main.G[1,1]` cannot be named on
+the command line. The variable exists and holds the right value; it is reachable through a
+trace of the whole program or through a declarative test.
+
+---
+
+## What each stage refuses
+
+Three stages produce errors, and which stage refused a construct is worth knowing: it is the
+difference between "your code is wrong", "salman has not built this yet" and "salman built it
+and could not lay it out".
+
+**The lexer and the parser** refuse text that is not Structured Text, under `E01xx` and
+`E02xx`. Two of their codes are refusals rather than complaints:
+
+- `U0101` — a literal prefix naming a type salman has not implemented: `LDATE#`, `LTOD#`,
+  `LDT#`.
+- `U0201` — a keyword that is reserved so that meeting one says so: `CLASS`, `METHOD`,
+  `INTERFACE`, `EXTENDS`, `IMPLEMENTS`, `THIS`, `SUPER`, `REF`, `NULL`, `STEP`,
+  `INITIAL_STEP`, `TRANSITION`, `ACTION`. The same code covers a structure or an enumeration
+  declared inline in a variable block, and a `VAR_CONFIG` instance path.
+
+**The checker** — `crates/salman-lang/src/sema.rs`, codes `E03xx` and `E04xx` — resolves every
+name, gives every expression a type, folds constants, checks call shapes and rejects
+recursion. It refuses two constructs as unimplemented rather than as wrong, both under
+`U0301`, and the diagnostic says the code may well be correct and salman cannot check it:
+
+- the dereference operator `^`
+- the assignment attempt `?=`
+
+**The compiler** — `crates/salman-vm/src/compile.rs` — runs **only when the checker reported no
+error at all**, so everything it says is about a construct the checker deliberately let
+through. It refuses, under `U0301`, with a message naming the construct:
+
+| What | The message begins | Test |
+|---|---|---|
+| `AT %...` located variables | `salman does not implement AT %IX0.0 yet` | `diagnostics.rs: located_variables_report_that_the_io_mapping_layer_does_not_exist` |
+| Exponentiation `**` | `salman does not compile exponentiation` | `diagnostics.rs: exponentiation_reports_that_it_is_not_implemented` |
+| Subscripting an array whose elements occupy more than one slot | `salman does not compile subscripting an array whose elements are` | none |
+| Assigning a whole aggregate through a subscript or a direct address, in either direction, including out of a function block output or a `VAR_IN_OUT` | `salman does not compile assigning a whole structure, array or function block instance` | `semantics.rs: assigning_a_whole_structure_through_a_subscript_is_refused` |
+| A `VAR_EXTERNAL` declaration, which nothing binds to the global of the same name | `salman does not implement VAR_EXTERNAL Shared yet` | `semantics.rs: a_var_external_declaration_is_refused_rather_than_given_private_storage` |
+| Binding an output of a `FUNCTION`, which has none; positional arguments to a function block instance | `salman does not compile binding an output of a FUNCTION` | none; the checker reaches both cases first, as `E0316` and `E0315` |
+
+The multi-slot rule is worth stating plainly, because it is not obvious from the message: an
+array is subscriptable when each element occupies exactly one slot. An `ARRAY OF DINT` and an
+`ARRAY OF` a *single-field* structure are; an `ARRAY OF` a two-field structure and an
+`ARRAY OF TON` are not, and neither `A[1].X` nor `A[1] := B` compiles for them. The
+declaration itself is accepted and given slots, and calling `T[1](...)` is refused earlier by
+the checker as `E0314`.
+
+Where the compiler cannot resolve an expression to a place at all it reports `E0501`, "this
+expression has no address salman can compute" or "this cannot be assigned to". That is a
+layout gap rather than a named refusal and it is a worse diagnostic than the ones above,
+because the message does not say what is missing. Today it is reachable through the same
+multi-slot array cases, alongside the named refusal.
+
+`E0501` also carries one refusal that does say what is wrong: **a function block that holds an
+instance of itself**, directly or through another block, is reported as ``` `Looper` holds an
+instance of itself ``` and the unit is not compiled. Such a block has no finite size, and
+salman lays every instance out once, at load, so there is nowhere for the inner one to live.
+`semantics.rs: a_function_block_that_holds_an_instance_of_itself_is_refused` and
+`semantics.rs: two_function_blocks_that_hold_each_other_are_refused`.
+
+`E0502` "this project has nothing to run" is the compiler's remaining error: a file with no
+`PROGRAM` in it compiles to nothing schedulable.
+
+Both the checker and the compiler spell their not-implemented refusals `U0301`. They are the
+same code from two crates — `salman_lang::codes::U_REFERENCES` and
+`salman_vm::compile::U_NOT_COMPILED` — and only the message distinguishes them.
 
 ---
 
@@ -94,13 +209,16 @@ Tests are in `crates/salman-lang/src/lexer.rs` unless stated.
 | `[ ]` | `CHAR` and `WCHAR` literals | — |
 | `[ ]` | `LDATE#`, `LTOD#`, `LDT#` literals | refused by name: `the_long_date_types_salman_does_not_implement_say_so_plainly` |
 
-The lexer is fuzzed. Four libFuzzer targets in `fuzz/fuzz_targets` assert postconditions —
+The front end is fuzzed. Six libFuzzer targets in `fuzz/fuzz_targets` assert postconditions —
 exactly one `Eof`, non-decreasing spans inside the source, every literal and address index
-resolving — rather than only that nothing panicked. The capability registry records that as
-`[~]`, not `[x]`, for two reasons that both matter: a fuzzing run shows that nothing was
+resolving, every node id usable as an index into a side table — rather than only that nothing
+panicked. Four cover the lexer (valid UTF-8, raw bytes decoded the way the loader decodes
+them, the strict dialect, and a differential run of both dialects), one covers the parser, and
+one covers lexing, parsing and checking together. The capability registry records all of that
+as `[~]`, not `[x]`, for two reasons that both matter: a fuzzing run shows that nothing was
 found, which is not the same as showing that anything is right, and the registry's evidence
-rule wants a named test function, which a libFuzzer target is not. Only the lexer is
-covered; the parser is not fuzzed.
+rule wants a named test function, which a libFuzzer target is not. The compiler is not fuzzed,
+and neither is the declarative test-file reader in `salman-test`.
 
 ### The elementary types
 
@@ -110,6 +228,15 @@ Implemented, in `crates/salman-core/src/value.rs`: `BOOL`; `SINT`, `INT`, `DINT`
 
 **Not implemented: `CHAR`, `WCHAR`, `LDATE`, `LTOD`, `LDT`.** They are not in
 `ElementaryType`, so there is nothing to select them with and nothing that half-works.
+
+Every one of the implemented types is a value the interpreter holds, not only a name the
+parser knows. Declare a `STRING`, a `WSTRING`, a `DATE` and a `TIME`, assign to each, and
+`salman run --record` prints `'hi'`, `"wide"`, `D#2024-02-29` and `T#3s`.
+
+`D`, `DT` and `TOD` are accepted as spellings of `DATE`, `DATE_AND_TIME` and `TIME_OF_DAY`
+(`elementary_type_from_word` in `salman-lang/src/token.rs`). The consequence is that none of
+those three words can be used as a variable name, and the diagnostic for trying says
+"expected a name, found the type `DATE`", which is accurate and initially puzzling.
 
 | Status | Feature | Evidence (`salman-core/src/value.rs`) |
 |---|---|---|
@@ -163,12 +290,23 @@ and that is a stated limit of salman's source, not a claim about the figure: the
 transcription is from a vendor's rendering of the conversion figure, and that rendering
 omits those types entirely.
 
-| Status | Property | Evidence (`salman-lang/src/types.rs`) |
+The table is no longer only data: the checker applies it to every assignment, argument and
+operand, and the compiler emits a `Convert` instruction where one is needed.
+
+| Status | Property | Evidence |
 |---|---|---|
-| `[x]` | `INT` widens to `REAL`, `DINT` does not | `int_widens_to_real_but_dint_does_not` |
-| `[x]` | Unsigned widens to signed only when the signed type is strictly wider | `unsigned_widens_to_signed_only_when_the_signed_type_is_strictly_wider` |
-| `[x]` | Nothing narrows implicitly | `nothing_narrows_implicitly` |
-| `[x]` | The relation has no cycle, so a common type does not depend on argument order | `implicit_conversion_is_antisymmetric_so_there_is_no_conversion_cycle`, `common_type_is_order_independent` |
+| `[x]` | `INT` widens to `REAL`, `DINT` does not | `types.rs: int_widens_to_real_but_dint_does_not` |
+| `[x]` | Unsigned widens to signed only when the signed type is strictly wider | `types.rs: unsigned_widens_to_signed_only_when_the_signed_type_is_strictly_wider` |
+| `[x]` | Nothing narrows implicitly | `types.rs: nothing_narrows_implicitly` |
+| `[x]` | The relation has no cycle, so a common type does not depend on argument order | `types.rs: implicit_conversion_is_antisymmetric_so_there_is_no_conversion_cycle`, `types.rs: common_type_is_order_independent` |
+| `[x]` | The checker applies the table to a real program, and refuses a narrowing assignment | `sema.rs: int_widens_to_real_and_dint_does_not`, `sema.rs: a_narrowing_assignment_names_the_conversion_function`, `diagnostics.rs: assigning_a_narrower_type_is_rejected` |
+| `[x]` | A value of an unrelated family is refused, not coerced | `sema.rs: a_value_of_an_unrelated_type_cannot_be_assigned`, `diagnostics.rs: assigning_across_type_families_is_rejected` |
+| `[x]` | Each operand keeps its own type and the operation takes the common one | `sema.rs: each_operand_keeps_its_own_type_and_the_operation_takes_the_common_one` |
+
+The narrowing diagnostic names the IEC conversion function — `DINT_TO_INT` — and then says in
+the same note that salman does not implement the standard conversion functions at v0.1, so
+the only fix available today is to widen the target. That is an awkward thing for a compiler
+to say and it is better than suggesting a call that does not exist.
 
 ### Operators
 
@@ -201,48 +339,103 @@ on `ANY_INT`, `AND`/`OR`/`XOR` on `ANY_BIT`, comparison across `ANY_ELEMENTARY` 
 `BOOL`, plus duration arithmetic (`TIME + TIME`, `TIME - TIME`, `TIME * number`,
 `number * TIME`, `TIME / number`; dividing a number by a duration is deliberately absent).
 Negating an unsigned value promotes to the next wider signed type rather than wrapping, and
-is refused for `ULINT` because nothing is wider. `[x]`, twelve tests in `types.rs`.
+is refused for `ULINT` because nothing is wider. `[x]`, twelve tests in `types.rs`, and the
+checker applies them: `sema.rs: an_operand_outside_the_operators_domain_names_the_generic_type_it_accepts`,
+`diagnostics.rs: arithmetic_on_a_bit_string_is_rejected`.
+
+Every operator in the chain is compiled and executed **except `**`**, which is where the
+table above and the runtime part company:
+
+| Status | Operator | What actually happens |
+|---|---|---|
+| `[x]` | `OR`, `XOR`, `AND`, `&`, `=`, `<>`, `<`, `>`, `<=`, `>=`, `+`, `-`, `*`, `/`, `MOD`, unary `-`, `NOT` | Parsed, type-checked, compiled to a `Binary` or `Unary` instruction and executed. `exec.rs: bit_operations_keep_the_width_of_their_operands`, `exec.rs: integer_division_truncates_toward_zero`, `exec.rs: strings_and_dates_compare_by_value`; `semantics.rs: an_operation_between_two_widths_is_done_at_the_wider_one`, `semantics.rs: a_bit_operation_keeps_the_width_of_its_operands`, `semantics.rs: not_inverts_every_bit_of_the_width_it_is_written_on`, `semantics.rs: unsigned_arithmetic_stays_unsigned`, `semantics.rs: a_duration_scales_by_a_number_and_compares_with_a_duration` |
+| `[x]` | Unary `+` | The identity: `+X` is `X`, and it compiles to no instruction at all. `semantics.rs: unary_plus_is_the_identity_and_unary_minus_negates`, `semantics.rs: unary_plus_on_a_literal_is_the_literal` |
+| `[x]` | `.` field access, `[]` subscript, `()` call | Compiled to a slot offset, a bounds-checked indexed access and a call. `exec.rs: an_array_subscript_outside_its_bounds_faults_with_the_bounds_in_the_message`; `semantics.rs: an_array_is_indexed_from_its_declared_lower_bound`, `semantics.rs: a_two_dimensional_array_is_linearised_row_by_row`, `semantics.rs: each_dimension_is_checked_against_its_own_bounds` |
+| `[ ]` | `**` exponentiation | **Parses and type-checks; the compiler refuses it by name** under `U0301`, because salman implements no transcendental functions in this version. The interpreter also refuses `Pow`, but nothing compiled from source can reach that. `diagnostics.rs: exponentiation_reports_that_it_is_not_implemented` |
+| `[ ]` | `^` dereference | **Parses; the checker refuses it by name** under `U0301`. There are no reference types. `sema.rs: the_dereference_operator_is_reported_as_not_implemented` |
+
+Constant subexpressions are folded before code generation, wrapping exactly as the runtime
+wraps, and a constant expression that divides by zero is an error found before the program
+runs: `sema.rs: folding_wraps_the_way_the_runtime_wraps`,
+`sema.rs: division_by_a_constant_zero_is_found_before_the_program_runs`. That check fires only
+when the *whole* expression folds — `10 / 0` is refused, `N / 0` with `N` a variable is not,
+and becomes a runtime fault instead.
 
 ### Statements
 
-Parsed into the tree, with the tests in `crates/salman-lang/src/parser.rs`. Nothing executes
-them; see the pipeline note above.
+Every row below is the whole pipeline, not the parser alone: `[x]` means the form parses,
+type-checks, compiles to bytecode and runs. `diagnostics.rs: every_statement_form_compiles`
+puts every one of them in a single program and insists that program compiles with no error at
+all; the parser tests named beside each row are what pin the *shape* the form parses into.
 
-| Status | Statement | Evidence |
+| Status | Statement | Evidence (`parser.rs` unless stated) |
 |---|---|---|
 | `[x]` | `;` — the empty statement | `a_bare_semicolon_is_the_empty_statement` |
-| `[x]` | `target := value;` | `an_assignment_keeps_its_target_and_its_value` |
-| `[x]` | A call as a statement | `a_call_on_its_own_is_a_statement` |
-| `[x]` | `IF`/`ELSIF`/`ELSE`/`END_IF` | `if_then_end_if_has_one_branch_and_no_else`, `elsif_branches_are_kept_in_order_after_the_if` |
-| `[x]` | `CASE` with single, list and range labels, and `ELSE` | `case_labels_may_be_single_values_lists_or_ranges`, `a_case_may_have_an_else_arm` |
-| `[x]` | `FOR`/`TO`/`BY`/`DO`/`END_FOR` | `for_keeps_its_control_variable_bounds_and_step`, `for_without_by_records_no_step_rather_than_inventing_one` |
-| `[x]` | `WHILE` and `REPEAT` | `while_tests_before_the_body_and_repeat_tests_after_it` |
-| `[x]` | `CONTINUE` (new in Edition 3) | `continue_is_a_standard_statement_in_edition_3` |
-| `[x]` | `EXIT` and `RETURN` | `exit_and_return_are_statements_of_their_own` |
-| `[x]` | Calls with positional, named-input and named-output arguments, mixed | `positional_named_and_output_arguments_may_be_mixed`, `an_output_binding_with_nothing_after_it_discards_the_output` |
-| `[ ]` | `?=`, the assignment attempt | parsed so it can be named: `an_assignment_attempt_is_parsed_rather_than_refused` |
+| `[x]` | `target := value;` | `an_assignment_keeps_its_target_and_its_value`; `sema.rs: a_pou_may_assign_to_its_own_var_output_and_locals` |
+| `[x]` | A call as a statement | `a_call_on_its_own_is_a_statement`; `sema.rs: a_user_function_block_is_called_through_its_instance` |
+| `[x]` | `IF`/`ELSIF`/`ELSE`/`END_IF` | `if_then_end_if_has_one_branch_and_no_else`, `elsif_branches_are_kept_in_order_after_the_if`; `sema.rs: a_condition_that_is_not_bool_is_refused_and_says_why`; `semantics.rs: an_if_chain_runs_exactly_one_branch` |
+| `[x]` | `CASE` with single, list and range labels, and `ELSE` | `case_labels_may_be_single_values_lists_or_ranges`, `a_case_may_have_an_else_arm`; `sema.rs: an_enumeration_selects_a_case_arm`; `semantics.rs: a_case_range_label_matches_every_value_in_it_and_none_outside_it`, `semantics.rs: a_case_selector_is_evaluated_once_and_not_again_for_each_arm`, `semantics.rs: a_case_inside_a_case_does_not_disturb_the_selector_around_it` |
+| `[x]` | `FOR`/`TO`/`BY`/`DO`/`END_FOR`, including a negative step | `for_keeps_its_control_variable_bounds_and_step`, `for_without_by_records_no_step_rather_than_inventing_one`; `sema.rs: a_for_control_variable_must_be_an_integer`; `semantics.rs: a_for_loop_counts_down_when_its_step_is_negative`, `semantics.rs: a_for_loop_whose_step_overshoots_stops_at_the_limit`, `semantics.rs: a_for_loop_whose_range_is_empty_never_runs_its_body` |
+| `[x]` | `WHILE` and `REPEAT` | `while_tests_before_the_body_and_repeat_tests_after_it`; `sema.rs: a_bool_condition_is_accepted_in_all_three_loops_and_in_if`; `semantics.rs: a_while_loop_that_is_false_at_entry_never_runs`, `semantics.rs: a_repeat_loop_runs_its_body_before_it_tests_and_continue_goes_to_the_test` |
+| `[x]` | `CONTINUE` (new in Edition 3) | `continue_is_a_standard_statement_in_edition_3`; `sema.rs: exit_and_continue_inside_a_loop_are_accepted`; `semantics.rs: exit_leaves_the_innermost_loop_and_continue_starts_its_next_pass` |
+| `[x]` | `EXIT` and `RETURN` | `exit_and_return_are_statements_of_their_own`; `sema.rs: exit_outside_a_loop_is_refused`, `diagnostics.rs: exit_outside_a_loop_is_rejected` |
+| `[x]` | Calls with positional, named-input and named-output arguments, mixed | `positional_named_and_output_arguments_may_be_mixed`, `an_output_binding_with_nothing_after_it_discards_the_output`; `sema.rs: an_output_binding_writes_the_variable_it_names`; `semantics.rs: a_standard_timer_runs_from_a_program_and_binds_its_outputs`, `semantics.rs: a_function_called_twice_in_one_expression_gets_both_answers_right` |
+| `[ ]` | `?=`, the assignment attempt | Parses — `an_assignment_attempt_is_parsed_rather_than_refused` — and is then **refused by the checker** under `U0301`, because salman has no reference types and so nothing for the attempt to test: `sema.rs: the_assignment_attempt_is_reported_as_not_implemented` |
+
+The call forms are checked as well as parsed: a function block has no positional form
+(`sema.rs: positional_arguments_to_a_function_block_are_refused_citing_the_call_table`), a
+call may not mix positional and named arguments
+(`sema.rs: a_call_may_not_mix_positional_and_named_arguments`), an unknown parameter name
+lists the ones that exist
+(`sema.rs: an_unknown_function_parameter_lists_the_ones_that_exist`), and a function block
+call used where a value is required is refused with the dotted-notation fix
+(`sema.rs: a_function_block_call_produces_no_value`).
 
 Error recovery is a tested property, not an aspiration: `a_file_with_ten_broken_statements_reports_about_ten_errors_not_one`,
 `a_broken_statement_does_not_hide_the_good_ones_after_it`, `an_error_node_never_appears_without_a_diagnostic_beside_it`.
 So is the bound on nesting: `ten_thousand_nested_parentheses_produce_a_diagnostic_rather_than_a_stack_overflow`,
 `a_long_operator_chain_is_bounded_too_because_its_tree_is_just_as_deep`.
+Both properties survive the checker: `sema.rs: check_never_panics_on_a_unit_the_parser_could_not_finish`,
+`sema.rs: a_program_with_ten_distinct_errors_reports_about_ten_diagnostics_not_one`,
+`diagnostics.rs: one_broken_file_reports_many_errors_not_one`.
 
 ### Declarations, POUs and configuration
 
-All parsed; none resolved, checked or compiled.
+Parsed, resolved, laid out and compiled, except where a row says otherwise. Every declared
+variable becomes one or more slots with a dotted name — `Main.Starter.Run_Off.ET` — which is
+what makes a watch list, a trace and a force list possible without a second symbol table:
+`conveyor_example.rs: the_example_declares_the_variables_the_tests_name`.
 
-| Status | Feature | Evidence (`salman-lang/src/parser.rs`) |
+| Status | Feature | Evidence |
 |---|---|---|
-| `[x]` | `PROGRAM`, `FUNCTION` (with return type), `FUNCTION_BLOCK` | `a_function_declares_the_type_of_the_value_it_returns`, `a_function_block_has_no_return_type` |
-| `[x]` | All nine `VAR` sections | `every_variable_section_keyword_opens_its_section` |
-| `[x]` | `RETAIN`, `NON_RETAIN`, `CONSTANT`, `PERSISTENT` qualifiers | `variable_block_qualifiers_are_recorded` |
-| `[x]` | `AT %IX0.0` located variables | `a_located_variable_keeps_the_address_it_was_bound_to` |
-| `[x]` | `STRING[n]`, arrays, subranges, function block instances | `a_string_may_declare_its_maximum_length`, `an_array_declaration_keeps_one_dimension_per_bound_pair`, `a_subrange_declaration_keeps_its_base_type_and_both_bounds`, `a_function_block_instance_is_declared_by_naming_its_type` |
-| `[x]` | `TYPE` blocks: aliases, structures, enumerations, subranges, arrays | `a_type_block_holds_aliases_structures_enumerations_subranges_and_arrays` |
-| `[x]` | `CONFIGURATION`, `RESOURCE`, `TASK`, `PROGRAM ... WITH ...` | `a_configuration_holds_globals_resources_tasks_and_program_instances` |
-| `[ ]` | Inline structures and enumerations in a variable declaration | named, not implemented: `an_inline_structure_or_enumeration_asks_for_a_named_type` |
-| `[ ]` | `VAR_CONFIG` instance paths | named: `an_instance_path_in_a_declaration_says_it_is_not_implemented` |
-| `[ ]` | The single-resource configuration shorthand | named in the diagnostic; tasks must sit inside a `RESOURCE` |
+| `[x]` | `PROGRAM`, `FUNCTION` (with return type), `FUNCTION_BLOCK` | `parser.rs: a_function_declares_the_type_of_the_value_it_returns`, `parser.rs: a_function_block_has_no_return_type`; `diagnostics.rs: a_function_can_be_declared_and_called`, `diagnostics.rs: a_user_function_block_can_be_instantiated` |
+| `[x]` | All nine `VAR` section keywords are parsed | `parser.rs: every_variable_section_keyword_opens_its_section`. Parsing a section is not implementing it; `VAR_EXTERNAL`, `VAR_ACCESS` and `VAR_CONFIG` have their own rows below |
+| `[x]` | `RETAIN`, `NON_RETAIN`, `CONSTANT`, `PERSISTENT` qualifiers | `parser.rs: variable_block_qualifiers_are_recorded`; `sema.rs: a_constant_may_not_be_assigned_to`, `diagnostics.rs: writing_to_a_constant_is_rejected`; `semantics.rs: a_retained_variable_inside_a_function_block_survives_a_warm_restart` |
+| `[x]` | `STRING[n]`, arrays including several dimensions, subranges, function block instances | `parser.rs: a_string_may_declare_its_maximum_length`, `parser.rs: an_array_declaration_keeps_one_dimension_per_bound_pair`, `parser.rs: a_subrange_declaration_keeps_its_base_type_and_both_bounds`, `parser.rs: a_function_block_instance_is_declared_by_naming_its_type`; `sema.rs: a_two_dimensional_array_indexes_by_both_bounds`; `diagnostics.rs: an_array_can_be_declared_indexed_and_assigned` |
+| `[x]` | `TYPE` blocks: aliases, structures, enumerations, subranges, arrays | `parser.rs: a_type_block_holds_aliases_structures_enumerations_subranges_and_arrays`; `sema.rs: a_structure_field_resolves_and_an_unknown_one_does_not`, `sema.rs: enumeration_values_continue_from_the_previous_one_starting_at_zero`, `sema.rs: a_type_that_contains_itself_is_refused`; `semantics.rs: a_structure_field_and_a_global_are_reached_from_a_program_body` |
+| `[x]` | Enumeration values, qualified `Colour#Green` and unqualified `Green` | `sema.rs: a_qualified_enumeration_value_resolves_to_its_number`, `sema.rs: an_unqualified_enumeration_value_resolves_from_the_type_the_context_wants`; `semantics.rs: an_unqualified_enumeration_value_compiles_and_selects_its_arm`, `semantics.rs: a_qualified_enumeration_value_means_the_same_as_an_unqualified_one` |
+| `[x]` | A function block instance inside a structure, function blocks nested several deep, and a declared initial value inside one | `sema.rs: a_function_block_instance_type_knows_which_pou_declared_it`; `semantics.rs: an_instance_nested_three_blocks_deep_gets_storage_of_its_own`, `semantics.rs: a_function_block_instance_inside_a_structure_is_reached_through_the_field`, `semantics.rs: two_instances_of_one_function_block_keep_separate_state`, `semantics.rs: a_declared_initial_value_inside_a_function_block_reaches_every_instance` |
+| `[x]` | A POU may be written above the blocks it instantiates | The layout iterates to a fixpoint rather than a fixed number of passes, so declaration order cannot change the answer: `semantics.rs: the_order_the_blocks_are_written_in_does_not_change_what_a_program_computes` |
+| `[ ]` | A function block that holds an instance of itself, directly or through another | Refused with `E0501`, naming the block: such a block has no finite size and salman lays every instance out once. `semantics.rs: a_function_block_that_holds_an_instance_of_itself_is_refused`, `semantics.rs: two_function_blocks_that_hold_each_other_are_refused` |
+| `[x]` | `VAR_GLOBAL` | `sema.rs: a_global_is_found_when_no_local_hides_it`, `sema.rs: a_local_shadows_a_global_of_the_same_name`, `sema.rs: a_configuration_global_is_visible_to_a_pou_body`; `semantics.rs: a_global_is_shared_between_two_programs_that_name_it` |
+| `[ ]` | `VAR_EXTERNAL` | Parsed and resolved, and then **refused by the compiler** under `U0301`. Nothing bound it to the global of the same name: it was given storage of its own, so a POU that wrote it wrote a private copy no other POU could see. A `VAR_GLOBAL` is visible by name without the block. `semantics.rs: a_var_external_declaration_is_refused_rather_than_given_private_storage` |
+| `[x]` | `CONFIGURATION`, `RESOURCE`, `TASK`, `PROGRAM ... WITH ...` | `parser.rs: a_configuration_holds_globals_resources_tasks_and_program_instances`; `sema.rs: a_configuration_produces_its_tasks_and_the_programs_bound_to_them`, `sema.rs: an_interval_that_is_not_a_positive_constant_duration_is_refused`, `sema.rs: a_single_trigger_must_name_a_global_bool` |
+| `[x]` | `VAR_IN_OUT` | Passed by value at the call and copied back to the caller's variable when the call returns, which is observably the same as a reference for the forms salman compiles. There are no reference types, so it cannot be one. `semantics.rs: an_argument_written_for_a_var_in_out_parameter_reaches_it_and_comes_back` |
+| `[x]` | A `FUNCTION` keeps no state between calls | Its locals start from their declared initial value on every call, which is what IEC 61131-3:2013 §6.6.2 "Functions" (Ed 3.0) makes a function mean. `semantics.rs: a_function_keeps_no_state_between_calls`, `semantics.rs: a_function_local_starts_from_its_declared_initial_value_on_every_call`, `semantics.rs: a_function_may_call_another_function` |
+| `[x]` | Two instances of one `PROGRAM` keep separate state | `semantics.rs: two_instances_of_one_program_keep_separate_state` |
+| `[ ]` | Enforcing a `STRING[n]` length or a subrange's bounds **at run time** | Neither is in the emitted code. Both are checked against constants at compile time, and that much is tested — `sema.rs: a_literal_outside_a_subrange_is_refused`, `sema.rs: a_string_literal_longer_than_its_target_is_refused` — but a value arriving through a variable is not checked. See the section before the tables |
+| `[ ]` | `AT %IX0.0` located variables | Lexed, parsed and resolved — `parser.rs: a_located_variable_keeps_the_address_it_was_bound_to` — and then **refused by the compiler** under `U0301`, because there is no IO mapping layer to bind them to: `diagnostics.rs: located_variables_report_that_the_io_mapping_layer_does_not_exist` |
+| `[x]` | Whole-aggregate assignment and argument passing: `A := B` between arrays or structures, and a structure passed to a `VAR_INPUT` | Compiled as a multi-slot copy. Not supported through a subscript or a direct address, where it is refused by name |
+| `[ ]` | Arrays whose elements occupy more than one slot: an array of function block instances, or of a structure with more than one field | The declaration is accepted and given slots; subscripting one is not compiled. `T[1](...)` is refused by the checker as `E0314`, `A[1].X` and `A[1] := B` by the compiler as `U0301` and `E0501`. An array of a single-field structure occupies one slot per element and does work |
+| `[ ]` | Inline structures and enumerations in a variable declaration | Named, not implemented: `parser.rs: an_inline_structure_or_enumeration_asks_for_a_named_type` |
+| `[ ]` | `VAR_CONFIG` instance paths | Named: `parser.rs: an_instance_path_in_a_declaration_says_it_is_not_implemented` |
+| `[ ]` | The single-resource configuration shorthand | Named in the diagnostic; tasks must sit inside a `RESOURCE` |
+
+Recursion is rejected statically, and the whole memory layout depends on that rejection:
+`sema.rs: direct_recursion_is_rejected_statically`, `sema.rs: mutual_recursion_names_the_whole_cycle`,
+`sema.rs: recursion_through_a_function_block_instance_is_rejected`,
+`diagnostics.rs: direct_recursion_is_rejected`, `diagnostics.rs: mutual_recursion_is_rejected`.
+See the UNVERIFIED list for what salman could and could not confirm about the prohibition.
 
 ### The standard function blocks
 
@@ -279,14 +472,25 @@ The standard supplies **no body** for the timers — only timing diagrams — so
 test here is a trace of `(t, IN, PT)` against `(Q, ET)`, not a comparison against a body
 salman does not have.
 
+All eleven are reachable from Structured Text, not only from a Rust test: the checker knows
+each block's parameter names and types from `stdlib.rs`, the compiler emits a native call, and
+`diagnostics.rs: every_standard_function_block_can_be_declared_and_called` declares and calls
+every one of the ten standard blocks from a `PROGRAM`. The worked example uses `RS`, `TOF`,
+`R_TRIG`, `CTU` and `TON` together and its output is compared against a committed trace.
+Writing a preset from outside the instance and reading an output back are both checked
+(`sema.rs: a_timers_preset_can_be_written_from_outside`,
+`sema.rs: a_timers_output_reads_as_a_member_of_its_instance`), and a block's internal field is
+refused to code outside it (`sema.rs: a_blocks_internal_field_cannot_be_named_in_code`) even
+though the debugger and the trace can see it.
+
 ### The scan, memory and tasks
 
 | Status | Feature | Evidence |
 |---|---|---|
-| `[x]` | Inputs latched once per scan; a mid-scan change is invisible | `memory.rs: an_input_read_mid_scan_sees_the_value_it_had_at_scan_start` |
-| `[x]` | Outputs read back within the scan, published at the end | `memory.rs: an_output_written_this_scan_reads_back_as_written_before_it_is_published`, `outputs_do_not_reach_the_world_until_the_scan_ends` |
-| `[x]` | A program cannot write its own `%I` | `memory.rs: a_program_cannot_write_its_own_inputs` |
-| `[x]` | `%M` is written through with no image | `memory.rs: marker_memory_is_written_through_with_no_image` |
+| `[x]` | Inputs latched once per scan; a mid-scan change is invisible | `memory.rs: an_input_read_mid_scan_sees_the_value_it_had_at_scan_start`; `semantics.rs: an_input_read_twice_in_one_scan_reads_the_same_value_both_times`, `semantics.rs: an_input_that_changes_between_scans_is_seen_on_the_next_one` |
+| `[x]` | Outputs read back within the scan, published at the end | `memory.rs: an_output_written_this_scan_reads_back_as_written_before_it_is_published`, `outputs_do_not_reach_the_world_until_the_scan_ends`; `semantics.rs: an_output_is_readable_within_the_scan_that_wrote_it_and_published_at_its_end` |
+| `[x]` | A program cannot write its own `%I` | `memory.rs: a_program_cannot_write_its_own_inputs`; `exec.rs: writing_an_input_address_faults_rather_than_silently_doing_nothing` |
+| `[x]` | `%M` is written through with no image | `memory.rs: marker_memory_is_written_through_with_no_image`; `semantics.rs: marker_memory_is_written_through_within_a_scan` |
 | `[x]` | Bit, byte and word addresses overlay each other | `memory.rs: bit_byte_and_word_addresses_overlay_each_other_as_they_do_on_a_controller` |
 | `[x]` | Force list, with the suppressed write recorded and the count never hidden | `memory.rs: a_force_records_what_the_program_wanted_so_the_difference_is_visible`, `the_force_count_is_always_available_so_no_interface_can_hide_one` |
 | `[x]` | Warm and cold restart, `RETAIN` and `PERSISTENT` | `memory.rs: a_warm_restart_keeps_retain_and_persistent_and_clears_the_rest`, `a_cold_restart_keeps_only_persistent` |
@@ -297,9 +501,19 @@ salman does not have.
 | `[x]` | Overrun detection | `task.rs: a_scan_that_outlasts_its_period_is_counted_as_an_overrun` |
 | `[x]` | A scan watchdog, so a runaway loop fails rather than hangs | `task.rs: the_scan_watchdog_stops_a_program_that_never_ends` |
 | `[x]` | Virtual clock: monotonic, never reads a host clock, fixed epoch | `clock.rs: the_wall_clock_comes_from_a_configured_epoch_not_from_the_host`, `the_clock_never_runs_backwards` |
-| `[x]` | Byte-identical trace fingerprints for the same run | `task.rs: the_same_configuration_run_twice_produces_the_same_trace_fingerprint` |
+| `[x]` | Byte-identical trace fingerprints for the same run | `task.rs: the_same_configuration_run_twice_produces_the_same_trace_fingerprint`, `conveyor_example.rs: the_same_project_run_twice_produces_the_same_fingerprint` |
+| `[x]` | Byte-identical **bytecode** from two compilations of one source file | `conveyor_example.rs: the_compiled_program_is_byte_identical_across_two_compilations` |
+| `[x]` | A `%IW4` granularity setting and a process-image byte-order setting | `memory.rs: word_addressing_granularity_is_a_setting_because_vendors_disagree`, `memory.rs: image_byte_order_is_a_setting_and_round_trips_either_way`. **Both exist in the type only.** The compiler always builds memory with `ImageLayout::default()`, and no command line flag, dialect field or source construct changes either. See policies 14 and 15 |
+| `[x]` | One freewheeling task per `PROGRAM` when a file declares no `CONFIGURATION` | `sema.rs: a_unit_with_no_configuration_produces_none`, `sema.rs: a_program_with_no_task_runs_freewheeling_and_is_listed_as_untasked`. A salman convenience, not a standard rule; see policy 18 |
 | `[-]` | Real-time clock mode | `ClockMode::RealTime` exists, disables the determinism claim and records jitter; nothing in the tree drives it from a host clock |
-| `[ ]` | Pre-emption | not modelled at all; see the policy list |
+| `[ ]` | Pre-emption | Not modelled at all; a scan is atomic. See policy 17 |
+| `[ ]` | Mapping a located variable to the process image | The image is reachable only through a directly represented variable written out in an expression, such as `%IX0.0`. An `AT %...` binding is refused by the compiler |
+
+The process image is fixed at 4096 bytes for each of `%I`, `%Q` and `%M`
+(`compile::IMAGE_BYTES`). A real controller sizes its image from its IO configuration, which
+salman will have when the IO mapping layer arrives; until then an address past the end is a
+clear fault rather than a silent wrong answer
+(`memory.rs: an_address_past_the_end_of_its_area_reads_none_rather_than_panicking`).
 
 ### The interpreter
 
@@ -307,11 +521,56 @@ salman does not have.
 load/store, indexed access with bounds checking, binary and unary operations, conversions,
 jumps, calls, native block calls, and the instruction budget.
 
-**It has no test module of its own.** Two of its behaviours are covered indirectly through
-`task.rs` — integer division by zero as a fault (`a_faulted_task_stops_and_the_fault_says_where`)
-and the watchdog (`the_scan_watchdog_stops_a_program_that_never_ends`) — and the standard
-function blocks exercise memory access. Everything else in that file, including the integer
-overflow policy stated below, is `[~]`: implemented, and nothing proves it is right.
+It now has a test module of its own — twenty-five tests — where an earlier version of this
+page recorded that it had none and that everything in the file, the integer overflow policy
+included, was `[~]`. That is no longer true.
+
+| Status | Behaviour | Evidence (`salman-vm/src/exec.rs`) |
+|---|---|---|
+| `[x]` | Integer overflow wraps | `integer_overflow_wraps_because_that_is_what_a_controller_does`; `semantics.rs: integer_overflow_wraps_at_the_declared_width` |
+| `[x]` | Integer division and remainder by zero are a fault, not a value | `integer_division_by_zero_is_a_fault_not_a_value` |
+| `[x]` | The most negative integer divided by minus one does not abort the process | `the_most_negative_integer_divided_by_minus_one_does_not_abort` |
+| `[x]` | Integer division truncates toward zero | `integer_division_truncates_toward_zero` |
+| `[x]` | Real-to-integer conversion saturates at the target's bounds, and NaN becomes zero | `converting_a_real_to_an_integer_saturates_rather_than_being_undefined`, `converting_a_nan_to_an_integer_gives_zero` |
+| `[x]` | NaN is canonicalised, and compares unequal to everything including itself | `a_nan_produced_by_the_interpreter_is_canonicalised`, `nan_compares_unequal_to_everything_including_itself` |
+| `[x]` | Bit operations keep the width of their operands | `bit_operations_keep_the_width_of_their_operands` |
+| `[x]` | Duration arithmetic saturates rather than wrapping | `duration_arithmetic_works_and_saturates_rather_than_wrapping` |
+| `[x]` | Strings and dates compare by value | `strings_and_dates_compare_by_value` |
+| `[x]` | The instruction budget stops a routine that jumps to itself | `the_watchdog_stops_a_routine_that_jumps_to_itself` |
+| `[x]` | An array subscript outside its bounds faults, with the bounds in the message | `an_array_subscript_outside_its_bounds_faults_with_the_bounds_in_the_message` |
+| `[x]` | A direct address reads and writes the process image; writing an input faults | `a_direct_address_reads_and_writes_the_process_image`, `writing_an_input_address_faults_rather_than_silently_doing_nothing` |
+| `[x]` | Every malformed program faults rather than panicking: bad jump, missing slot, missing constant, missing routine, empty stack, unbounded stack, a condition that is not a `BOOL` | `a_jump_outside_the_routine_faults`, `a_slot_or_constant_that_does_not_exist_faults`, `a_routine_that_does_not_exist_faults_rather_than_panicking`, `popping_an_empty_stack_faults_rather_than_panicking`, `the_operand_stack_is_bounded`, `a_condition_that_is_not_a_bool_faults_rather_than_guessing` |
+| `[x]` | A fault names the routine and the instruction it happened at | `a_fault_names_the_routine_and_the_instruction`; `task.rs: a_faulted_task_stops_and_the_fault_says_where` |
+| `[x]` | Execution reports its instruction count, so a scan can be budgeted | `execution_reports_what_it_did_so_a_scan_can_be_budgeted` |
+
+`crates/salman-vm/src/compile.rs` is the one large file in the workspace with **no test module
+of its own**. It is covered from the outside, by the three integration files in
+`crates/salman-cli/tests/`: `diagnostics.rs` for what it refuses, `semantics.rs` for what a
+compiled program computes, and `conveyor_example.rs` for the whole tool. That is the right
+tier for it — what a compiler owes an engineer is a correct program and a readable refusal,
+not a particular instruction sequence — but it does mean no test in this repository names an
+individual code-generation decision.
+
+### The declarative test harness
+
+`salman test <source> <tests>` runs a YAML file, or a directory of `.salman-test.yaml` files,
+against a compiled program on the virtual clock. Nothing about it is IEC 61131-3; it is
+recorded here because it is how a reader will check every other claim on this page.
+
+| Status | Feature | Evidence |
+|---|---|---|
+| `[x]` | A test names a POU, sets `given` values, and runs `steps` that `set`, `advance`, run `scans` and `expect` | `spec.rs: a_single_test_parses`, `spec.rs: a_list_of_tests_parses`; `conveyor_example.rs: every_test_in_the_example_passes` |
+| `[x]` | Values are written as IEC literals and lexed with salman's own lexer, so `T#5s` and `16#FF` mean here what they mean in source | `value.rs: every_literal_form_the_language_accepts_works_in_a_test_file`, `value.rs: a_duration_is_written_as_an_iec_literal` |
+| `[x]` | An unknown key is refused rather than ignored, so a misspelled `expects:` cannot leave a test asserting nothing | `spec.rs: an_unknown_key_is_rejected_rather_than_ignored` |
+| `[x]` | A skipped test must give a reason | `spec.rs: a_skipped_test_must_say_why` |
+| `[x]` | `force` and `release`, so a test can hold an input against the program | `memory.rs: a_forced_slot_reads_the_forced_value_and_ignores_the_program`, `memory.rs: releasing_a_force_restores_what_the_logic_had_computed` |
+| `[x]` | Golden traces: `record` a list of signals, compare against a committed text file, rewrite with `--update-golden` | `conveyor_example.rs: the_recorded_trace_matches_the_committed_golden_file`, `conveyor_example.rs: a_golden_trace_file_contains_no_carriage_returns` |
+| `[x]` | A JUnit XML report and a real exit code | `report.rs: junit_output_reports_failures_and_errors_as_different_elements`, `report.rs: xml_escaping_survives_anything_an_engineer_might_type` |
+| `[~]` | Each test gets a fresh copy of memory and a fresh clock, so test order cannot change a result | The code does it and is documented as doing it in `runner.rs`; **no test asserts it**, so it is `[~]` |
+| `[ ]` | Any assertion about a fault, a diagnostic, or the number of scans a step took | Not expressible. A test says what variables hold, and nothing else |
+
+`crates/salman-test/src/runner.rs` has no test module of its own; it is covered end to end
+through `conveyor_example.rs`.
 
 ---
 
@@ -329,8 +588,12 @@ of the implementation.
 - **The Edition 3 object-oriented extensions.** `CLASS`, `METHOD`, `INTERFACE`, `EXTENDS`,
   `IMPLEMENTS`, `THIS`, `SUPER` are reserved and produce a named refusal. There is no class
   model, no method dispatch and no interface checking.
-- **References and the assignment attempt.** `REF`, `NULL`, the dereference `^` and `?=` are
-  parsed far enough to be named and are refused. There are no reference types.
+- **References and the assignment attempt.** `REF` and `NULL` are reserved and produce a named
+  refusal from the parser; the dereference `^` and the assignment attempt `?=` parse and are
+  refused by the checker, under `U0301`, with a message saying the code may well be correct
+  and salman cannot check it. There are no reference types. `REF_TO` is *not* reserved: a
+  declaration using it gets "no type named `REF_TO` is declared", which is a worse message
+  than the other four get.
 - **Namespaces.** Not implemented and *not even reserved*: `NAMESPACE` is not a keyword in
   `crates/salman-lang/src/token.rs`, so a file using one gets an ordinary syntax error rather
   than a message about namespaces. That is worse than the other refusals, and it is recorded
@@ -338,20 +601,27 @@ of the implementation.
 - **The standard function library.** Not one standard *function* is implemented: no
   `*_TO_*` conversions, no `ABS`/`SQRT`/`LN`/`EXP`/trigonometry, no `SHL`/`SHR`/`ROL`/`ROR`,
   no `SEL`/`MAX`/`MIN`/`LIMIT`/`MUX`, no string functions, no time-of-day functions. Only the
-  ten standard function *blocks* listed above exist. The interpreter additionally refuses
-  `**` at run time, because salman implements no transcendental functions in this version.
-- **`EN`/`ENO`.** No parsing, no checking, no execution. The clause is cited in the citation
-  registry and nothing implements it.
-- **Arrays of function block instances.** The grammar accepts `ARRAY [1..3] OF TON` because
-  any named type may be an element type, and nothing resolves it, allocates it or calls it,
-  so it has no meaning at 0.0.1. It is neither supported nor diagnosed — the worst of the
-  three states, and it will be fixed by the checker.
-- **`VAR_ACCESS` and `VAR_CONFIG` semantics.** The sections parse; nothing acts on them.
-- **Semantic analysis.** `sema.rs` has the data structures and no pass.
-- **Code generation.** Nothing turns an AST into bytecode.
-- **A test harness, a formatter, a language server, a project file, a GUI, any protocol, any
-  network model, any plant model, any importer, any AI layer.** None of these has any code
-  in this repository. See `docs/ROADMAP.md` for when each is intended.
+  ten standard function *blocks* listed above exist, and they do work end to end. This is the
+  largest single gap in the language surface: a narrowing assignment is refused with the name
+  of the conversion function IEC would use, and that function does not exist to call.
+- **`EN`/`ENO`.** No parsing, no checking, no execution. `EN` is not even reserved, so a POU
+  may declare an ordinary `VAR_INPUT` of that name and salman will treat it as an ordinary
+  input with no enable semantics. The clause is cited in the citation registry and nothing
+  implements it. See the section before the tables.
+- **Arrays whose elements occupy more than one slot.** The grammar accepts
+  `ARRAY [1..3] OF TON` and `ARRAY [1..3] OF Point`, the checker resolves them and the
+  compiler gives them slots. What does not work is reaching into one: calling `T[1](...)` is
+  refused by the checker as `E0314` "only a FUNCTION and a function block instance are
+  callable", and `A[1].X` and `A[1] := B` are refused by the compiler as `U0301` and `E0501`.
+  An array of a *single-field* structure occupies one slot per element and works like an array
+  of scalars, which is a distinction the messages do not draw.
+- **`VAR_ACCESS` and `VAR_CONFIG` semantics.** The sections parse; nothing acts on them. A
+  `VAR_CONFIG` instance path is refused by name.
+- **A formatter, a language server, a project file, a GUI, any protocol, any network model,
+  any plant model, any importer, any AI layer.** None of these has any code in this
+  repository. See `docs/ROADMAP.md` for when each is intended. The declarative test harness,
+  which an earlier version of this list said did not exist, does: it is `salman-test`, it is
+  driven by `salman test`, and the worked example depends on it.
 
 ---
 
@@ -372,8 +642,14 @@ no context it falls back to `DINT`, and `LREAL` for a real.
 documents `DINT`; another documents "the smallest possible type". Those give different
 answers for `x : SINT := 5;` and for overload resolution, so salman picks the widely
 documented pair and says it is a choice. `default_literal_type` in
-`crates/salman-lang/src/types.rs`. **This rule is `[~]`: the function exists, nothing applies
-it yet, and no test covers it.**
+`crates/salman-lang/src/types.rs`. The checker applies it and three tests cover it, where an
+earlier version of this page recorded the rule as `[~]` with nothing applying it:
+`sema.rs: an_untyped_integer_literal_takes_the_type_its_context_requires`,
+`sema.rs: an_untyped_integer_literal_falls_back_to_dint_when_nothing_asks_for_a_type`,
+`sema.rs: an_untyped_real_literal_falls_back_to_lreal`. A literal that does not fit the type
+its context asks for is refused rather than wrapped:
+`sema.rs: an_untyped_integer_literal_that_does_not_fit_its_context_names_the_value_and_the_range`,
+`diagnostics.rs: a_literal_that_does_not_fit_its_target_is_rejected`.
 
 ### 2. Whether `BOOL` implicitly widens to the bit strings
 
@@ -443,6 +719,11 @@ No public source available to salman settles any of these.
 **7a. When `TO` and `BY` are evaluated.** salman evaluates each **exactly once, at loop
 entry**, and treats an absent `BY` as `1`. Evaluating them every pass would let a side effect
 in the bound change the trip count part way through, which a reader of the source cannot see.
+The compiler reserves two temporary slots per `FOR` statement to hold them, and
+`semantics.rs: the_bounds_of_a_for_loop_are_evaluated_once_at_entry` asserts the consequence:
+changing the bound variable inside the body does not change how many passes the loop makes.
+The same policy applies to a `CASE` selector, which is evaluated once into a temporary:
+`semantics.rs: a_case_selector_is_evaluated_once_and_not_again_for_each_arm`.
 
 **7b. Whether the body may modify the control variable.** salman **refuses** it, with the
 diagnostic saying it is a salman rule. The parser flags what it can see — a statement in the
@@ -521,11 +802,36 @@ salman's reading rather than a requirement salman can cite.
 **What salman does.** Wraps. `DINT#2147483647 + 1` is `DINT#-2147483648`.
 
 **Why a policy.** Real controllers wrap and IEC 61131-3 does not fix the behaviour, so salman
-matches hardware rather than tidiness. Integer division and remainder by zero are faults
-rather than values, because there is no answer to give and returning zero would let a
-division bug reach a plant disguised as data. Real division by zero follows IEEE 754 and
-yields an infinity, because IEC 61131-3 references IEEE 754 normatively for `REAL` and
-`LREAL`. **The wrapping policy has no test.** It is `[~]`.
+matches hardware rather than tidiness. The wrapping policy is tested — an earlier version of
+this page said it had none — by `exec.rs: integer_overflow_wraps_because_that_is_what_a_controller_does`,
+and constant folding wraps identically so that a folded expression and a computed one cannot
+disagree: `sema.rs: folding_wraps_the_way_the_runtime_wraps`.
+
+### 13a. Division by zero, integer and real
+
+**What salman does.** Integer division and remainder by zero are a **fault** that stops the
+task, not a value. Real division by zero follows IEEE 754 and yields an infinity.
+
+**Why a policy.** For the integer case there is no answer to give, and returning zero would
+let a division bug reach a plant disguised as data. For the real case IEC 61131-3 references
+IEEE 754 normatively for `REAL` and `LREAL`, so salman follows it rather than inventing a
+second rule. `exec.rs: integer_division_by_zero_is_a_fault_not_a_value`. A division by a
+constant zero is found before the program runs, when the whole expression folds:
+`sema.rs: division_by_a_constant_zero_is_found_before_the_program_runs`. `N / 0` with `N` a
+variable does not fold and so is a runtime fault instead.
+
+### 13b. Converting a real to an integer saturates
+
+**What salman does.** A `REAL` or `LREAL` converted to an integer type saturates at that
+type's maximum or minimum, and a NaN becomes zero.
+
+**Why a policy.** IEC 61131-3 does not say what an out-of-range conversion produces, and in C
+it is undefined behaviour. Rust's float-to-integer cast is defined, saturating and
+platform-independent, so salman takes it and says so. Going through a wider intermediate and
+truncating would be worse than useless: a `REAL` of 1e30 would become whatever its low
+thirty-two bits happen to be, which for that value is zero — a wrong answer that looks like a
+plausible one. `exec.rs: converting_a_real_to_an_integer_saturates_rather_than_being_undefined`,
+`exec.rs: converting_a_nan_to_an_integer_gives_zero`.
 
 ### 14. What `%IW4` counts
 
@@ -537,14 +843,31 @@ fourth word, at byte 8.
 **Why a policy.** Not fixed by IEC 61131-3, and vendors genuinely differ, so the same source
 text addresses different memory on different systems. Getting it wrong silently addresses the
 wrong memory, which is why it is a choice rather than an assumption.
-`word_addressing_granularity_is_a_setting_because_vendors_disagree`.
+`memory.rs: word_addressing_granularity_is_a_setting_because_vendors_disagree`.
 
 ### 15. Byte order within the process image
 
 **What salman does.** A setting, `ImageByteOrder`, defaulting to little-endian.
 
 **Why a policy.** Also not fixed by the standard, also divergent between vendors.
-`image_byte_order_is_a_setting_and_round_trips_either_way`.
+`memory.rs: image_byte_order_is_a_setting_and_round_trips_either_way`.
+
+**What is true of both 14 and 15, and needs saying.** They are settings *in the type only*.
+`ImageLayout` is a field of the memory model, both alternatives work and are tested, and
+nothing selects between them: `crates/salman-vm/src/compile.rs` always builds memory with
+`ImageLayout::default()`, and there is no command line flag, dialect field or source construct
+that changes it. So every program salman compiles today gets `ElementIndex` and little-endian.
+The decision is made and recorded; the surface that would let a user choose is not built.
+
+### 15a. The process image is a fixed 4096 bytes per area
+
+**What salman does.** `%I`, `%Q` and `%M` are 4096 bytes each. An address past the end is a
+runtime fault naming the address, not a silent wrong read.
+
+**Why a policy.** A real controller sizes its image from its IO configuration, which salman
+will have when the IO mapping layer arrives. Until then a fixed area is honest and a clear
+fault is better than growing memory on demand, which would make an address typo look like it
+worked. `memory.rs: an_address_past_the_end_of_its_area_reads_none_rather_than_panicking`.
 
 ### 16. Task priority ordering
 
@@ -567,6 +890,74 @@ Modelling that faithfully needs an execution-cost model salman does not have. Th
 is stated plainly: **salman cannot reproduce a race that depends on being interrupted
 mid-scan.** That limitation is not hidden behind the word "deterministic", and any result
 salman produces about task interaction should be read with it in mind.
+
+### 18. What runs when a file declares no `CONFIGURATION`
+
+**Question.** IEC 61131-3 says a configuration is what binds a program to a task. What should
+a tool do with a file that has a `PROGRAM` and no configuration at all?
+
+**What salman does.** Every `PROGRAM` in the file gets one freewheeling task of its own, in
+declaration order, with priority equal to its position. A `PROGRAM` declared inside a
+`CONFIGURATION` but bound to no task gets the same treatment and is listed as untasked. A
+file with no `PROGRAM` at all is an error, `E0502` "this project has nothing to run".
+
+**Why a policy.** The standard does not describe this case, because on a controller it cannot
+arise. It is what makes `salman check` and `salman run` useful on a single file, and it is a
+salman convenience rather than a standard rule. Anything relying on task timing should write
+the configuration out. `sema.rs: a_unit_with_no_configuration_produces_none`,
+`sema.rs: a_program_with_no_task_runs_freewheeling_and_is_listed_as_untasked`.
+
+### 19. A freewheeling task has a modelled scan time
+
+**Question.** A freewheeling task runs again as soon as it finishes. On a virtual clock, how
+much time does that take?
+
+**What salman does.** A freewheeling task is modelled as a cyclic task whose period is its own
+execution time. Where no execution time is stated, `FREEWHEEL_DEFAULT_SCAN` — one millisecond
+— is used.
+
+**Why a policy.** Zero is the honest answer and it is unusable: virtual time would never
+advance, so a timer inside a freewheeling program would never fire and a run would never
+finish. A number had to be chosen. One millisecond is the order of magnitude of a small
+program's scan; it is **not a measurement and not a claim about any controller**, and it is
+why `salman run --scans 2` on a single file reports `T#1ms` rather than `T#0s`.
+`task.rs: a_freewheeling_task_advances_the_clock_by_its_modelled_scan_time`.
+
+### 20. A scan has an instruction budget
+
+**What salman does.** Each scan may execute a bounded number of instructions. A scan that
+exceeds it stops the task with a named fault — `scan used more than N instructions; salman
+stopped it as a watchdog would` — rather than hanging.
+
+**Why a policy.** `WHILE TRUE DO ; END_WHILE` must fail and say why, not wedge a test run on a
+build server. Every real controller has a watchdog and this is the software equivalent; the
+budget is salman's number rather than any standard's, so a program near the limit will behave
+differently here from on hardware. `exec.rs: the_watchdog_stops_a_routine_that_jumps_to_itself`,
+`task.rs: the_scan_watchdog_stops_a_program_that_never_ends`.
+
+### 21. One source file per invocation
+
+**What salman does.** `salman check`, `salman run` and `salman test` each take exactly one
+Structured Text file and compile it alone. There is no project model and no multi-file
+compilation unit.
+
+**Why a policy.** Node identity is allocated per parse, so merging two parsed units means
+renumbering, and that is work for a project model rather than a quiet approximation now.
+salman says so rather than silently compiling only the first file and leaving a reader to
+wonder where the rest went. Recorded here because "compiles Structured Text" reads as
+"compiles a project" unless it is contradicted.
+
+### 22. `SEMA` ships, and salman never calls it standard
+
+**What salman does.** Implements `SEMA`, and returns false from `NativeBlock::is_iec_standard`
+for it and for nothing else.
+
+**Why a policy.** Existing code uses it and a tool that refuses to read the code people have
+is a tool nobody can adopt; but it is in neither the Edition 2 bistable table nor
+IEC 61131-3:2013 Table 43 "Standard bistable function blocks" (Ed 3.0). The full account,
+including which of the two published and mutually incompatible implementations salman copies,
+is in the section at the end of this page.
+`stdfb.rs: sema_is_the_only_block_salman_does_not_claim_is_standard`.
 
 ---
 
@@ -661,10 +1052,24 @@ one-scan difference, and this paragraph is where they should find out why.
 
 ```
 cargo test --workspace
+salman check examples/conveyor/conveyor.st
+salman test  examples/conveyor/conveyor.st examples/conveyor/
+salman run   examples/conveyor/conveyor.st --until T#30s
+salman status
 ```
 
 Every test named on this page is in the file named beside it. A capability may only be
 described as *implemented and tested* in `crates/salman-core/src/capability.rs` if it names
 tests that exist; a test in that module fails the build if a cited test has been deleted or
-renamed. This page is written by hand and is therefore the weakest link in that chain: if a
-row here disagrees with the code, the code is right and this page is a bug.
+renamed, and `docs/STATUS.md` is generated from that registry so the two cannot drift.
+
+This page is written by hand and is therefore the weakest link in that chain. Three things
+follow from that, and all three are worth saying plainly:
+
+- If a row here disagrees with the code, **the code is right and this page is a bug.**
+- The registry is an inventory of capabilities, not of language features. It has no entry for
+  the type checker, so `docs/STATUS.md` does not list one either; this page is the only place
+  the checker is accounted for, which makes this page harder to trust rather than easier.
+- Nothing generates the rows below the *Status markers* table. They were written by reading
+  the code and running the compiler, and every claim of the form "X is refused with diagnostic
+  Y" was checked by compiling a file that does X.

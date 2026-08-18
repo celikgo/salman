@@ -87,9 +87,12 @@ Cross-OS artefact determinism is currently an untested premise — the determini
 exists to discover whether it holds, and salman must not claim it until that job has been
 green on all three operating systems for a meaningful period. Today
 `.github/workflows/determinism.yml` runs the test suite on three platforms and then prints
-a warning saying that it compared no trace, because there is no `salman run` and therefore
-no trace to compare. The green tick on that workflow currently means "the tests passed
-everywhere", not "the traces matched".
+a warning saying that it compared no trace. The blocker is no longer the runtime: `salman
+run` exists and writes a trace, and `crates/salman-vm/src/task.rs`,
+`the_same_configuration_run_twice_produces_the_same_trace_fingerprint`, shows two runs on
+one machine agree. What is missing is the cross-platform half — per-OS artefact upload and
+a fan-in job comparing the three byte for byte — and until that is written the green tick on
+that workflow means "the tests passed everywhere", not "the traces matched".
 
 The costs are real. Bumping the Rust toolchain invalidates the premise until the gate has
 run again, so a compiler upgrade is a reviewed change with a determinism argument attached
@@ -130,9 +133,10 @@ the ones that pass on one platform. A single-platform gate would have caught non
 
 - `.github/workflows/determinism.yml` runs `cargo test --workspace --all-features` on
   `ubuntu-latest`, `macos-latest` and `windows-latest` with `fail-fast: false`, and prints a
-  warning on every run stating that the trace comparison itself is not yet implemented. When
-  `salman-vm` can produce a trace through the CLI, that placeholder is replaced by a per-OS
-  artefact upload and a job that compares the three byte for byte.
+  warning on every run stating that the trace comparison itself is not yet implemented. That
+  placeholder is now unblocked — `salman run` produces a trace — and what replaces it is a
+  per-OS artefact upload and a job that compares the three byte for byte. That work has not
+  been done, so the warning is still what the job prints.
 - `clippy.toml` bans the transcendental functions via `disallowed-methods` and `HashMap` /
   `HashSet` via `disallowed-types`, each with the reason next to the rule.
   `.github/workflows/ci.yml` runs clippy with `-D warnings`, so a violation fails the build.

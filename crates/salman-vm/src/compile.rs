@@ -146,8 +146,19 @@ impl Compiler<'_> {
     }
 
     fn run(&mut self) -> Option<Compiled> {
-        self.compute_layouts();
+        let unsettled = self.compute_layouts();
+        if !unsettled.is_empty() {
+            // Every slot offset below would be a guess. Nothing is emitted from
+            // a layout that did not settle, because a variable sharing another
+            // one's storage is exactly the failure this compiler exists to
+            // prevent.
+            for index in unsettled {
+                self.report_containment_cycle(index);
+            }
+            return None;
+        }
         self.report_located_variables();
+        self.report_external_variables();
         self.allocate_globals();
         self.allocate_functions();
 
@@ -254,20 +265,108 @@ impl Compiler<'_> {
             .unwrap_or(ElementaryType::Dint)
     }
 
-    fn compute_layouts(&mut self) {
-        // Function block layouts must exist before the POUs that instantiate
-        // them are laid out. The checker has already rejected cycles, so a
-        // fixed number of passes converges; two is enough for any acyclic
-        // nesting salman accepts, and a third is cheap insurance.
-        self.layouts = vec![PouLayout::default(); self.checked.pous.len()];
-        for _ in 0..3 {
-            for index in 0..self.checked.pous.len() {
+    /// Lays out every POU, and says whether the layout settled.
+    ///
+    /// A POU's size depends on the sizes of the function blocks it
+    /// instantiates, and a POU may be written **above** the blocks it uses, so
+    /// one pass in declaration order is not enough: a pass propagates a size
+    /// only one level up the containment chain in that case. A fixed number of
+    /// passes is therefore wrong — with three, a block nested three deep left
+    /// its container's variables overlapping each other, silently — so this
+    /// iterates to a fixpoint instead.
+    ///
+    /// Each pass settles at least one more level, so an acyclic unit converges
+    /// in at most one pass per POU. A unit that has not converged by then holds
+    /// a function block that contains itself, whose size is not finite; the
+    /// indices returned are the POUs on that cycle.
+    fn compute_layouts(&mut self) -> Vec<usize> {
+        let count = self.checked.pous.len();
+        self.layouts = vec![PouLayout::default(); count];
+        for _ in 0..=count {
+            let mut changed = false;
+            for index in 0..count {
                 let layout = self.layout_for(index);
                 if let Some(slot) = self.layouts.get_mut(index) {
+                    if slot.size != layout.size || slot.offsets != layout.offsets {
+                        changed = true;
+                    }
                     *slot = layout;
                 }
             }
+            if !changed {
+                return Vec::new();
+            }
         }
+        (0..count)
+            .filter(|index| self.contains_itself(*index))
+            .collect()
+    }
+
+    /// Whether a POU holds an instance of itself, directly or through another
+    /// block. Such a thing has no finite size and cannot be laid out.
+    fn contains_itself(&self, index: usize) -> bool {
+        let Ok(target) = u32::try_from(index) else {
+            return false;
+        };
+        let mut seen: Vec<u32> = Vec::new();
+        let mut pending: Vec<u32> = Vec::new();
+        self.contained_pous(index, &mut pending);
+        while let Some(next) = pending.pop() {
+            if next == target {
+                return true;
+            }
+            if seen.contains(&next) {
+                continue;
+            }
+            seen.push(next);
+            self.contained_pous(next as usize, &mut pending);
+        }
+        false
+    }
+
+    /// The POUs whose instances one POU's variables hold, at any depth within
+    /// an array or a structure.
+    fn contained_pous(&self, index: usize, out: &mut Vec<u32>) {
+        let Some(pou) = self.checked.pous.get(index) else {
+            return;
+        };
+        for symbol in &pou.symbols {
+            self.instances_in(symbol.ty, 0, out);
+        }
+    }
+
+    fn instances_in(&self, ty: TypeId, depth: u32, out: &mut Vec<u32>) {
+        if depth > 16 {
+            return;
+        }
+        match self.checked.types.get(ty) {
+            TypeData::Array { element, .. } => self.instances_in(*element, depth + 1, out),
+            TypeData::Struct { fields, .. } => {
+                for field in fields {
+                    self.instances_in(field.ty, depth + 1, out);
+                }
+            }
+            TypeData::FunctionBlock { pou: Some(pou), .. } => out.push(*pou),
+            _ => {}
+        }
+    }
+
+    /// Reports a function block whose size depends on itself.
+    fn report_containment_cycle(&mut self, index: usize) {
+        let Some(pou) = self.checked.pous.get(index) else {
+            return;
+        };
+        let name = pou.name.to_string();
+        let span = pou.name.span;
+        self.diags.push(
+            Diagnostic::error(E_LAYOUT, format!("`{name}` holds an instance of itself"))
+                .with_primary(span, "salman cannot work out how large this is")
+                .with_note(
+                    "A function block that contains an instance of itself, directly or through \
+                 another block, has no finite size. salman lays every instance out once, at \
+                 load, so there is nowhere for the inner one to live.",
+                ),
+        );
     }
 
     fn layout_for(&self, index: usize) -> PouLayout {
@@ -354,7 +453,23 @@ impl Compiler<'_> {
                     .unwrap_or_default();
                 for symbol in &symbols {
                     let name = format!("{prefix}.{}", symbol.name.as_str());
-                    self.emit_slots(&name, symbol.ty, persistence, depth + 1);
+                    let offset = self.slot_types.len() as u32;
+                    // A RETAIN inside a function block retains for every
+                    // instance of it. Taking the container's persistence and
+                    // nothing else — which is what this used to do — quietly
+                    // cleared a retained counter on the next warm restart.
+                    let inner = match Self::persistence_of(symbol.qualifiers) {
+                        Persistence::Volatile => persistence,
+                        declared => declared,
+                    };
+                    self.emit_slots(&name, symbol.ty, inner, depth + 1);
+                    // A declared initial value inside a function block belongs
+                    // to every instance of it. Dropping it here — which is what
+                    // this used to do — started `VAR Setpoint : REAL := 20.0;`
+                    // at zero in every instance, and said nothing.
+                    if let Some(init) = &symbol.init {
+                        self.initial.push((offset, init.clone()));
+                    }
                 }
                 let layout = self
                     .layouts
@@ -443,6 +558,41 @@ impl Compiler<'_> {
                     "a directly represented variable used in an expression, such as                      `%IX0.0 := TRUE;`, does work. It is the AT binding that does not,                      because there is nothing yet to bind it to",
                 )
                 .with_note("see docs/ROADMAP.md; IO mapping arrives with the Modbus layer"),
+            );
+        }
+    }
+
+    /// Reports every `VAR_EXTERNAL` declaration as not implemented.
+    ///
+    /// A `VAR_EXTERNAL` is a name for a `VAR_GLOBAL` declared elsewhere, and
+    /// nothing here binds it to one: it is given storage of its own, so a POU
+    /// that wrote it wrote a private copy that no other POU could see, and a
+    /// POU that read it read whatever it had last written rather than what the
+    /// global holds. That is the same quiet lie as an unbound `AT`, and it is
+    /// refused for the same reason.
+    fn report_external_variables(&mut self) {
+        let mut external: Vec<(Span, String)> = Vec::new();
+        for pou in &self.checked.pous {
+            for symbol in &pou.symbols {
+                if symbol.section == VarSection::External {
+                    external.push((symbol.name.span, symbol.name.to_string()));
+                }
+            }
+        }
+        for (span, name) in external {
+            self.diags.push(
+                Diagnostic::error(
+                    U_NOT_COMPILED,
+                    format!("salman does not implement `VAR_EXTERNAL {name}` yet"),
+                )
+                .with_primary(span, "there is nothing here that binds this to a global")
+                .with_note(
+                    "A VAR_GLOBAL is visible to every POU by name, so deleting the VAR_EXTERNAL \
+                     block gives the behaviour this was asking for. Binding the two together \
+                     needs one name to mean one slot everywhere it is written, including as the \
+                     control variable of a FOR loop, which is more than salman does at 0.0.1",
+                )
+                .with_note("see docs/CONFORMANCE.md for what is and is not implemented"),
             );
         }
     }
@@ -682,6 +832,9 @@ impl Compiler<'_> {
                 None
             },
         };
+        if ast.kind == PouKind::Function {
+            body.function_prologue(pou);
+        }
         body.statements(&ast.body);
         body.emit(Op::Return);
         (body.code, body.max_depth)
@@ -849,6 +1002,14 @@ impl Body<'_, '_> {
             }
             ExprKind::Paren(inner) => self.expr(inner),
             ExprKind::Var(_) | ExprKind::Member { .. } | ExprKind::Index { .. } => {
+                // An enumeration value written without its type — `Green`
+                // rather than `Colour#Green` — is a name in the tree and a
+                // constant at run time. The checker resolves it from the type
+                // the context wants; without this it reached `place`, which has
+                // no address to give for a constant.
+                if self.enum_constant(expr) {
+                    return;
+                }
                 match self.place(expr) {
                     Some(Place::Local(offset)) => self.emit(Op::LoadLocal(offset)),
                     Some(Place::Global(slot)) => self.emit(Op::LoadSlot(slot)),
@@ -873,33 +1034,42 @@ impl Body<'_, '_> {
                 if operand_ty != ty {
                     self.emit(Op::Convert { to: ty });
                 }
-                self.emit(Op::Unary {
-                    op: map_unary(*op),
-                    ty,
-                });
+                if let Some(op) = map_unary(*op) {
+                    self.emit(Op::Unary { op, ty });
+                }
             }
             ExprKind::Binary { op, lhs, rhs } => self.binary(expr, *op, lhs, rhs),
             ExprKind::Call { .. } => {
                 self.call(expr, true);
             }
             ExprKind::EnumValue { .. } => {
-                let ty = self.elementary(expr).unwrap_or(ElementaryType::Dint);
-                match self.compiler.checked.resolution(expr.id) {
-                    Some(Resolution::EnumValue { value, .. }) => {
-                        let literal = integer_value(i128::from(value), ty);
-                        let index = self.compiler.constant(literal);
-                        self.emit(Op::Const(index));
-                    }
-                    _ => self.error(
+                if !self.enum_constant(expr) {
+                    self.error(
                         expr.span,
                         "this enumeration value was not resolved",
                         "salman could not find this value",
-                    ),
+                    );
                 }
             }
             ExprKind::Deref(_) => self.unsupported(expr.span, "references"),
             ExprKind::Error => {}
         }
+    }
+
+    /// Emits an enumeration value as a constant, if that is what this is.
+    ///
+    /// Returns whether anything was emitted, so that a name which is an
+    /// ordinary variable falls through to the address path.
+    fn enum_constant(&mut self, expr: &Expr) -> bool {
+        let Some(Resolution::EnumValue { value, .. }) = self.compiler.checked.resolution(expr.id)
+        else {
+            return false;
+        };
+        let ty = self.elementary(expr).unwrap_or(ElementaryType::Dint);
+        let literal = integer_value(i128::from(value), ty);
+        let index = self.compiler.constant(literal);
+        self.emit(Op::Const(index));
+        true
     }
 
     fn binary(&mut self, whole: &Expr, op: BinaryOp, lhs: &Expr, rhs: &Expr) {
@@ -1081,6 +1251,112 @@ impl Body<'_, '_> {
         }
     }
 
+    // -- functions have no memory ----------------------------------------
+
+    /// Re-initialises a `FUNCTION`'s own variables, on every call.
+    ///
+    /// A function has one static frame, because salman rejects recursion — but
+    /// a frame that is never cleared is a frame that remembers. IEC 61131-3
+    /// gives a function no state between invocations, and salman's own
+    /// diagnostic for an unbound parameter says so in as many words, so a
+    /// `VAR` that carried its last value into the next call was salman
+    /// contradicting itself: the same call with the same arguments answered
+    /// differently on the second scan.
+    ///
+    /// `VAR_INPUT` and `VAR_IN_OUT` are left alone: the caller has just written
+    /// them. Everything else — `VAR`, `VAR_TEMP` and the result — starts from
+    /// its declared initial value, or from its type's default when it has none.
+    fn function_prologue(&mut self, pou: u32) {
+        let Some(base) = self.compiler.function_bases.get(&pou).copied() else {
+            return;
+        };
+        let symbols = self
+            .compiler
+            .checked
+            .pous
+            .get(pou as usize)
+            .map(|p| p.symbols.clone())
+            .unwrap_or_default();
+        let layout = self
+            .compiler
+            .layouts
+            .get(pou as usize)
+            .cloned()
+            .unwrap_or_default();
+        for (position, symbol) in symbols.iter().enumerate() {
+            if !matches!(symbol.section, VarSection::Local | VarSection::Temp) {
+                continue;
+            }
+            let Some(offset) = layout.offsets.get(position).copied() else {
+                continue;
+            };
+            let width = self.compiler.slot_size(symbol.ty, 0);
+            for step in 0..width {
+                let slot = offset.saturating_add(step);
+                let declared = if step == 0 { symbol.init.clone() } else { None };
+                let value = declared.unwrap_or_else(|| self.default_of(base, slot));
+                let index = self.compiler.constant(value);
+                self.emit(Op::Const(index));
+                self.emit(Op::StoreLocal(slot));
+            }
+        }
+        if let Some(result) = layout.result {
+            let value = self.default_of(base, result);
+            let index = self.compiler.constant(value);
+            self.emit(Op::Const(index));
+            self.emit(Op::StoreLocal(result));
+        }
+    }
+
+    /// The initial value of one slot of a static frame.
+    fn default_of(&self, base: u32, offset: u32) -> Value {
+        self.compiler
+            .slot_types
+            .get(base.saturating_add(offset) as usize)
+            .copied()
+            .unwrap_or(ElementaryType::Dint)
+            .default_value()
+    }
+
+    // -- wide values -----------------------------------------------------
+
+    /// How many slots an expression's value occupies.
+    ///
+    /// One for everything elementary; more for a structure, an array or a
+    /// function block instance, which are the values that cannot travel on the
+    /// operand stack.
+    fn width(&self, expr: &Expr) -> u32 {
+        self.compiler
+            .checked
+            .type_of(expr.id)
+            .map_or(1, |ty| self.compiler.slot_size(ty, 0))
+    }
+
+    /// Copies a whole structure, array or instance from one place to another.
+    ///
+    /// Both sides must be statically addressable. The two types are identical —
+    /// the checker permits an aggregate assignment only between one type and
+    /// itself, and types are interned by structure — so slot `k` of the source
+    /// is slot `k` of the target.
+    fn copy_wide(&mut self, destination: Anchor, source: Anchor, width: u32) {
+        for offset in 0..width {
+            self.load(anchor_place(source, offset));
+            self.store(anchor_place(destination, offset));
+        }
+    }
+
+    /// Copies a whole aggregate out of whatever `source` names.
+    fn copy_wide_from(&mut self, destination: Anchor, source: &Expr, width: u32, what: &str) {
+        let Some(anchor) = self.anchor(source) else {
+            self.unsupported(
+                source.span,
+                &format!("{what} from something that is not a variable, a field or a global"),
+            );
+            return;
+        };
+        self.copy_wide(destination, anchor, width);
+    }
+
     // -- calls -----------------------------------------------------------
 
     /// Compiles a call. `want_value` is true when the result is used.
@@ -1104,21 +1380,38 @@ impl Body<'_, '_> {
                 return;
             };
             let mut outputs: Vec<(u32, &Expr)> = Vec::new();
+            // A VAR_IN_OUT is written at the call site like an input; salman
+            // passes it by value and copies it back after the call, which is
+            // what these record.
+            let mut in_outs: Vec<(u32, &Expr)> = Vec::new();
             for arg in args {
                 match arg {
                     Arg::Input { name, value } => {
                         let Some(offset) = self.field_offset(ty, name.as_str()) else {
                             continue;
                         };
-                        self.expr(value);
-                        let target = self.field_type(ty, name.as_str());
-                        let source = self.elementary(value);
-                        if let (Some(target), Some(source)) = (target, source)
-                            && target != source
-                        {
-                            self.emit(Op::Convert { to: target });
+                        let width = self.width(value);
+                        if width > 1 {
+                            self.copy_wide_from(
+                                shift(anchor, offset),
+                                value,
+                                width,
+                                "passing a whole structure or array to a function block",
+                            );
+                        } else {
+                            self.expr(value);
+                            let target = self.field_type(ty, name.as_str());
+                            let source = self.elementary(value);
+                            if let (Some(target), Some(source)) = (target, source)
+                                && target != source
+                            {
+                                self.emit(Op::Convert { to: target });
+                            }
+                            self.store(anchor_place(anchor, offset));
                         }
-                        self.store(anchor_place(anchor, offset));
+                        if self.field_section(ty, name.as_str()) == Some(VarSection::InOut) {
+                            in_outs.push((offset, value));
+                        }
                     }
                     Arg::Output { name, target } => {
                         let Some(offset) = self.field_offset(ty, name.as_str()) else {
@@ -1163,7 +1456,20 @@ impl Body<'_, '_> {
                 ),
             }
 
-            for (offset, target) in outputs {
+            for (offset, target) in outputs.into_iter().chain(in_outs) {
+                let width = self.width(target);
+                if width > 1 {
+                    let Some(destination) = self.anchor(target) else {
+                        self.unsupported(
+                            target.span,
+                            "binding a whole structure or array out of a function block through a \
+                             subscript or a direct address",
+                        );
+                        continue;
+                    };
+                    self.copy_wide(destination, shift(anchor, offset), width);
+                    continue;
+                }
                 let Some(place) = self.place(target) else {
                     continue;
                 };
@@ -1196,7 +1502,11 @@ impl Body<'_, '_> {
         let Some(routine) = self.compiler.routines.get(&pou).copied() else {
             return;
         };
-        let inputs: Vec<(u32, ElementaryType)> = self
+        // The parameters a positional call fills, in declaration order. This
+        // must be the same list the checker counted its arguments against —
+        // which includes VAR_IN_OUT — or an argument written for one parameter
+        // lands in another, or in nothing at all.
+        let inputs: Vec<(u32, ElementaryType, VarSection)> = self
             .compiler
             .checked
             .pous
@@ -1205,42 +1515,41 @@ impl Body<'_, '_> {
                 p.symbols
                     .iter()
                     .enumerate()
-                    .filter(|(_, s)| s.section == VarSection::Input)
+                    .filter(|(_, s)| matches!(s.section, VarSection::Input | VarSection::InOut))
                     .filter_map(|(i, s)| {
                         let offset = self.compiler.layouts.get(pou as usize)?.offsets.get(i)?;
-                        Some((*offset, self.compiler.slot_type(s.ty)))
+                        Some((*offset, self.compiler.slot_type(s.ty), s.section))
                     })
                     .collect()
             })
             .unwrap_or_default();
 
+        let mut in_outs: Vec<(u32, &Expr)> = Vec::new();
         let mut positional = 0usize;
         for arg in args {
             match arg {
                 Arg::Positional(value) => {
-                    let Some((offset, ty)) = inputs.get(positional).copied() else {
+                    let Some((offset, ty, section)) = inputs.get(positional).copied() else {
                         positional += 1;
                         continue;
                     };
                     positional += 1;
-                    self.expr(value);
-                    if self.elementary(value) != Some(ty) {
-                        self.emit(Op::Convert { to: ty });
+                    self.pass_to_function(base, offset, ty, value);
+                    if section == VarSection::InOut {
+                        in_outs.push((offset, value));
                     }
-                    self.emit(Op::StoreSlot(base.saturating_add(offset)));
                 }
                 Arg::Input { name, value } => {
                     let Some(offset) = self.function_input_offset(pou, name.as_str()) else {
                         continue;
                     };
-                    let ty = self.function_input_type(pou, name.as_str());
-                    self.expr(value);
-                    if let Some(ty) = ty
-                        && self.elementary(value) != Some(ty)
-                    {
-                        self.emit(Op::Convert { to: ty });
+                    let ty = self
+                        .function_input_type(pou, name.as_str())
+                        .unwrap_or(ElementaryType::Dint);
+                    self.pass_to_function(base, offset, ty, value);
+                    if self.function_input_section(pou, name.as_str()) == Some(VarSection::InOut) {
+                        in_outs.push((offset, value));
                     }
-                    self.emit(Op::StoreSlot(base.saturating_add(offset)));
                 }
                 Arg::Output { name, .. } => {
                     self.unsupported(
@@ -1252,6 +1561,29 @@ impl Body<'_, '_> {
         }
 
         self.emit(Op::Call { routine, base });
+
+        // A VAR_IN_OUT is copied back into whatever the caller named.
+        for (offset, target) in in_outs {
+            let width = self.width(target);
+            let source = Anchor::Global(base.saturating_add(offset));
+            if width > 1 {
+                let Some(destination) = self.anchor(target) else {
+                    self.unsupported(
+                        target.span,
+                        "copying a whole structure or array back out of a VAR_IN_OUT parameter",
+                    );
+                    continue;
+                };
+                self.copy_wide(destination, source, width);
+                continue;
+            }
+            let Some(place) = self.place(target) else {
+                continue;
+            };
+            self.load(anchor_place(source, 0));
+            self.store(place);
+        }
+
         if want_value {
             let result = self
                 .compiler
@@ -1261,6 +1593,25 @@ impl Body<'_, '_> {
                 .unwrap_or(0);
             self.emit(Op::LoadSlot(base.saturating_add(result)));
         }
+    }
+
+    /// Stores one argument into a function's static frame.
+    fn pass_to_function(&mut self, base: u32, offset: u32, ty: ElementaryType, value: &Expr) {
+        let width = self.width(value);
+        if width > 1 {
+            self.copy_wide_from(
+                Anchor::Global(base.saturating_add(offset)),
+                value,
+                width,
+                "passing a whole structure or array to a FUNCTION",
+            );
+            return;
+        }
+        self.expr(value);
+        if self.elementary(value) != Some(ty) {
+            self.emit(Op::Convert { to: ty });
+        }
+        self.emit(Op::StoreSlot(base.saturating_add(offset)));
     }
 
     fn field_offset(&self, ty: TypeId, name: &str) -> Option<u32> {
@@ -1300,6 +1651,28 @@ impl Body<'_, '_> {
         }
     }
 
+    /// Which section a named parameter of a function block instance is in.
+    ///
+    /// A standard block has no `VAR_IN_OUT`, so one is never a native block's.
+    fn field_section(&self, ty: TypeId, name: &str) -> Option<VarSection> {
+        match self.compiler.checked.types.get(ty) {
+            TypeData::FunctionBlock {
+                pou: Some(index), ..
+            } => {
+                let pou = self.compiler.checked.pous.get(*index as usize)?;
+                let (_, symbol) = pou.symbol(name)?;
+                Some(symbol.section)
+            }
+            _ => None,
+        }
+    }
+
+    fn function_input_section(&self, pou: u32, name: &str) -> Option<VarSection> {
+        let symbols = self.compiler.checked.pous.get(pou as usize)?;
+        let (_, symbol) = symbols.symbol(name)?;
+        Some(symbol.section)
+    }
+
     fn function_input_offset(&self, pou: u32, name: &str) -> Option<u32> {
         let symbols = self.compiler.checked.pous.get(pou as usize)?;
         let (position, _) = symbols.symbol(name)?;
@@ -1329,6 +1702,28 @@ impl Body<'_, '_> {
         match &statement.kind {
             StmtKind::Empty | StmtKind::Error => {}
             StmtKind::Assign { target, value } => {
+                // A structure, an array or a function block instance is more
+                // than one slot, and one load and one store would copy only its
+                // first field and leave the rest of the target as it was. That
+                // is a wrong answer nobody sees, so it is copied slot by slot.
+                let width = self.width(target);
+                if width > 1 {
+                    let Some(destination) = self.anchor(target) else {
+                        self.unsupported(
+                            target.span,
+                            "assigning a whole structure, array or function block instance \
+                             through a subscript or a direct address",
+                        );
+                        return;
+                    };
+                    self.copy_wide_from(
+                        destination,
+                        value,
+                        width,
+                        "assigning a whole structure, array or function block instance",
+                    );
+                    return;
+                }
                 let Some(place) = self.place(target) else {
                     self.error(
                         target.span,
@@ -1614,6 +2009,14 @@ impl Body<'_, '_> {
     }
 }
 
+/// The anchor `offset` slots further on, for reaching into an aggregate.
+const fn shift(anchor: Anchor, offset: u32) -> Anchor {
+    match anchor {
+        Anchor::Local(base) => Anchor::Local(base.saturating_add(offset)),
+        Anchor::Global(base) => Anchor::Global(base.saturating_add(offset)),
+    }
+}
+
 fn anchor_place(anchor: Anchor, offset: u32) -> Place {
     match anchor {
         Anchor::Local(base) => Place::Local(base.saturating_add(offset)),
@@ -1645,10 +2048,16 @@ const fn map_binary(op: BinaryOp) -> BinOp {
     }
 }
 
-const fn map_unary(op: UnaryOp) -> UnOp {
+/// The instruction a unary operator compiles to, if it needs one.
+///
+/// Unary plus is the identity: `+X` is `X`. It has no instruction, and giving
+/// it the negation instruction — which is what this function used to do —
+/// silently returned the wrong sign for every operand it was written on.
+const fn map_unary(op: UnaryOp) -> Option<UnOp> {
     match op {
-        UnaryOp::Neg | UnaryOp::Plus => UnOp::Neg,
-        UnaryOp::Not => UnOp::Not,
+        UnaryOp::Plus => None,
+        UnaryOp::Neg => Some(UnOp::Neg),
+        UnaryOp::Not => Some(UnOp::Not),
     }
 }
 

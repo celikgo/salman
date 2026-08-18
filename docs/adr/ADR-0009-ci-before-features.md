@@ -36,10 +36,12 @@ checks list, and in the log.
 
 `.github/workflows/determinism.yml` is the current case. It runs the workspace test suite
 on Linux, macOS and Windows, which is a real cross-platform gate and is all it claims.
-It then runs a step named
-`PLACEHOLDER: trace determinism is NOT checked yet (no runtime exists)`, which emits a
-warning annotation stating what ran, what did not run, and what it is blocked on. It
-compares no trace, because at 0.0.1 nothing produces one.
+It then runs a placeholder step which emits a warning annotation stating what ran, what did
+not run, and what it is blocked on. It compares no trace. The reason has changed since the
+step was written: `salman run` now produces a trace, so what is missing is no longer the
+runtime but the per-OS artefact upload and the fan-in comparison job. The step's name and
+message still say "no runtime exists", which is now itself out of date and is the next thing
+to fix in that file.
 
 `.github/workflows/fuzz.yml` is the same rule at a later stage, and is the evidence that
 it works. When there were no fuzz targets, that workflow **failed on purpose**, with a

@@ -32,7 +32,8 @@ salman targets Edition 3.0 because it is the edition its public sources let it v
 ## Decision
 
 salman compiles Structured Text to a bytecode and interprets it. The instruction set
-lives in `crates/salman-vm/src/bytecode.rs` and the interpreter in
+lives in `crates/salman-vm/src/bytecode.rs`, the compiler from the checked AST in
+`crates/salman-vm/src/compile.rs`, and the interpreter in
 `crates/salman-vm/src/exec.rs`. The loop is single-threaded, reads no clock, and iterates
 no hash map.
 
@@ -61,9 +62,9 @@ routine's peak stack is computed at compile time and recorded in `Routine::max_s
 
 ## Consequences
 
-An interpreter is slower than compiled code. salman has published **no performance
-numbers** and will not claim any until they are measured. `.github/workflows/perf.yml`
-today measures cold start, peak resident set, binary size and test-suite wall time against
+An interpreter is slower than compiled code. salman publishes **no interpreter throughput
+number** and will not claim one until it is measured. `.github/workflows/perf.yml` today
+measures cold start, peak resident set, binary size and test-suite wall time against
 `perf-budget.toml`; none of those is interpreter throughput, and there is no VM benchmark
 in this repository at all.
 
@@ -77,14 +78,21 @@ agree, and agreement has to be demonstrated by a differential test suite that do
 exist. That cost is real and is a reason to defer the backend, not a reason to pretend it
 would be free.
 
-Some failures that a compiler would catch arrive at runtime instead. `BinOp::Pow` on
-integers is `FaultKind::Unsupported` in the interpreter because the front end is expected
-to convert to a real first; if it ever fails to, the program faults mid-scan rather than
-failing to compile.
+The interpreter carries backstops for failures the compiler is meant to have caught.
+`BinOp::Pow` on integers is `FaultKind::Unsupported` in the interpreter, and the compiler
+rejects `**` outright before it can be emitted, so that fault is unreachable from a program
+salman compiled. It stays because the instruction set is public and a future emitter could
+reach it, and because faulting mid-scan with a named reason is better than a silent wrong
+answer.
 
-The recursion rejection is, at 0.0.1, a design commitment and not yet a check. There is no
-compiler from the AST to the bytecode in this repository, so nothing rejects recursion
-today. The static addressing scheme is only sound once that check exists.
+The recursion rejection is now a check rather than only a commitment.
+`crates/salman-lang/src/sema.rs` runs `check_recursion` before any body is checked, so a
+recursive unit is reported as a recursive unit rather than as a cascade of downstream
+errors, and the diagnostic names the whole cycle. The static addressing scheme depends on
+that check, which is why it runs in the front end and not as an afterthought in the
+compiler. The requirement it enforces is a salman rule: IEC 61131-3 is widely understood to
+forbid recursive POU invocation, and salman could not verify the wording from a public
+source, so the diagnostic says so.
 
 ## Alternatives considered
 
@@ -127,10 +135,20 @@ first engineering rule is that untrusted input is treated as hostile.
   addressed by index and named for diagnostics only.
 * `crates/salman-vm/src/clock.rs`, `two_clocks_advanced_the_same_way_agree_exactly`.
 
-Three things are **not** enforced, and saying otherwise would be the failure this project
-exists to avoid. `crates/salman-vm/src/exec.rs` has no test module at all: its arithmetic
-policies — wrapping integer overflow, division by zero as a fault, IEEE 754 for reals —
-are stated in module documentation and exercised only indirectly through the task and
-standard-function-block tests. Nothing rejects recursion, because nothing compiles to
-bytecode yet. And `.github/workflows/determinism.yml` does not yet compare a trace across
-platforms; it says so on every run, in a step named for the gap.
+* `crates/salman-vm/src/exec.rs` — the arithmetic policies are asserted directly, not only
+  through the task and standard-function-block tests:
+  `integer_overflow_wraps_because_that_is_what_a_controller_does`,
+  `integer_division_by_zero_is_a_fault_not_a_value`,
+  `the_most_negative_integer_divided_by_minus_one_does_not_abort` and
+  `real_division_by_zero_follows_ieee_754_rather_than_faulting`. The never-panic rule has
+  its own tests in the same module, including
+  `popping_an_empty_stack_faults_rather_than_panicking`, `a_jump_outside_the_routine_faults`
+  and `a_routine_that_does_not_exist_faults_rather_than_panicking`.
+* `crates/salman-lang/src/sema.rs`, `direct_recursion_is_rejected_statically`,
+  `mutual_recursion_names_the_whole_cycle` and
+  `recursion_through_a_function_block_instance_is_rejected` — the check the static
+  addressing scheme depends on.
+
+One thing is **not** enforced, and saying otherwise would be the failure this project exists
+to avoid. `.github/workflows/determinism.yml` does not compare a trace across platforms. It
+says so on every run, in a step named for the gap.

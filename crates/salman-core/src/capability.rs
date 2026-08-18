@@ -400,6 +400,36 @@ pub static REGISTRY: &[Capability] = &[
                are parsed far enough to be named and are not implemented.",
     },
     Capability {
+        id: "lang.st.type-checker",
+        area: "Language",
+        title: "Name resolution, type checking, constant folding and recursion rejection",
+        status: Status::ImplementedTested,
+        milestone: "v0.1",
+        evidence: &[
+            Evidence {
+                file: "crates/salman-lang/src/sema.rs",
+                test: "an_untyped_integer_literal_takes_the_type_its_context_requires",
+            },
+            Evidence {
+                file: "crates/salman-lang/src/sema.rs",
+                test: "mutual_recursion_names_the_whole_cycle",
+            },
+            Evidence {
+                file: "crates/salman-lang/src/sema.rs",
+                test: "check_never_panics_on_a_unit_the_parser_could_not_finish",
+            },
+            Evidence {
+                file: "crates/salman-cli/tests/diagnostics.rs",
+                test: "assigning_a_narrower_type_is_rejected",
+            },
+        ],
+        note: "Rejecting recursion is what makes the compiler's single-static-frame layout \
+               sound. The prohibition itself is a salman rule: it is widely attested but the \
+               clause could not be verified, and the diagnostic says so. Three constructs are \
+               resolved and then refused rather than half-implemented: references, the \
+               assignment attempt, and VAR_EXTERNAL.",
+    },
+    Capability {
         id: "test.declarative-tests",
         area: "Testing",
         title: "Declarative unit tests for POUs, on a virtual clock, with no vendor runtime",

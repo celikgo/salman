@@ -21,7 +21,7 @@ equivalence to a body salman does not possess.
 
 The one place this is most visible is `crates/salman-vm/src/stdfb.rs`, the standard function
 blocks. IEC 61131-3:2013 supplies no body at all for the timers: they are defined by timing
-diagrams, cited as `IEC 61131-3:2013 Figure 15 "Standard timer function blocks - timing
+diagrams, cited as `IEC 61131-3:2013 Figure 15 "Standard timer function blocks – timing
 diagrams (Rules)" (Ed 3.0)`. Every timer test in salman is therefore a trace of inputs
 against outputs over virtual time.
 

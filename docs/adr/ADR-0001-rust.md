@@ -128,6 +128,7 @@ also have pulled the project toward the Windows-only assumptions that
   on `ubuntu-latest`, `macos-latest` and `windows-latest` with `fail-fast: false`.
 - `.github/workflows/supply-chain.yml` with `deny.toml` gates what enters the dependency
   graph, on push and on a daily schedule.
-- `.github/workflows/fuzz.yml` with the targets in `fuzz/fuzz_targets/` fuzzes the lexer.
-  Memory safety from the language and fuzzing of the parser are complementary: the first
-  rules out a class of exploit, the second finds the panics and hangs that remain.
+- `.github/workflows/fuzz.yml` with the six targets in `fuzz/fuzz_targets/` fuzzes the
+  lexer, the parser, and the three passes together through semantic analysis. Memory safety
+  from the language and fuzzing of the front end are complementary: the first rules out a
+  class of exploit, the second finds the panics and hangs that remain.

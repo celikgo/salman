@@ -11,8 +11,8 @@ by hand in a README, it is optimistic on the day it is written, and it is never 
 in the commit that makes it wrong. Nothing breaks when it goes stale, which is exactly the
 problem: a document with no failure mode is a document nobody has to maintain.
 
-The drift is worse for salman than for most projects, because salman's claims are about
-conformance to a standard and about determinism. A reader deciding whether to point this
+The drift is worse for salman than for most projects, because salman's claims are about how
+far it implements a standard and about determinism. A reader deciding whether to point this
 tool at their plant is reading the status table as a safety-relevant document. "Supported"
 has to mean something a stranger can check without asking.
 
@@ -82,12 +82,13 @@ consequence for publishing the crate on its own.
 That is the intent. A project that never publishes that status is either extraordinary or
 not looking.
 
-Generation is only worth as much as its use. `render_markdown` is deterministic and
-tested, but at 0.0.1 nothing consumes it: `docs/STATUS.md` does not exist in this tree and
-there is no `salman status` subcommand — `salman version` is the only one. Any status
-table that is written by hand instead of generated is outside this decision's reach, and
-until the renderer's output is committed and compared, the registry is the truth that
-nothing yet publishes.
+Generation is only worth as much as its use. `render_markdown` is deterministic and tested,
+and two things now consume it: `docs/STATUS.md` is committed and generated from it, and
+`salman status` prints the same table for a terminal, with `--markdown` producing the
+document. A test compares the committed file against what the registry renders, so the two
+cannot drift. Any status table that is written by hand instead of generated is still outside
+this decision's reach — the prose summaries in `README.md` and `docs/ROADMAP.md` are
+hand-written and can go stale, and nothing detects it.
 
 ## Alternatives considered
 
@@ -127,8 +128,11 @@ All in `crates/salman-core/src/capability.rs`:
 * `status_markers_are_distinguishable_without_colour`.
 * `rendered_status_is_deterministic`.
 
-One gap, plainly: there is no test that a committed rendering matches what the registry
-produces, because there is no committed rendering. `crates/salman-core/src/clause.rs` has
-exactly that test for the citation document —
-`the_committed_citation_document_matches_what_the_registry_renders` — and the capability
-registry needs its equivalent the moment `docs/STATUS.md` exists.
+* `the_committed_status_document_matches_what_the_registry_renders` — `docs/STATUS.md` as
+  committed must equal what the registry renders, so editing the document by hand or adding
+  a capability without regenerating it fails the build.
+  `crates/salman-core/src/clause.rs` has the same test for the citation document,
+  `the_committed_citation_document_matches_what_the_registry_renders`.
+
+The gap that remains is the one named under Consequences: nothing detects a capability that
+exists in the code and has no registry entry. Only the reverse is checked.
