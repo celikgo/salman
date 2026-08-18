@@ -55,6 +55,7 @@ arbitrary = { version = "1", features = ["derive"] }
 
 salman-core = { path = "../crates/salman-core" }
 salman-lang = { path = "../crates/salman-lang" }
+salman-modbus = { path = "../crates/salman-modbus" }
 
 # Every target below is declared explicitly rather than left to cargo's `bin`
 # autodiscovery, because `cargo fuzz list` reads this manifest: a target that is
@@ -102,6 +103,27 @@ bench = false
 [[bin]]
 name = "check_utf8"
 path = "fuzz_targets/check_utf8.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "modbus_pdu"
+path = "fuzz_targets/modbus_pdu.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "modbus_tcp_framer"
+path = "fuzz_targets/modbus_tcp_framer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "modbus_rtu"
+path = "fuzz_targets/modbus_rtu.rs"
 test = false
 doc = false
 bench = false

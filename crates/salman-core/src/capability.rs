@@ -352,6 +352,26 @@ pub static REGISTRY: &[Capability] = &[
                Modbus layer.",
     },
     Capability {
+        id: "io.modbus.decoder-fuzzing",
+        area: "Protocols",
+        title: "libFuzzer targets for every Modbus decoder, asserting their postconditions",
+        status: Status::ImplementedUntested,
+        milestone: "v0.2",
+        evidence: &[],
+        note: "Three targets: the protocol data unit, the TCP stream framer and the serial \
+               frame. Each asserts a property rather than the absence of a crash — that \
+               encoding what was decoded is a fixed point, that no prefix of a frame decodes, \
+               that what the framer delivers does not depend on where the segments were cut, \
+               and that the CRC catches every single-bit error. The framer target also \
+               asserts progress, because a framer that returned a frame without consuming \
+               input would hang every caller rather than crash. The fixed-point property is \
+               there because the fuzzer found the naive byte-identity claim false in seconds: \
+               0F 04 01 00 04 01 FD sets padding bits salman deliberately clears. Not \
+               ImplementedTested for the same two reasons as the front-end targets: finding \
+               nothing is not evidence of correctness, and this registry wants a named test \
+               function.",
+    },
+    Capability {
         id: "io.modbus.device",
         area: "Protocols",
         title: "A Modbus server's data model and the exceptions it answers with",
@@ -515,14 +535,16 @@ pub static REGISTRY: &[Capability] = &[
         status: Status::ImplementedUntested,
         milestone: "v0.1",
         evidence: &[],
-        note: "Six targets in fuzz/fuzz_targets. Four cover the lexer: valid UTF-8, raw bytes \
+        note: "Six of the nine targets in fuzz/fuzz_targets; the other three cover the Modbus \
+               decoders and have their own entry. Four cover the lexer: valid UTF-8, raw bytes \
                decoded the way the loader will decode them, the strict dialect, and a \
                differential run of both dialects. One covers the parser, and one covers \
                lexing, parsing and semantic analysis together. Each asserts what must hold \
                for any input — exactly one Eof, non-decreasing spans inside the source, every \
                literal and address index resolving, every node id usable as an index into a \
                side table — rather than only that nothing panicked. All six build and run \
-               under nightly, and .github/workflows/fuzz.yml runs each for 60 s daily. Not \
+               under nightly, and .github/workflows/fuzz.yml runs every target it finds for \
+               60 s daily. Not \
                ImplementedTested, for two reasons that both matter: a fuzzing run shows that \
                nothing was found, which is not the same as showing anything is right, and \
                this registry's evidence rule wants a named test function, which a libFuzzer \
