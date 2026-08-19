@@ -92,10 +92,16 @@ developer's laptop. These are the numbers from the run on commit `3c41d1a`:
 
 | | Linux x86-64 | macOS aarch64 | Windows x86-64 |
 |---|---|---|---|
-| Cold start of `salman version` | 0.84 ms | 1.21 ms | 7.34 ms |
-| Binary on disk | 3.38 MB | 2.82 MB | 3.10 MB |
-| Peak resident set | 2.80 MB | 1.92 MB | not gated |
-| `cargo test --workspace`, excluding the build | 2 s | 2 s | 2.7 s |
+| Cold start of `salman version` | ~0.9 ms | 1–4 ms | ~8 ms |
+| Binary on disk | 3.4 MB | 2.8 MB | 3.1 MB |
+| Peak resident set | 2.7 MB | 1.9 MB | not gated |
+| `cargo test --workspace`, excluding the build | 1–2 s | 2 s | ~3 s |
+
+The sizes are exact and the times are approximate on purpose: the runners are
+shared-tenant virtual machines, and two runs of the same commit measured macOS
+cold start at 1.21 ms and 4.26 ms. Publishing either to two decimal places would
+imply a precision that is not there. The exact numbers from each run, and the
+budget that gates them, are in the performance budget section below.
 
 A conventional vendor IEC 61131-3 environment is a multi-gigabyte installation
 that wants a licence server and, usually, Windows. salman is one binary of about
@@ -106,8 +112,9 @@ defend, and [`perf-budget.toml`](perf-budget.toml) is the gate that keeps them
 true — the `perf` workflow fails the build when a measurement exceeds it.
 
 Two honest caveats. These are single runs on shared-tenant virtual machines, so
-they move by tens of percent between runs; treat them as an order of magnitude,
-which is what the budget gates. And peak resident set is measured on `salman
+they move by more than a little — the same commit measured macOS cold start at
+1.21 ms and, on the next run, 4.26 ms. Treat them as an order of magnitude,
+which is all the budget gates. And peak resident set is measured on `salman
 version`, the smallest thing the binary does — 30 000 scans of the conveyor
 example peaks around 2.9 MB, and nothing in CI gates that figure.
 
@@ -196,22 +203,23 @@ measurement exceeds the threshold in [`perf-budget.toml`](perf-budget.toml).
 
 | Measurement | Budget | Linux x86-64 | macOS aarch64 | Windows x86-64 |
 |---|---|---|---|---|
-| Cold start of `salman version` | 2 s | **0.84 ms** | **1.21 ms** | **7.34 ms** |
-| Release binary on disk | 120 MB* | **3.38 MB** | **2.82 MB** | **3.10 MB** |
-| Peak resident set | 350 MB | **2.80 MB** | **1.92 MB** | not gated† |
-| `cargo test --workspace`, excluding the build | 60 s | **2 s** | **2 s** | **2.7 s** |
+| Cold start of `salman version` | 2 s | **0.86 ms** | **4.26 ms** | **7.98 ms** |
+| Release binary on disk | 120 MB* | **3.39 MB** | **2.80 MB** | **3.10 MB** |
+| Peak resident set | 350 MB | **2.65 MB** | **1.93 MB** | not gated† |
+| `cargo test --workspace`, excluding the build | 60 s | **1 s** | **2 s** | **2.78 s** |
 
 Those are the numbers the `performance budget` job measured on GitHub-hosted
-runners, not numbers from a developer's laptop, on commit `3c41d1a`. They cover
-a tree with thirteen crates and, at the time it ran, 1198 tests in it — 1200
-today; the suite still runs in
+runners, not numbers from a developer's laptop, on commit `d85c241`. They cover
+a tree with thirteen crates and 1200 tests in it; the suite still runs in
 seconds and the binary is still under four megabytes.
 
-Read them as an order of magnitude rather than as constants. GitHub's runners
-are shared-tenant virtual machines, and the same commit measured on two days
-differs by tens of percent — which is why the budget column is a ceiling set to
-catch a change that makes salman ten times worse, not one that makes it fifteen
-percent worse. Every commit's real numbers are in that commit's `perf` run.
+Read them as an order of magnitude rather than as constants. The run before it,
+on `3c41d1a`, gave 0.84 ms, 1.21 ms and 7.34 ms for cold start: the macOS figure
+moved by a factor of three and a half between two runs of code that had not
+changed in any way that could affect it. That is what a shared-tenant runner is
+like, and it is why the budget column is a ceiling set to catch a change making
+salman ten times worse rather than fifteen percent worse. Every commit's real
+numbers are in that commit's `perf` run.
 
 \* The 120 MB figure is an **installer** budget. There is no installer yet, so
 that job currently weighs the CLI binary against the same number; `perf-budget.toml`

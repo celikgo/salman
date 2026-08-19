@@ -145,10 +145,14 @@ Single runs on shared-tenant machines, so read them as an order of magnitude:
 
 | | Linux x86-64 | macOS aarch64 | Windows x86-64 |
 |---|---|---|---|
-| Cold start | 0.84 ms | 1.21 ms | 7.34 ms |
-| Binary on disk | 3.38 MB | 2.82 MB | 3.10 MB |
-| Peak resident set | 2.80 MB | 1.92 MB | not gated |
-| Full test suite | 2 s | 2 s | 2.7 s |
+| Cold start | ~0.9 ms | 1–4 ms | ~8 ms |
+| Binary on disk | 3.4 MB | 2.8 MB | 3.1 MB |
+| Peak resident set | 2.7 MB | 1.9 MB | not gated |
+| Full test suite | 1–2 s | 2 s | ~3 s |
+
+Sizes are exact; times are approximate on purpose. Two runs of the same commit
+measured macOS cold start at 1.21 ms and 4.26 ms — a second decimal place would
+imply precision that is not there.
 
 `perf-budget.toml` holds the ceilings and the `perf` workflow fails the build
 when a measurement exceeds one.
