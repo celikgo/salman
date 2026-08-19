@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Reading and writing the PLCopen XML exchange format"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["plcopen", "iec61131", "xml", "plc", "interchange"]
+categories = ["encoding", "parser-implementations"]
 
 [dependencies]
 salman-core.workspace = true

@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Modbus protocol data units, framing and checksums, independent of any transport"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["modbus", "plc", "industrial", "protocol", "fieldbus"]
+categories = ["network-programming", "encoding"]
 
 [dependencies]
 salman-core.workspace = true

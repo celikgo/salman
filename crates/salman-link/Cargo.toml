@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Running a project's IO mappings against a device, at the scan boundaries"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["plc", "modbus", "industrial", "io-mapping", "scada"]
+categories = ["network-programming", "simulation"]
 
 [dependencies]
 salman-core.workspace = true

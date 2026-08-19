@@ -49,7 +49,7 @@ A capability is only marked *implemented and tested* if it names tests that exis
 |---|---|---|---|---|
 | `[x]` | Generated capability status, with tests cited as evidence | implemented and tested | v0.1 | Status tables in the README and docs are generated from this registry. |
 | `[x]` | IEC clause citation registry with explicit provenance | implemented and tested | v0.1 | 43 citations are registered — 22 clauses, 18 tables and 3 figures of IEC 61131-3:2013 (Edition 3.0) — each with a number cross-checked against a public source and a requirement paraphrased in salman's own words. docs/IEC_CITATIONS.md is generated from the registry and cannot drift from it. A citation being registered does not mean the behaviour it names is implemented. |
-| `[x]` | One source of version truth, checked when the crate compiles | implemented and tested | v0.1 | The root VERSION file and Cargo's version cannot disagree: the mismatch is a compile error, not a CI job. |
+| `[x]` | One source of version truth, checked when the crate compiles | implemented and tested | v0.1 | The VERSION file and Cargo's version cannot disagree: the mismatch is a compile error, not a CI job. |
 
 ## Protocols
 

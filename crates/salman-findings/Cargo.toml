@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Claims salman makes about decoded bytes, with the evidence for each"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["diagnostics", "industrial", "modbus", "analysis", "evidence"]
+categories = ["development-tools", "network-programming"]
 
 [dependencies]
 salman-core.workspace = true

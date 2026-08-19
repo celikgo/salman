@@ -329,7 +329,7 @@ pub static REGISTRY: &[Capability] = &[
             file: "crates/salman-core/src/version.rs",
             test: "version_is_read_from_the_version_file_and_matches_cargo",
         }],
-        note: "The root VERSION file and Cargo's version cannot disagree: the mismatch \
+        note: "The VERSION file and Cargo's version cannot disagree: the mismatch \
                is a compile error, not a CI job.",
     },
     Capability {

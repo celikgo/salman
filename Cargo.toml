@@ -1,6 +1,6 @@
 # salman workspace.
 #
-# The version here is NOT the source of truth: the root VERSION file is.
+# The version here is NOT the source of truth: crates/salman-core/VERSION is.
 # crates/salman-core/src/version.rs includes VERSION at compile time and
 # fails the build if it disagrees with CARGO_PKG_VERSION, so the two cannot
 # drift. See docs/adr/ADR-0008-one-version-truth.md.
@@ -32,6 +32,8 @@ rust-version = "1.94"
 license = "Apache-2.0"
 authors = ["salman contributors"]
 description = "Vendor-neutral, text-first IEC 61131-3 engineering workbench"
+repository = "https://github.com/celikgo/salman"
+homepage = "https://github.com/celikgo/salman"
 keywords = ["plc", "iec61131", "automation", "structured-text", "simulation"]
 categories = ["development-tools", "simulation"]
 

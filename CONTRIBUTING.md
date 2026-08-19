@@ -190,7 +190,7 @@ welcome, and it has to clear the same bar:
 - All eight workflows must be green: `ci`, `determinism`, `docs-links`, `fuzz`,
   `perf`, `supply-chain`, `version-consistency`, `interop`.
 - Every URL you add must resolve — `docs-links` checks them.
-- If you change the version, change it in [`VERSION`](VERSION) only. It is the
+- If you change the version, change it in [`crates/salman-core/VERSION`](crates/salman-core/VERSION) only. It is the
   one source of truth; `salman-core` fails to compile if Cargo disagrees with
   it, and `version-consistency` checks the rest of the metadata and the output
   of `salman version`. See
