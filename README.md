@@ -75,18 +75,19 @@ cargo run --release -- run   examples/conveyor/conveyor.st --until T#5s --record
 writes a trace with a SHA-256 fingerprint in its header — run it twice, on two
 machines, and the fingerprint is the same.
 
-### Installing it, rather than cloning it
+### Getting a binary without cloning
 
-```bash
-cargo install salman-cli
-```
-
-installs one self-contained executable called `salman` and nothing else: no
-installer, no service, no registry key, and deleting the file uninstalls it.
 Prebuilt binaries for Linux, macOS (Intel and Apple silicon) and Windows are
-attached to each [release](https://github.com/celikgo/salman/releases) for
-anyone who would rather not compile; download one, mark it executable, and every
-command in this README works with `salman` in place of `cargo run --release --`.
+attached to each [release](https://github.com/celikgo/salman/releases). Download
+one, mark it executable, and every command in this README works with `salman` in
+place of `cargo run --release --`. salman is a single self-contained executable:
+no installer, no service, no registry key, and deleting the file uninstalls it.
+
+The workspace is packaged for crates.io — every crate carries its metadata and
+`cargo package --workspace` verifies all thirteen — and `release.yml` publishes
+them when a version tag is pushed. Until that tag is cut there is nothing on
+crates.io to install, so `cargo install salman-cli` will not find salman yet and
+the releases page is the way to get a binary without a Rust toolchain.
 
 The worked example lives in this repository rather than in the binary, so the
 clone above is still the shortest path to watching salman do something.

@@ -281,7 +281,13 @@ jobs:
           cat dist/SHA256SUMS
           ls -la dist
 
-      - name: Draft the release
+      # `workflow_dispatch` on a tag that has already been released is a
+      # supported thing to do — it is how a published release gets its assets
+      # rebuilt, and how a tag cut before crates.io publishing existed gets
+      # pushed to the registry by the job above. `gh release create` fails on
+      # an existing tag, so this uploads to it instead of failing the run and
+      # leaving publish-crates' success sitting next to a red job.
+      - name: Draft the release, or refresh the assets on an existing one
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.check-version.outputs.tag }}
@@ -292,8 +298,13 @@ jobs:
             echo "::error::RELEASE_NOTES.md is missing; the notes are written by hand from docs/STATUS.md"
             exit 1
           fi
-          gh release create "$TAG" \
-            --draft \
-            --title "salman $TAG" \
-            --notes-file "$notes" \
-            dist/*
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists; refreshing its assets rather than creating it"
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" \
+              --draft \
+              --title "salman $TAG" \
+              --notes-file "$notes" \
+              dist/*
+          fi
