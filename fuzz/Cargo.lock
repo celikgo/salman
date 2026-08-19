@@ -150,6 +150,7 @@ name = "salman-plcopen"
 version = "0.0.1"
 dependencies = [
  "salman-core",
+ "salman-lang",
  "xml",
 ]
 
