@@ -156,6 +156,20 @@ impl CitationKind {
     }
 }
 
+/// A test in this repository that checks the requirement a citation names.
+///
+/// Rule 9 in spirit: a citation is a claim that salman implements what the
+/// clause requires, and a claim with nothing behind it is decoration. This is
+/// the same shape `capability::Evidence` uses, and for the same reason — a
+/// name that a test can check beats a sentence that says so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CitedTest {
+    /// Repository-relative path of the file holding the test.
+    pub file: &'static str,
+    /// The test function's name, without `fn` and without parentheses.
+    pub test: &'static str,
+}
+
 /// A citation of one clause, table or figure of a standard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClauseRef {
@@ -181,6 +195,11 @@ pub struct ClauseRef {
     pub requirement: &'static str,
     /// How far the number can be trusted.
     pub provenance: Provenance,
+    /// Tests that check the requirement this citation paraphrases.
+    ///
+    /// Never empty: a citation nothing tests is removed rather than kept as
+    /// decoration. `every_citation_names_at_least_one_test` enforces it.
+    pub tests: &'static [CitedTest],
 }
 
 impl fmt::Display for ClauseRef {
@@ -212,6 +231,7 @@ const fn clause(
     title: &'static str,
     requirement: &'static str,
     provenance: Provenance,
+    tests: &'static [CitedTest],
 ) -> ClauseRef {
     ClauseRef {
         standard: STANDARD,
@@ -221,6 +241,7 @@ const fn clause(
         title,
         requirement,
         provenance,
+        tests,
     }
 }
 
@@ -230,6 +251,7 @@ const fn table(
     title: &'static str,
     requirement: &'static str,
     provenance: Provenance,
+    tests: &'static [CitedTest],
 ) -> ClauseRef {
     ClauseRef {
         standard: STANDARD,
@@ -239,6 +261,7 @@ const fn table(
         title,
         requirement,
         provenance,
+        tests,
     }
 }
 
@@ -248,6 +271,7 @@ const fn figure(
     title: &'static str,
     requirement: &'static str,
     provenance: Provenance,
+    tests: &'static [CitedTest],
 ) -> ClauseRef {
     ClauseRef {
         standard: STANDARD,
@@ -257,6 +281,7 @@ const fn figure(
         title,
         requirement,
         provenance,
+        tests,
     }
 }
 
@@ -274,6 +299,16 @@ pub const LITERALS: ClauseRef = clause(
     "Literals – External representation of data",
     "How a value is written literally in source text, for every literal form the languages accept",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "a_typed_literal_carries_the_type_its_prefix_named",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/parser.rs",
+            test: "literals_reach_the_tree_with_their_values",
+        },
+    ],
 );
 
 /// Integer, real and typed numeric literals, and the string literal forms.
@@ -283,6 +318,16 @@ pub const NUMERIC_AND_STRING_LITERALS: ClauseRef = clause(
     "Decimal, based and typed numeric literals, underscores as digit separators, and how a \
      literal's type is decided",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "a_misplaced_underscore_is_reported",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "an_invalid_radix_is_reported_rather_than_guessed_at",
+        },
+    ],
 );
 
 /// Single- and double-quoted strings and their escape mechanism.
@@ -292,6 +337,16 @@ pub const CHARACTER_STRING_LITERALS: ClauseRef = clause(
     "Single and double quoted strings, and the dollar-sign escape that lets a quote, a newline \
      or a byte value appear inside one",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "an_unterminated_string_is_reported_and_does_not_swallow_the_next_line",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "a_multi_byte_character_becomes_whole_code_units_in_a_wstring",
+        },
+    ],
 );
 
 /// `TIME`/`LTIME` literals and how their components combine.
@@ -301,6 +356,16 @@ pub const DURATION_LITERAL: ClauseRef = clause(
     "The T# form, the day/hour/minute/second/millisecond unit sequence, and the rule that only \
      the first unit present may overflow its natural range",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "duration_literals_sum_their_units",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "the_first_unit_of_a_duration_may_overflow_but_a_later_one_may_not",
+        },
+    ],
 );
 
 /// Calendar-date and wall-clock literals.
@@ -309,6 +374,16 @@ pub const DATE_AND_TIME_OF_DAY_LITERAL: ClauseRef = clause(
     "Date and time of day literal",
     "The D#, TOD# and DT# literal forms for a calendar date, a time of day and the two combined",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "date_time_and_date_and_time_literals_parse",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "a_date_that_does_not_exist_is_rejected",
+        },
+    ],
 );
 
 /// The type system's top-level clause.
@@ -317,6 +392,10 @@ pub const DATA_TYPES: ClauseRef = clause(
     "Data types",
     "What types exist, how they are declared, and what a value of each may hold",
     PREVIEW,
+    &[CitedTest {
+        file: "crates/salman-lang/src/sema.rs",
+        test: "a_declared_type_resolves_without_complaint",
+    }],
 );
 
 /// `BOOL`, the integers, the reals, the time types, the string types.
@@ -326,6 +405,16 @@ pub const ELEMENTARY_DATA_TYPES: ClauseRef = clause(
     "The built-in types, their widths and ranges, and the initial value each takes when a \
      declaration does not give one",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/types.rs",
+            test: "signed_integers_widen_through_the_whole_chain",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/sema.rs",
+            test: "a_typed_literal_whose_value_does_not_fit_is_refused",
+        },
+    ],
 );
 
 /// The `ANY_*` hierarchy used to type overloaded functions.
@@ -335,6 +424,10 @@ pub const GENERIC_DATA_TYPES: ClauseRef = clause(
     "The ANY hierarchy that groups elementary types, so an overloaded function can be specified \
      once for a whole family",
     PREVIEW,
+    &[CitedTest {
+        file: "crates/salman-lang/src/sema.rs",
+        test: "an_operand_outside_the_operators_domain_names_the_generic_type_it_accepts",
+    }],
 );
 
 /// Enumerations, subranges, arrays, structures and aliases.
@@ -344,6 +437,16 @@ pub const USER_DEFINED_DATA_TYPES: ClauseRef = clause(
     "Declaring enumerations, subranges, arrays, structures and type aliases, and how each is \
      initialised",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/parser.rs",
+            test: "a_type_block_holds_aliases_structures_enumerations_subranges_and_arrays",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/sema.rs",
+            test: "enumeration_values_continue_from_the_previous_one_starting_at_zero",
+        },
+    ],
 );
 
 /// Declaration, scope and lifetime of variables.
@@ -352,6 +455,10 @@ pub const VARIABLES: ClauseRef = clause(
     "Variables",
     "Declaring a variable, giving it an initial value, and what its scope and lifetime are",
     PREVIEW,
+    &[CitedTest {
+        file: "crates/salman-lang/src/parser.rs",
+        test: "a_program_carries_its_variable_blocks_and_its_body",
+    }],
 );
 
 /// `VAR`, `VAR_INPUT`, `VAR_OUTPUT`, `VAR_IN_OUT`, `VAR_GLOBAL` and friends.
@@ -361,6 +468,10 @@ pub const VARIABLE_SECTIONS: ClauseRef = clause(
     "The VAR keyword families that say whether a variable is local, an input, an output, \
      in-out, global or external, and what each permits",
     PREVIEW,
+    &[CitedTest {
+        file: "crates/salman-lang/src/parser.rs",
+        test: "every_variable_section_keyword_opens_its_section",
+    }],
 );
 
 /// `%IX0.0`-style addresses that name real I/O.
@@ -370,6 +481,16 @@ pub const DIRECTLY_REPRESENTED_VARIABLES: ClauseRef = clause(
     "The percent-sign address form: its location letter, its size prefix, and its \
      hierarchical numeric part",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "a_hierarchical_direct_address_lexes_as_one_token",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/address.rs",
+            test: "an_address_renders_back_the_way_it_was_written",
+        },
+    ],
 );
 
 /// Which variables survive a power cycle, and which are cleared.
@@ -379,6 +500,16 @@ pub const RETENTIVE_VARIABLES: ClauseRef = clause(
     "Which variables keep their value across a power cycle or a warm restart, and which are \
      put back to their initial value",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/ast.rs",
+            test: "retention_defaults_to_unspecified_rather_than_to_retain",
+        },
+        CitedTest {
+            file: "crates/salman-vm/src/memory.rs",
+            test: "a_warm_restart_keeps_retain_and_persistent_and_clears_the_rest",
+        },
+    ],
 );
 
 /// Functions, function blocks, programs and what they have in common.
@@ -388,6 +519,10 @@ pub const PROGRAM_ORGANIZATION_UNITS: ClauseRef = clause(
     "The three units of program structure — function, function block, program — and the \
      declaration features they share",
     PREVIEW,
+    &[CitedTest {
+        file: "crates/salman-lang/src/sema.rs",
+        test: "two_pous_of_one_name_are_refused_and_the_first_one_wins",
+    }],
 );
 
 /// Functions: no state between calls, one return value.
@@ -397,6 +532,16 @@ pub const FUNCTIONS: ClauseRef = clause(
     "A callable unit that keeps no state between calls and yields one result, so the same \
      arguments always produce the same value",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/parser.rs",
+            test: "a_function_declares_the_type_of_the_value_it_returns",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/sema.rs",
+            test: "a_functions_result_type_is_the_type_of_the_call",
+        },
+    ],
 );
 
 /// Function blocks: instances with state that persists between calls.
@@ -406,6 +551,16 @@ pub const FUNCTION_BLOCKS: ClauseRef = clause(
     "A callable unit whose instance keeps its internal state between calls, which is what makes \
      timers, counters and edge detectors expressible",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/parser.rs",
+            test: "a_function_block_has_no_return_type",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/sema.rs",
+            test: "a_user_function_block_is_called_through_its_instance",
+        },
+    ],
 );
 
 /// Programs: the unit a task is assigned to run.
@@ -415,6 +570,10 @@ pub const PROGRAMS: ClauseRef = clause(
     "The outermost program unit, which is what a configuration assigns to a task and therefore \
      what actually gets executed",
     PREVIEW,
+    &[CitedTest {
+        file: "crates/salman-lang/src/sema.rs",
+        test: "a_program_cannot_be_called",
+    }],
 );
 
 /// Configurations, resources and the binding of programs to tasks.
@@ -424,6 +583,10 @@ pub const CONFIGURATION_ELEMENTS: ClauseRef = clause(
     "How a project is bound to hardware: configurations, the resources inside them, and the \
      global variables and tasks they declare",
     PREVIEW,
+    &[CitedTest {
+        file: "crates/salman-lang/src/parser.rs",
+        test: "a_configuration_holds_globals_resources_tasks_and_program_instances",
+    }],
 );
 
 /// Task period, priority and single-shot triggering.
@@ -433,6 +596,10 @@ pub const TASKS: ClauseRef = clause(
     "Declaring a task by period or by a triggering variable, giving it a priority, and \
      associating programs with it",
     PREVIEW,
+    &[CitedTest {
+        file: "crates/salman-vm/src/task.rs",
+        test: "an_event_task_runs_on_a_rising_edge_and_not_otherwise",
+    }],
 );
 
 /// Structured Text: the language salman implements first.
@@ -442,6 +609,10 @@ pub const STRUCTURED_TEXT: ClauseRef = clause(
     "The textual, block-structured language: its expressions, its statements and its lexical \
      conventions",
     PREVIEW,
+    &[CitedTest {
+        file: "crates/salman-lang/src/lexer.rs",
+        test: "a_small_program_lexes_into_the_expected_tokens",
+    }],
 );
 
 /// ST expressions, operator precedence and evaluation order.
@@ -451,6 +622,16 @@ pub const ST_EXPRESSIONS: ClauseRef = clause(
     "How an ST expression is built and evaluated, including operator precedence and the order \
      operands are taken in",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/parser.rs",
+            test: "or_binds_looser_than_and",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/parser.rs",
+            test: "every_binary_level_is_left_associative",
+        },
+    ],
 );
 
 /// ST statements: assignment, selection, iteration, calls, `EXIT`, `RETURN`.
@@ -460,6 +641,16 @@ pub const ST_STATEMENTS: ClauseRef = clause(
     "The ST statement forms: assignment, IF and CASE selection, the three loops, calls, EXIT \
      and RETURN",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/parser.rs",
+            test: "if_then_end_if_has_one_branch_and_no_else",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/parser.rs",
+            test: "while_tests_before_the_body_and_repeat_tests_after_it",
+        },
+    ],
 );
 
 // ---------------------------------------------------------------------------
@@ -478,6 +669,16 @@ pub const TABLE_COMMENTS: ClauseRef = table(
     "The comment forms: the line comment, the block comment, and the rows that make block \
      comments nest rather than end at the first close",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "block_comments_nest",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "line_comments_end_at_the_line_break",
+        },
+    ],
 );
 
 /// The numeric literal forms, base by base.
@@ -487,6 +688,16 @@ pub const TABLE_NUMERIC_LITERALS: ClauseRef = table(
     "Every numeric literal form: signed decimals, reals with exponents, base 2, 8 and 16 \
      literals, and the typed literal prefix",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "an_invalid_radix_is_reported_rather_than_guessed_at",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "a_digit_outside_the_radix_is_reported",
+        },
+    ],
 );
 
 /// String literal forms for single-byte and wide characters.
@@ -496,6 +707,10 @@ pub const TABLE_CHARACTER_STRING_LITERALS: ClauseRef = table(
     "Single quoted and double quoted string literals, including the empty string and the forms \
      used for wide characters",
     SIEMENS,
+    &[CitedTest {
+        file: "crates/salman-lang/src/lexer.rs",
+        test: "wstring_escapes_take_four_hex_digits",
+    }],
 );
 
 /// The `$`-escape combinations legal inside a string.
@@ -505,6 +720,16 @@ pub const TABLE_TWO_CHARACTER_COMBINATIONS: ClauseRef = table(
     "The dollar-sign escapes that put a quote, a dollar sign, a newline, a tab or a page break \
      inside a string literal",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "string_escapes_follow_table_7",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "an_unknown_escape_is_reported",
+        },
+    ],
 );
 
 /// Duration literal forms and their unit letters.
@@ -514,6 +739,16 @@ pub const TABLE_DURATION_LITERALS: ClauseRef = table(
     "The written forms a duration may take: the keyword or hash prefix, the unit letters, and \
      whether the units may be abbreviated",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "duration_units_must_descend",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "long_duration_prefixes_are_marked_as_ltime",
+        },
+    ],
 );
 
 /// Date, time-of-day and combined date-and-time literal forms.
@@ -523,6 +758,16 @@ pub const TABLE_DATE_AND_TIME_OF_DAY_LITERALS: ClauseRef = table(
     "The written forms of a calendar date, a time of day and a combined date and time, with \
      their long and short keywords",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "date_time_and_date_and_time_literals_parse",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "a_date_may_omit_leading_zeros",
+        },
+    ],
 );
 
 /// The elementary types with their widths and ranges.
@@ -531,6 +776,16 @@ pub const TABLE_ELEMENTARY_DATA_TYPES: ClauseRef = table(
     "Elementary data types",
     "The keyword, the bit width and the range of values of each built-in type",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/types.rs",
+            test: "nothing_narrows_implicitly",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/types.rs",
+            test: "bit_strings_widen_among_themselves",
+        },
+    ],
 );
 
 /// The `%` address grammar: location letter, size prefix, numeric part.
@@ -540,6 +795,16 @@ pub const TABLE_DIRECTLY_REPRESENTED_VARIABLES: ClauseRef = table(
     "The letters that make up a direct address: input, output or memory location, and the bit, \
      byte, word, double or long word size",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/lexer.rs",
+            test: "every_location_and_size_letter_is_accepted",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/address.rs",
+            test: "a_partly_specified_address_renders_as_a_star",
+        },
+    ],
 );
 
 /// `EN`/`ENO` and what they do to execution of a call.
@@ -549,6 +814,16 @@ pub const TABLE_EN_ENO: ClauseRef = table(
     "The enable input and enable output that let a call be skipped, and what the outputs hold \
      when it is",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-cli/tests/constraints.rs",
+            test: "a_call_with_enable_false_does_not_happen_at_all",
+        },
+        CitedTest {
+            file: "crates/salman-cli/tests/constraints.rs",
+            test: "enable_out_reports_whether_the_call_happened",
+        },
+    ],
 );
 
 /// Formal and non-formal function call syntax.
@@ -558,6 +833,16 @@ pub const TABLE_FUNCTION_CALL: ClauseRef = table(
     "Calling a function with a formal argument list naming each parameter, or with a positional \
      list, and where each is allowed",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/sema.rs",
+            test: "a_function_takes_positional_or_named_arguments",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/sema.rs",
+            test: "a_call_may_not_mix_positional_and_named_arguments",
+        },
+    ],
 );
 
 /// Calling a function block instance and reading its outputs.
@@ -567,6 +852,10 @@ pub const TABLE_FUNCTION_BLOCK_CALL: ClauseRef = table(
     "Calling an instance of a function block, passing inputs by name, and reading outputs back \
      off the instance afterwards",
     SIEMENS,
+    &[CitedTest {
+        file: "crates/salman-lang/src/sema.rs",
+        test: "positional_arguments_to_a_function_block_are_refused_citing_the_call_table",
+    }],
 );
 
 /// `SR` and `RS`, and which input wins when both are true.
@@ -576,6 +865,16 @@ pub const TABLE_BISTABLE_FUNCTION_BLOCKS: ClauseRef = table(
     "The set-dominant and reset-dominant latches, and which input decides the output when both \
      are true at once",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-vm/src/stdfb.rs",
+            test: "sr_is_set_dominant_when_both_inputs_are_true",
+        },
+        CitedTest {
+            file: "crates/salman-vm/src/stdfb.rs",
+            test: "rs_is_reset_dominant_when_both_inputs_are_true",
+        },
+    ],
 );
 
 /// `R_TRIG` and `F_TRIG`.
@@ -585,6 +884,16 @@ pub const TABLE_EDGE_DETECTION_FUNCTION_BLOCKS: ClauseRef = table(
     "The rising and falling edge detectors, whose output is true for exactly the one execution \
      after the input changed",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-vm/src/stdfb.rs",
+            test: "r_trig_pulses_for_exactly_one_invocation_on_a_rising_edge",
+        },
+        CitedTest {
+            file: "crates/salman-vm/src/stdfb.rs",
+            test: "f_trig_pulses_on_a_falling_edge",
+        },
+    ],
 );
 
 /// `CTU`, `CTD` and `CTUD`.
@@ -594,6 +903,16 @@ pub const TABLE_COUNTER_FUNCTION_BLOCKS: ClauseRef = table(
     "The up, down and up-down counters: when they count, when they load or reset, and when the \
      limit output goes true",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-vm/src/stdfb.rs",
+            test: "ctu_counts_rising_edges_only_not_levels",
+        },
+        CitedTest {
+            file: "crates/salman-vm/src/stdfb.rs",
+            test: "ctud_precedence_is_reset_then_load_then_counting",
+        },
+    ],
 );
 
 /// `TP`, `TON` and `TOF`.
@@ -603,6 +922,16 @@ pub const TABLE_TIMER_FUNCTION_BLOCKS: ClauseRef = table(
     "The pulse, on-delay and off-delay timers, their elapsed-time output, and what happens when \
      the input changes mid-interval",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-vm/src/stdfb.rs",
+            test: "ton_does_not_fire_early",
+        },
+        CitedTest {
+            file: "crates/salman-vm/src/stdfb.rs",
+            test: "ton_elapsed_time_is_clamped_at_the_preset",
+        },
+    ],
 );
 
 /// The checked downcast (`?=`) used with references and interfaces.
@@ -612,6 +941,16 @@ pub const TABLE_ASSIGNMENT_ATTEMPT: ClauseRef = table(
     "The checked assignment that succeeds only when the source really is of the target type, \
      and leaves the target alone when it is not",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/parser.rs",
+            test: "an_assignment_attempt_is_parsed_rather_than_refused",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/sema.rs",
+            test: "the_assignment_attempt_is_reported_as_not_implemented",
+        },
+    ],
 );
 
 /// ST operators and their precedence, in one table.
@@ -621,6 +960,16 @@ pub const TABLE_ST_OPERATORS: ClauseRef = table(
     "Every ST operator with its precedence, from parentheses and function calls down to OR, \
      which is what fixes how an unparenthesised expression parses",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/parser.rs",
+            test: "multiplication_binds_looser_than_exponentiation",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/parser.rs",
+            test: "not_binds_tighter_than_equality",
+        },
+    ],
 );
 
 /// The ST statement forms, in one table.
@@ -630,6 +979,16 @@ pub const TABLE_ST_STATEMENTS: ClauseRef = table(
     "Every ST statement form with its syntax: assignment, the calls, IF, CASE, FOR, WHILE, \
      REPEAT, EXIT, CONTINUE and RETURN",
     SIEMENS,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/parser.rs",
+            test: "case_labels_may_be_single_values_lists_or_ranges",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/parser.rs",
+            test: "for_keeps_its_control_variable_bounds_and_step",
+        },
+    ],
 );
 
 // ---------------------------------------------------------------------------
@@ -645,6 +1004,16 @@ pub const FIGURE_CONVERSION_RULES: ClauseRef = figure(
     "The summary of which type conversions happen on their own and which the programmer has to \
      write out as a call",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/types.rs",
+            test: "nothing_narrows_implicitly",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/sema.rs",
+            test: "a_narrowing_assignment_names_the_conversion_function",
+        },
+    ],
 );
 
 /// Exactly which implicit conversions exist, as a graph.
@@ -654,6 +1023,16 @@ pub const FIGURE_IMPLICIT_CONVERSIONS: ClauseRef = figure(
     "The graph of conversions a conforming implementation performs without being asked, which \
      is the set salman's type checker must not widen",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-lang/src/types.rs",
+            test: "int_widens_to_real_but_dint_does_not",
+        },
+        CitedTest {
+            file: "crates/salman-lang/src/types.rs",
+            test: "no_real_converts_implicitly_to_an_integer",
+        },
+    ],
 );
 
 /// Timing diagrams for `TP`, `TON` and `TOF`.
@@ -663,6 +1042,16 @@ pub const FIGURE_TIMER_TIMING_DIAGRAMS: ClauseRef = figure(
     "The timing diagrams that fix, cycle by cycle, what the standard timers do when their input \
      changes during a running interval",
     PREVIEW,
+    &[
+        CitedTest {
+            file: "crates/salman-vm/src/stdfb.rs",
+            test: "ton_does_not_accumulate_elapsed_time_across_separate_input_pulses",
+        },
+        CitedTest {
+            file: "crates/salman-vm/src/stdfb.rs",
+            test: "ton_falls_immediately_when_its_input_does",
+        },
+    ],
 );
 
 /// Every clause, table and figure salman cites.
@@ -742,6 +1131,14 @@ pub fn render_markdown() -> String {
          where the normative wording lives.\n\n",
     );
     out.push_str(
+        "The last column names the tests. A citation with no test is not allowed\n\
+         into the registry: `every_citation_names_at_least_one_test` fails, and\n\
+         `every_cited_test_exists_in_the_source_tree` fails again if a named test\n\
+         is renamed or deleted. So a row here cannot be decoration, and the way to\n\
+         retire a clause salman no longer checks is to delete the row, not to let\n\
+         it stand with nothing behind it.\n\n",
+    );
+    out.push_str(
         "The standard is paywalled, so **numbers** have been cross-checked against\n\
          public secondary sources where that was possible: the publisher's own\n\
          front-matter preview, which contains the contents and the lists of tables\n\
@@ -756,8 +1153,10 @@ pub fn render_markdown() -> String {
     }
 
     out.push_str("## Citations\n\n");
-    out.push_str("| Citation | Title | Requirement salman tests | Number confirmed by |\n");
-    out.push_str("|---|---|---|---|\n");
+    out.push_str(
+        "| Citation | Title | Requirement salman tests | Number confirmed by | Tested by |\n",
+    );
+    out.push_str("|---|---|---|---|---|\n");
     for c in REGISTRY {
         let confirmation = match c.provenance {
             Provenance::PublicSource(url) => format!("[source]({url})"),
@@ -765,16 +1164,23 @@ pub fn render_markdown() -> String {
         };
         // Writing to a String is infallible; the Result is discarded for that
         // reason and no other.
+        let cited = c
+            .tests
+            .iter()
+            .map(|t| format!("`{}`", t.test))
+            .collect::<Vec<_>>()
+            .join("<br>");
         let _ = writeln!(
             out,
-            "| {} {}{} (Ed {}) | {} | {} | {} |",
+            "| {} {}{} (Ed {}) | {} | {} | {} | {} |",
             c.standard,
             c.kind.prefix(),
             c.number,
             c.edition,
             c.title,
             c.requirement,
-            confirmation
+            confirmation,
+            cited
         );
     }
     out
@@ -835,6 +1241,53 @@ mod tests {
                 "citation {} has no usable requirement paraphrase",
                 c.number
             );
+        }
+    }
+
+    #[test]
+    fn every_citation_names_at_least_one_test() {
+        // A citation is a claim that salman implements what the clause
+        // requires. Before this test existed, twenty of the forty-three
+        // entries here were named nowhere outside this file: the paraphrase
+        // said "the requirement salman tests" and nothing checked that
+        // anything did. A number with no test behind it is decoration, and in
+        // this domain decoration reads as conformance.
+        for c in REGISTRY {
+            assert!(
+                !c.tests.is_empty(),
+                "citation {}{} names no test; write one or delete the citation",
+                c.kind.prefix(),
+                c.number
+            );
+        }
+    }
+
+    #[test]
+    fn every_cited_test_exists_in_the_source_tree() {
+        // Same mechanism as `capability::every_cited_test_exists_in_the_source_tree`:
+        // renaming a test must break the citation that rests on it, rather
+        // than leaving the citation pointing at nothing.
+        let root = repo_root();
+        for c in REGISTRY {
+            for t in c.tests {
+                let path = root.join(t.file);
+                let source = std::fs::read_to_string(&path).unwrap_or_else(|err| {
+                    panic!(
+                        "citation {}{} cites {}, which cannot be read: {err}",
+                        c.kind.prefix(),
+                        c.number,
+                        t.file
+                    )
+                });
+                assert!(
+                    source.contains(&format!("fn {}(", t.test)),
+                    "citation {}{} cites test `{}` in {}, which is not there",
+                    c.kind.prefix(),
+                    c.number,
+                    t.test,
+                    t.file
+                );
+            }
         }
     }
 
@@ -906,6 +1359,10 @@ mod tests {
             title: "Example",
             requirement: "an example requirement paraphrase",
             provenance: Provenance::NumberUnconfirmed,
+            tests: &[CitedTest {
+                file: "crates/salman-core/src/clause.rs",
+                test: "citation_display_flags_unconfirmed_numbers_so_a_reader_cannot_miss_it",
+            }],
         };
         assert!(
             unconfirmed

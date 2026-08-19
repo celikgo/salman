@@ -513,7 +513,7 @@ fn expand_tabs(line: &str, one_based_column: usize) -> (String, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clause::{CitationKind, ClauseRef, Provenance};
+    use crate::clause::{CitationKind, CitedTest, ClauseRef, Provenance};
     use crate::span::{FileId, SourceMap, Span};
 
     const E_TEST: DiagCode = DiagCode("E0001");
@@ -556,6 +556,10 @@ mod tests {
             title: "Example clause",
             requirement: "an example requirement paraphrase for the test",
             provenance: Provenance::NumberUnconfirmed,
+            tests: &[CitedTest {
+                file: "crates/salman-core/src/diag.rs",
+                test: "rendering_carries_the_iec_clause_so_a_reader_can_check_salman",
+            }],
         };
         let d = Diagnostic::error(E_TEST, "example")
             .with_primary(Span::new(id, 0, 1), "here")
