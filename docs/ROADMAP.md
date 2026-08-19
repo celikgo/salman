@@ -9,7 +9,7 @@ right.
 
 Everything below the v0.2 section is written in the future tense on purpose. None of it
 exists. There is no GUI, no AI layer, no network model, no plant model, no importer other
-than PLCopen XML and no fieldbus other than Modbus in this repository at 0.0.1. The `salman`
+than PLCopen XML and no fieldbus other than Modbus in this repository at 0.1.0. The `salman`
 binary has seven subcommands — `version`, `status`, `check`, `run`, `test`, `capture` and
 `project` — and nothing beyond them. Most of v0.2 is done and is marked so below; what is
 left is marked too.

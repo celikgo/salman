@@ -1,6 +1,6 @@
 # Security policy
 
-Version 0.0.1. Read the first two sections before the reporting section: what salman refuses
+Version 0.1.0. Read the first two sections before the reporting section: what salman refuses
 to do is a larger part of its security posture than what it does.
 
 ---
@@ -70,15 +70,30 @@ a label:
   through a `ConfirmationPrompt` and have them approve it. An automated caller —
   including a future agent — must be given a prompt; it cannot be one.
 
-At 0.0.1 **no code path in this repository opens a socket, writes to a device, or changes a
-controller mode.** Nothing calls `permits` yet. The module exists first on purpose: when the
-first write path is written, it cannot be written without going through it.
+That is no longer hypothetical. **salman opens sockets and can write to a device.**
+`salman-modbus-net` connects with `TcpStream::connect_timeout`, listens with
+`TcpListener::bind` for its simulator, and `Client::write` performs a live write. It is the
+first caller of `permits`, and it went through the posture model because the model was there
+before it — which was the point of writing the model first.
+
+What that path does, precisely: `Client::write` calls
+`posture.permits(Effect::WriteLiveDevice, ..)` and refuses at anything below ARMED, and it
+takes a `UserConfirmation` **by value**, so one confirmation authorises exactly one write
+and cannot be retained for the next. `UserConfirmation` has no public constructor and can
+only be obtained by asking a person, so an automated caller cannot manufacture one. Reads
+need no permission: that is what read-only by default means.
+
+`Client::write_simulated` is deliberately *not* posture-gated, because nothing on the other
+end is real. Nothing in a socket says whether a peer is simulated, so the caller carries that
+knowledge: `salman_link::Link` takes an explicit `Peer` and refuses to run output mappings
+against a live one. **No controller mode is changed by any code path here**, and no firmware
+operation, credential guess or denial of service exists at any posture.
 
 ---
 
 ## Reporting a vulnerability
 
-**salman has no published security contact address at 0.0.1.**
+**salman has no published security contact address.**
 
 That is the honest answer and it is stated rather than papered over. Inventing an address
 that nobody monitors would be worse than having none: it would convert a reporter's good
@@ -98,9 +113,9 @@ repository's public issue tracker and use your judgement about what to put in it
 
 | Version | Supported |
 |---|---|
-| 0.0.1 | No. Pre-alpha. |
+| 0.1.0 | No. Pre-alpha. |
 
-0.0.1 is pre-alpha. There is no support commitment, no patch stream, and no backport
+0.1.0 is pre-alpha. There is no support commitment, no patch stream, and no backport
 policy. Nothing in this repository should be deployed anywhere that a security response
 would matter, and the absence of a support row is not an oversight to be read around.
 
@@ -117,9 +132,12 @@ and forwarded on.
 The rule, for when that code exists: **redaction is on by default in exported bundles**, the
 redaction rules are written down, and they are testable rather than asserted.
 
-**No capture code exists at 0.0.1.** There is nothing to redact yet, and this section is
-here so that the default is decided before the first byte is captured rather than after
-somebody has already exported a bundle.
+**Capture code now exists**, in `salman-capture`: it reads classic pcap files and decodes
+Ethernet, IP and TCP. It is a *reader* — salman does not put an interface into promiscuous
+mode and has no live-capture path — so the bytes it handles are ones the user already has.
+There is still no export-bundle format, so there is nothing yet for the redaction rule above
+to apply to; it is written down here so that the default is settled before the first bundle
+is exported rather than afterwards.
 
 ---
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Diagnostics: what went wrong, where, and what to do about it.
 //!
 //! salman renders its own diagnostics rather than taking a dependency on a

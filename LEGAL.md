@@ -4,7 +4,7 @@ This file records the legal reasoning salman operates under, so that the reasoni
 checked and argued with rather than assumed. It is not legal advice, and nobody on this
 project is a lawyer.
 
-Version 0.0.1.
+Version 0.1.0.
 
 ---
 
@@ -238,7 +238,7 @@ all do. What is forbidden is using a mark to name the *product*, or in a way tha
 the mark's owner stands behind it. An internal crate path does neither. The narrower rule is
 the one above, and this paragraph records that it was changed rather than quietly relaxed.
 
-At 0.0.1 salman implements none of those formats or protocols beyond the Modbus wire format
+At 0.1.0 salman implements none of those formats or protocols beyond the Modbus wire format
 in `crates/salman-modbus`, which opens no socket. The names above do appear
 elsewhere in the repository: in `README.md`, `docs/ROADMAP.md`, `docs/CONFORMANCE.md`,
 `docs/STATUS.md`, `docs/adr/ADR-0003-plcopen-xml-canonical.md` and
@@ -259,11 +259,11 @@ and the SPDX identifier is `Apache-2.0` (<https://spdx.org/licenses/Apache-2.0.h
 - Every workspace member declares `license.workspace = true`, which resolves to
   `license = "Apache-2.0"` in the root `Cargo.toml`. The fuzzing crate declares it
   literally.
-- Source files carry an `SPDX-License-Identifier: Apache-2.0` line. This is **not yet
-  uniform**: at 0.0.1, 31 of 48 source files carry one and the rest do not. That is a defect
-  in the tree, it is recorded here rather than described as finished, and it is closed by
-  adding the missing lines, not by softening this paragraph.
-- There is no `NOTICE` file at 0.0.1. Apache-2.0 §4(d) is conditional — it obliges a
+- Every source file carries an `SPDX-License-Identifier: Apache-2.0` line — 111 of 111 at
+  0.1.0. This was recorded here as a defect while it was one (31 of 48 at the time it was
+  written), and it was closed the way the paragraph said it would be: by adding the missing
+  lines, not by softening the paragraph.
+- There is no `NOTICE` file. Apache-2.0 §4(d) is conditional — it obliges a
   redistributor to carry forward a `NOTICE` that exists — and salman vendors no
   Apache-licensed dependency that ships one. A `NOTICE` file will be added if and when
   a dependency arrives that requires it.
@@ -314,11 +314,21 @@ jurisdictions have their own regimes and salman has not assessed them.
 
 ## 8. Upstream licences
 
-**salman vendors no third-party protocol stack at 0.0.1.** There is no fieldbus code, no
-OPC UA code, no network code of any kind in this repository. There are exactly two direct
-third-party dependencies — the command-line argument parser and the YAML reader for
-declarative test files — and everything else in the graph is pulled in by one of those two.
-`salman-core`, `salman-lang` and `salman-vm` have no third-party dependency at all.
+**salman vendors no third-party protocol stack.** There is now protocol code in this
+repository — Modbus TCP and RTU framing, a client, a simulator, and a packet-capture
+reader — and every byte of it is salman's own, written in-crate. No fieldbus stack, no
+OPC UA stack and no TCP/IP implementation is vendored, linked or wrapped; `salman-modbus`
+and `salman-modbus-net` depend on nothing outside the standard library, and
+`salman-capture` decodes Ethernet, IP and TCP itself rather than binding libpcap. That is
+a deliberate cost: it buys a fuzz target salman owns and no `unsafe` between a socket or a
+file and a decoded frame.
+
+There are four direct third-party dependencies — the command-line argument parser, the
+YAML reader for declarative test files, `serde` behind it, and the XML reader for PLCopen
+import — and everything else in the graph is pulled in by one of those. `salman-core`,
+`salman-lang`, `salman-vm`, `salman-modbus`, `salman-modbus-net`, `salman-capture`,
+`salman-findings`, `salman-analyse` and `salman-link` have no third-party dependency at
+all.
 
 | Dependency | Role | Licence | How it enters |
 |---|---|---|---|
@@ -330,6 +340,8 @@ declarative test files — and everything else in the graph is pulled in by one 
 | `encoding_rs`, `encoding_rs_io`, `cfg-if` | Character-encoding detection on a test file, via `serde-saphyr` | MIT OR Apache-2.0, and `encoding_rs` additionally BSD-3-Clause for the encoding tables | crates.io |
 | `clap_derive`, `serde_derive`, `proc-macro2`, `quote`, `syn`, `heck` | Build-time macro support for the two derive macros above | MIT OR Apache-2.0 | crates.io, procedural macro and build dependencies only |
 | `unicode-ident` | Identifier character classes, via `syn` | MIT OR Apache-2.0, plus Unicode-3.0 for the character data | crates.io |
+| `xml` | Reading PLCopen XML in `salman-plcopen`. salman models the document and decides what a body means; this crate only turns bytes into events | MIT | crates.io, direct dependency of `salman-plcopen`, pinned in the committed `Cargo.lock` |
+| `memchr` | Substring scanning, reached only on some target platforms via `encoding_rs_io` | Unlicense OR MIT, taken under MIT | crates.io, transitive and target-conditional |
 | `autocfg` | Compiler feature detection, build script of `num-traits` | Apache-2.0 OR MIT | crates.io, build dependency only |
 
 Every one of those is redistributable under Apache-2.0 terms. The allowlist that enforces it

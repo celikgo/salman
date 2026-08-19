@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! What salman can actually do, and how you can check.
 //!
 //! Every status claim salman publishes — the README table, `salman status`,

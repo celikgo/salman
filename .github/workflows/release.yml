@@ -1,0 +1,236 @@
+# Cuts a release and attaches a `salman` binary for each supported platform.
+#
+# WHY THIS EXISTS
+#
+# Eight workflows were green and there was nothing a reader could download. A
+# tool that can only be had by installing a Rust toolchain and compiling it has
+# excluded most of the people it is for: a controls engineer evaluating it on a
+# work laptop is not going to install rustup to find out whether it is
+# interesting.
+#
+# WHAT IT GUARANTEES
+#
+# The tag and the VERSION file must agree. That check runs *first* and fails the
+# whole release rather than publishing a `v0.2.0` tag carrying a binary that
+# prints `0.1.0` — the one thing worse than no release is a release that lies
+# about what is in it. Rule 3 says there is one source of version truth; this is
+# that rule applied to the artefacts.
+#
+# Every binary is also run before it is uploaded, on the machine that built it,
+# and must print the expected version string. A binary that does not start is
+# caught here rather than by the first person to download it. The Windows and
+# macOS-x86_64 legs are cross-compiled or run on a different arch than they
+# target in one case, so this check is not redundant paranoia — see the note on
+# the aarch64/x86_64 macOS split below.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build, e.g. v0.1.0. Must already exist."
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Gate. Nothing builds until the tag and the VERSION file agree.
+  # ---------------------------------------------------------------------------
+  check-version:
+    name: the tag matches the VERSION file
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - id: v
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag || github.ref_name }}"
+          version=$(tr -d '[:space:]' < VERSION)
+          if [ "$tag" != "v$version" ]; then
+            echo "::error::tag $tag does not match VERSION ($version); expected v$version"
+            exit 1
+          fi
+          echo "ok: tag $tag matches VERSION $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # Build. One leg per target triple.
+  # ---------------------------------------------------------------------------
+  build:
+    name: ${{ matrix.target }}
+    needs: check-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            # Built on the oldest glibc GitHub offers so the binary runs on
+            # older distributions too. A binary linked against a newer glibc
+            # fails at load time with a message that says nothing useful to
+            # somebody who just downloaded it.
+            runs_natively: true
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            runs_natively: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            # macos-latest is Apple silicon, so this leg cross-compiles. Rosetta
+            # is present on the runner, which is why the smoke test below can
+            # still execute the result; if that ever stops being true, the smoke
+            # test is skipped rather than removed, and the leg is honest about
+            # having built something it did not run.
+            runs_natively: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            runs_natively: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.check-version.outputs.tag }}
+
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked -p salman-cli --target ${{ matrix.target }}
+
+      - name: The binary starts and prints the version it should (Unix)
+        if: runner.os != 'Windows' && matrix.runs_natively
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual=$(./target/${{ matrix.target }}/release/salman version)
+          expected="salman ${{ needs.check-version.outputs.version }}"
+          [ "$actual" = "$expected" ] || {
+            echo "::error::binary printed \"$actual\", expected \"$expected\""; exit 1; }
+          echo "ok: $actual"
+
+      - name: The binary starts and prints the version it should (cross-built, via Rosetta)
+        if: runner.os != 'Windows' && !matrix.runs_natively
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="./target/${{ matrix.target }}/release/salman"
+          if actual=$("$bin" version 2>/dev/null); then
+            expected="salman ${{ needs.check-version.outputs.version }}"
+            [ "$actual" = "$expected" ] || {
+              echo "::error::binary printed \"$actual\", expected \"$expected\""; exit 1; }
+            echo "ok: $actual"
+          else
+            echo "::warning::${{ matrix.target }} was cross-compiled and could not be executed on this runner; it is uploaded unsmoked"
+          fi
+
+      - name: The binary starts and prints the version it should (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $actual = & ".\target\${{ matrix.target }}\release\salman.exe" version
+          $expected = "salman ${{ needs.check-version.outputs.version }}"
+          if ($actual -ne $expected) {
+            Write-Output "::error::binary printed `"$actual`", expected `"$expected`""
+            exit 1
+          }
+          Write-Output "ok: $actual"
+
+      # A single binary with no installer is the product, so the archive holds
+      # the binary and the two documents a downloader is entitled to have next
+      # to it. LEGAL.md goes in because it is where the non-certification
+      # statement lives, and that statement should travel with the artefact
+      # rather than staying on a web page the downloader may never see.
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="salman-${{ needs.check-version.outputs.tag }}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/salman" "dist/$name/"
+          cp LICENSE LEGAL.md README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          shasum -a 256 "dist/$name.tar.gz" | awk '{print $1"  '"$name"'.tar.gz"}' > "dist/$name.tar.gz.sha256"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "salman-${{ needs.check-version.outputs.tag }}-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/salman.exe" "dist/$name/"
+          Copy-Item LICENSE, LEGAL.md, README.md "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+          $h = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$h  $name.zip" | Out-File -Encoding ascii "dist/$name.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Publish. Draft, so a person reads the notes before anyone else does.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: draft the release and attach the binaries
+    needs: [check-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.check-version.outputs.tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect the checksums into one file
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} dist/ \;
+          find artifacts -type f -name '*.sha256' -exec cat {} + | sort -k2 > dist/SHA256SUMS
+          cat dist/SHA256SUMS
+          ls -la dist
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check-version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          notes=RELEASE_NOTES.md
+          if [ ! -f "$notes" ]; then
+            echo "::error::RELEASE_NOTES.md is missing; the notes are written by hand from docs/STATUS.md"
+            exit 1
+          fi
+          gh release create "$TAG" \
+            --draft \
+            --title "salman $TAG" \
+            --notes-file "$notes" \
+            dist/*

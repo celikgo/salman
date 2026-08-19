@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Source positions.
 //!
 //! Every diagnostic, AST node and runtime symbol carries a [`Span`] so that an

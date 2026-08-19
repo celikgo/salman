@@ -285,8 +285,13 @@ fn run_program(
         runtime.record(signals);
     }
 
+    // Scoped to this command deliberately. salman *does* have a write path —
+    // `salman_modbus_net::Client::write` — but no subcommand reaches it, and
+    // `run` least of all: it executes a program against the simulation runtime
+    // and never opens a socket. Naming the version here would be a claim that
+    // goes stale on the next release, so it names the command instead.
     println!(
-        "posture: {} — salman 0.0.1 has no code path that writes to a device",
+        "posture: {} — `salman run` executes on the simulation runtime and writes to no device",
         Posture::default()
     );
     for task in runtime.tasks() {

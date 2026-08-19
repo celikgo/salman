@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! IEC 61131-3 front end: lexer, parser, AST and type checker.
 //!
 //! # Edition

@@ -43,7 +43,7 @@ defect, not a style choice.
 
 ## The state of the whole pipeline, before any table
 
-At 0.0.1 a Structured Text source file **is lexed, parsed, type-checked, compiled to bytecode
+At 0.1.0 a Structured Text source file **is lexed, parsed, type-checked, compiled to bytecode
 and executed.** `salman check`, `salman run` and `salman test` all do what their names say,
 and the worked example in `examples/conveyor/` passes eight declarative tests including one
 that compares a recorded trace against a committed golden file. Earlier versions of this page
@@ -711,7 +711,7 @@ through `conveyor_example.rs`.
 
 ## What is NOT implemented
 
-None of the following exists at 0.0.1. Where a keyword is reserved, meeting it produces a
+None of the following exists at 0.1.0. Where a keyword is reserved, meeting it produces a
 message naming the construct rather than a baffling syntax error; that refusal is the whole
 of the implementation.
 

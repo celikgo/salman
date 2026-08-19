@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Directly represented variables — `%IX0.0` and friends.
 //!
 //! IEC 61131-3 Edition 3 Table 16 gives three locations (`I` input, `Q` output,

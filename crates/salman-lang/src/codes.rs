@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Stable diagnostic codes.
 //!
 //! Codes appear in users' CI filters and lint suppressions, so once published a

@@ -4,7 +4,7 @@ Two separate subjects, kept separate on purpose.
 
 **Part 1** is about how salman is developed. It describes something that is true today.
 
-**Part 2** is about the AI layer salman intends to ship. That layer does not exist at 0.0.1
+**Part 2** is about the AI layer salman intends to ship. That layer does not exist at 0.1.0
 — there is no agent, no model client, no prompt, and no network code of any kind in this
 repository — so Part 2 is written entirely in the future tense. It is a statement of
 policy, not of capability.
@@ -99,7 +99,7 @@ table — rather than only that nothing panicked.
 Coverage today is the lexer, the parser, and the three passes together through semantic
 analysis. The declarative test-file reader in `salman-test` is not fuzzed, and neither is any
 decoder salman later grows. The sentence "every parser will be fuzzed in CI" is a commitment
-with a workflow behind it, and at 0.0.1 it is partly kept, which is what the capability
+with a workflow behind it, and at 0.1.0 it is partly kept, which is what the capability
 registry says.
 
 ### What this adds up to
@@ -122,7 +122,7 @@ right to be sceptical.
 
 ## Part 2 — The AI layer salman will ship
 
-**None of this exists at 0.0.1.** There is no agent, no model client, no key handling, no
+**None of this exists at 0.1.0.** There is no agent, no model client, no key handling, no
 audit log, and no outbound network code. What follows is the policy the layer will be built
 under, recorded now so that it constrains the first implementation rather than being written
 around it afterwards.

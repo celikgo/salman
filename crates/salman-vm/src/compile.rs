@@ -57,7 +57,7 @@ pub const E_NOTHING_TO_RUN: DiagCode = DiagCode("E0502");
 
 /// How large the process image is, in bytes, for each of `%I`, `%Q` and `%M`.
 ///
-/// Fixed at 0.0.1. A real controller sizes its image from its IO configuration,
+/// Fixed at 0.1.0. A real controller sizes its image from its IO configuration,
 /// which salman will have when the IO mapping layer arrives; until then a fixed
 /// area is honest and an address past the end is a clear diagnostic rather than
 /// a silent wrong answer.
@@ -796,7 +796,7 @@ impl Compiler<'_> {
                     "A VAR_GLOBAL is visible to every POU by name, so deleting the VAR_EXTERNAL \
                      block gives the behaviour this was asking for. Binding the two together \
                      needs one name to mean one slot everywhere it is written, including as the \
-                     control variable of a FOR loop, which is more than salman does at 0.0.1",
+                     control variable of a FOR loop, which is more than salman does at 0.1.0",
                 )
                 .with_note("see docs/CONFORMANCE.md for what is and is not implemented"),
             );

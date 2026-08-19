@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! IEC 61131-3 identifiers.
 //!
 //! Identifiers in IEC 61131-3 are **case-insensitive**: `motorRun`, `MotorRun`

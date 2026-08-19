@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! IEC 61131-3 elementary types and the runtime values that inhabit them.
 //!
 //! # The generic type hierarchy

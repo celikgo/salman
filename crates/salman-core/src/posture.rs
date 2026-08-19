@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The safety posture: what salman is currently allowed to affect.
 //!
 //! salman can, in later versions, talk to machinery. The rule that makes that
@@ -19,10 +20,14 @@
 //!
 //! # State of this module
 //!
-//! At version 0.0.1 no code path in salman opens a socket or writes to a
-//! device, so nothing calls [`PostureState::permits`] yet. This module exists
-//! first on purpose: when the first write path is written, it cannot be written
-//! without going through here.
+//! This module was written before anything in salman could reach a network, so
+//! that the first write path could not be written without going through it.
+//! That path now exists: `salman_modbus_net::Client::write` is the first caller
+//! of [`PostureState::permits`], asks for [`Effect::WriteLiveDevice`], and is
+//! refused at anything below [`Posture::Armed`]. It also takes a
+//! [`UserConfirmation`] by value, so one confirmation authorises one write.
+//!
+//! Reads call nothing here, which is what read-only by default means.
 
 use std::fmt;
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Core types shared by every other salman crate.
 //!
 //! This crate holds the things that must mean exactly one thing across the

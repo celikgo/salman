@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! SHA-256, written out here rather than taken from a dependency.
 //!
 //! salman fingerprints simulation traces so that CI can assert the same project

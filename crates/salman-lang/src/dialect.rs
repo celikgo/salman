@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Dialects: the same language, spelled differently by every vendor.
 //!
 //! Every vendor's Structured Text differs — in what is reserved, in how

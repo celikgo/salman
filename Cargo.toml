@@ -26,7 +26,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.94"
 license = "Apache-2.0"
@@ -36,18 +36,18 @@ keywords = ["plc", "iec61131", "automation", "structured-text", "simulation"]
 categories = ["development-tools", "simulation"]
 
 [workspace.dependencies]
-salman-core = { path = "crates/salman-core", version = "0.0.1" }
-salman-lang = { path = "crates/salman-lang", version = "0.0.1" }
-salman-vm = { path = "crates/salman-vm", version = "0.0.1" }
-salman-modbus = { path = "crates/salman-modbus", version = "0.0.1" }
-salman-modbus-net = { path = "crates/salman-modbus-net", version = "0.0.1" }
-salman-project = { path = "crates/salman-project", version = "0.0.1" }
-salman-link = { path = "crates/salman-link", version = "0.0.1" }
-salman-capture = { path = "crates/salman-capture", version = "0.0.1" }
-salman-findings = { path = "crates/salman-findings", version = "0.0.1" }
-salman-analyse = { path = "crates/salman-analyse", version = "0.0.1" }
-salman-plcopen = { path = "crates/salman-plcopen", version = "0.0.1" }
-salman-test = { path = "crates/salman-test", version = "0.0.1" }
+salman-core = { path = "crates/salman-core", version = "0.1.0" }
+salman-lang = { path = "crates/salman-lang", version = "0.1.0" }
+salman-vm = { path = "crates/salman-vm", version = "0.1.0" }
+salman-modbus = { path = "crates/salman-modbus", version = "0.1.0" }
+salman-modbus-net = { path = "crates/salman-modbus-net", version = "0.1.0" }
+salman-project = { path = "crates/salman-project", version = "0.1.0" }
+salman-link = { path = "crates/salman-link", version = "0.1.0" }
+salman-capture = { path = "crates/salman-capture", version = "0.1.0" }
+salman-findings = { path = "crates/salman-findings", version = "0.1.0" }
+salman-analyse = { path = "crates/salman-analyse", version = "0.1.0" }
+salman-plcopen = { path = "crates/salman-plcopen", version = "0.1.0" }
+salman-test = { path = "crates/salman-test", version = "0.1.0" }
 
 [workspace.lints.rust]
 # salman parses bytes that arrive from industrial networks and from files it

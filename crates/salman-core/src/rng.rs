@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The deterministic pseudo-random generator salman records the seed of.
 //!
 //! # Why this is written out here rather than pulled from a crate

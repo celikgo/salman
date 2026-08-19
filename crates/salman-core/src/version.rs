@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The single source of version truth.
 //!
 //! The root `VERSION` file is authoritative. This module embeds it at compile
@@ -10,7 +11,7 @@
 /// Raw contents of the root `VERSION` file, including its trailing newline.
 const VERSION_FILE: &str = include_str!("../../../VERSION");
 
-/// The salman version string, e.g. `"0.0.1"`.
+/// The salman version string, e.g. `"0.1.0"`.
 ///
 /// Read from the root `VERSION` file, not from Cargo metadata.
 pub const VERSION: &str = trim_ascii_end(VERSION_FILE);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Tokens produced by the lexer.
 //!
 //! Tokens are deliberately small — a kind and a span. Literal *values* live in

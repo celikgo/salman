@@ -39,3 +39,15 @@ Thumbs.db
 # one was committed by a `git add -A` mid-review, which is how this line came to
 # exist.
 crates/*/tests/zz_*.rs
+
+# Byproducts of .github/workflows/perf.yml, which writes them into the working
+# directory while it measures. They are outputs, never inputs: nothing reads
+# them back. Four were committed once, and one of them held a row named `stub`
+# from a local hyperfine run — a file at the repository root that looked like a
+# measurement and was not. The numbers that count live in the workflow run.
+/cold-start.csv
+/rss.txt
+/perf-*.json
+
+# A saved HTTP error page from a failed download once landed here as specs.html.
+/specs.html
