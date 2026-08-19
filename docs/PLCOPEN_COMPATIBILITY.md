@@ -20,7 +20,7 @@ A `[~]` row is one where salman's **model** round-trips and the **document** doe
 | `[x]` | `VAR_TEMP` | round-trips unchanged |  |
 | `[x]` | `VAR_EXTERNAL` | round-trips unchanged |  |
 | `[x]` | `VAR_GLOBAL` | round-trips unchanged |  |
-| `[x]` | elementary types | round-trips unchanged |  |
+| `[x]` | every elementary type v2.01 has, one document each | round-trips unchanged | twenty-one of them, each tried on its own; any that did not survive has a row of its own above |
 | `[~]` | `LTIME`, `LDATE`, `LTOD`, `LDT`, `CHAR`, `WCHAR` | survives, altered | v2.01's type set is frozen at IEC 61131-3 2nd edition and has no element for these. salman writes a named type reference, which keeps the name and changes what the document means: another reader sees a user-declared type, not the elementary one |
 | `[x]` | `STRING` with a declared length | round-trips unchanged | the schema spells the element in lower case; an uppercase `STRING` fails validation |
 | `[x]` | a user-declared type | round-trips unchanged | written as `<derived name=…/>` |

@@ -9,10 +9,10 @@ description = "Reading and writing the PLCopen XML exchange format"
 
 [dependencies]
 salman-core.workspace = true
+salman-lang.workspace = true
 xml = "1.4"
 
 [dev-dependencies]
-salman-lang.workspace = true
 salman-vm.workspace = true
 
 [lints]

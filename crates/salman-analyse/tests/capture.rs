@@ -78,7 +78,7 @@ fn read() -> Request {
 }
 
 fn find<'a>(findings: &'a [Finding], id: &str) -> Option<&'a Finding> {
-    findings.iter().find(|f| f.id == id)
+    findings.iter().find(|f| f.id() == id)
 }
 
 // -- the ordinary case ---------------------------------------------------
@@ -100,16 +100,16 @@ fn a_healthy_exchange_produces_a_pass_and_nothing_else() {
 
     let pass = find(&analysis.findings, "mbtcp.transactions.paired")
         .expect("a healthy exchange must say it was checked");
-    assert_eq!(pass.kind, Kind::Pass);
-    assert!(pass.severity.is_none());
+    assert_eq!(pass.kind(), Kind::Pass);
+    assert!(pass.severity().is_none());
 
     // Joining mid-stream is expected of any capture that does not start at the
     // SYN, so it is reported once and is not a fault.
     let others: Vec<&str> = analysis
         .findings
         .iter()
-        .filter(|f| f.kind == Kind::Fail)
-        .map(|f| f.id)
+        .filter(|f| f.kind() == Kind::Fail)
+        .map(salman_findings::finding::Finding::id)
         .collect();
     assert!(others.is_empty(), "unexpected faults: {others:?}");
 }
@@ -127,16 +127,16 @@ fn a_capture_that_starts_mid_conversation_says_so_once() {
     let reported = analysis
         .findings
         .iter()
-        .filter(|f| f.id == "tcp.stream.started_mid_connection")
+        .filter(|f| f.id() == "tcp.stream.started_mid_connection")
         .count();
     assert_eq!(
         reported, 1,
         "it is a fact about the capture, not about each stream"
     );
     let finding = find(&analysis.findings, "tcp.stream.started_mid_connection").unwrap();
-    assert_eq!(finding.kind, Kind::CannotDetermine);
+    assert_eq!(finding.kind(), Kind::CannotDetermine);
     assert_eq!(
-        finding.justification,
+        finding.justification(),
         Some(Justification::StreamStartedMidConnection)
     );
 }
@@ -152,18 +152,21 @@ fn a_request_nobody_answered_says_it_cannot_tell_which_happened() {
 
     let finding =
         find(&analysis.findings, "mbtcp.request.unanswered").expect("an unanswered request");
-    assert_eq!(finding.kind, Kind::CannotDetermine);
+    assert_eq!(finding.kind(), Kind::CannotDetermine);
     assert_eq!(
-        finding.justification,
+        finding.justification(),
         Some(Justification::ResponseNotCaptured)
     );
     assert!(
-        finding.message.contains("cannot be told from here"),
+        finding.message().contains("cannot be told from here"),
         "{}",
-        finding.message
+        finding.message()
     );
-    assert!(finding.next_check.is_some(), "it must say what to do next");
-    let reference = finding.evidence.transaction.unwrap();
+    assert!(
+        finding.next_check().is_some(),
+        "it must say what to do next"
+    );
+    let reference = finding.evidence().transaction.unwrap();
     assert_eq!(reference.transaction, 7);
     assert_eq!(reference.response_frame, None);
 }
@@ -180,15 +183,15 @@ fn a_response_whose_request_was_not_captured_says_what_that_costs() {
 
     let finding =
         find(&analysis.findings, "mbtcp.response.unmatched").expect("an unmatched response");
-    assert_eq!(finding.kind, Kind::CannotDetermine);
+    assert_eq!(finding.kind(), Kind::CannotDetermine);
     assert_eq!(
-        finding.justification,
+        finding.justification(),
         Some(Justification::RequestNotCaptured)
     );
     assert!(
-        finding.message.contains("never the quantity"),
+        finding.message().contains("never the quantity"),
         "{}",
-        finding.message
+        finding.message()
     );
 }
 
@@ -206,10 +209,10 @@ fn a_capture_with_no_modbus_on_the_port_suggests_another_port() {
     assert_eq!(analysis.other_streams, 1);
 
     let finding = find(&analysis.findings, "mbtcp.no_traffic_on_port").expect("a hint");
-    assert_eq!(finding.kind, Kind::CannotDetermine);
-    assert_eq!(finding.group, Group::Assumption);
+    assert_eq!(finding.kind(), Kind::CannotDetermine);
+    assert_eq!(finding.group(), Group::Assumption);
     assert!(
-        finding.next_check.is_some(),
+        finding.next_check().is_some(),
         "it must say what to try instead"
     );
 }
@@ -232,15 +235,19 @@ fn a_device_that_refuses_produces_a_finding_with_what_was_asked_for() {
     let analysis = analyse_capture("plant.pcap", &bytes, Options::default()).unwrap();
 
     let finding = find(&analysis.findings, "mbtcp.exception").expect("the refusal");
-    assert_eq!(finding.kind, Kind::Fail);
-    assert_eq!(finding.severity, Some(Severity::Warning));
-    let observed = finding.evidence.observed.as_ref().unwrap();
+    assert_eq!(finding.kind(), Kind::Fail);
+    assert_eq!(finding.severity(), Some(Severity::Warning));
+    let observed = finding.evidence().observed.as_ref().unwrap();
     assert_eq!(observed.expected, "2 items from address 0");
     assert!(
         observed.actual.contains("Illegal Data Address"),
         "{observed}"
     );
-    assert!(finding.message.contains("unit 1"), "{}", finding.message);
+    assert!(
+        finding.message().contains("unit 1"),
+        "{}",
+        finding.message()
+    );
     assert_eq!(analysis.paired, 1, "a refusal is still an answer");
 }
 
@@ -258,9 +265,13 @@ fn a_length_field_that_disagrees_with_its_own_frame_is_an_error() {
     // matters is that salman reports the shortened unit rather than accepting
     // it silently.
     assert!(
-        analysis.findings.iter().any(|f| f.kind == Kind::Fail),
+        analysis.findings.iter().any(|f| f.kind() == Kind::Fail),
         "a truncated request produced no fault: {:?}",
-        analysis.findings.iter().map(|f| f.id).collect::<Vec<_>>()
+        analysis
+            .findings
+            .iter()
+            .map(salman_findings::finding::Finding::id)
+            .collect::<Vec<_>>()
     );
 }
 
@@ -278,14 +289,14 @@ fn a_request_sent_again_before_anything_answered_it_is_named_as_a_retry() {
     let analysis = analyse_capture("plant.pcap", &bytes, Options::default()).unwrap();
 
     let finding = find(&analysis.findings, "mbtcp.request.repeated").expect("a retry");
-    assert_eq!(finding.kind, Kind::Open);
-    assert!(finding.message.contains("retry"), "{}", finding.message);
+    assert_eq!(finding.kind(), Kind::Open);
+    assert!(finding.message().contains("retry"), "{}", finding.message());
     // Reported once for the transaction, not once per repeat.
     assert_eq!(
         analysis
             .findings
             .iter()
-            .filter(|f| f.id == "mbtcp.request.repeated")
+            .filter(|f| f.id() == "mbtcp.request.repeated")
             .count(),
         1
     );
@@ -314,18 +325,18 @@ fn every_finding_is_well_formed_and_names_its_evidence() {
             "capture {index} produced nothing at all"
         );
         for finding in &analysis.findings {
-            assert!(finding.is_well_formed(), "{}: {finding}", finding.id);
-            assert_eq!(finding.evidence.artifact.name, "plant.pcap");
+            assert!(finding.is_well_formed(), "{}: {finding}", finding.id());
+            assert_eq!(finding.evidence().artifact.name, "plant.pcap");
             assert!(
-                finding.evidence.artifact.sha256.is_some(),
+                finding.evidence().artifact.sha256.is_some(),
                 "{} cannot say which capture it is about",
-                finding.id
+                finding.id()
             );
-            assert!(!finding.message.is_empty(), "{}", finding.id);
-            assert!(finding.source.starts_with("salman-analyse"));
+            assert!(!finding.message().is_empty(), "{}", finding.id());
+            assert!(finding.source().starts_with("salman-analyse"));
             // And it renders.
             let rendered = finding.to_string();
-            assert!(rendered.contains(finding.id), "{rendered}");
+            assert!(rendered.contains(finding.id()), "{rendered}");
         }
     }
 }
@@ -389,14 +400,14 @@ fn a_stream_that_never_framed_says_it_is_not_modbus_rather_than_that_modbus_brok
 
     let finding = find(&analysis.findings, "mbtcp.stream.not_modbus")
         .expect("salman should say these bytes are not Modbus");
-    assert_eq!(finding.kind, Kind::CannotDetermine);
-    assert_eq!(finding.group, Group::Assumption);
+    assert_eq!(finding.kind(), Kind::CannotDetermine);
+    assert_eq!(finding.group(), Group::Assumption);
     assert_eq!(
-        finding.justification,
+        finding.justification(),
         Some(Justification::ProtocolAssumedFromPort)
     );
     assert!(
-        finding.next_check.is_some(),
+        finding.next_check().is_some(),
         "it must say what to try instead"
     );
 
@@ -405,7 +416,7 @@ fn a_stream_that_never_framed_says_it_is_not_modbus_rather_than_that_modbus_brok
         analysis
             .findings
             .iter()
-            .filter(|f| f.id == "mbtcp.stream.not_modbus")
+            .filter(|f| f.id() == "mbtcp.stream.not_modbus")
             .count(),
         1
     );
@@ -434,12 +445,12 @@ fn a_stream_that_framed_and_then_broke_is_a_fault() {
 
     let finding = find(&analysis.findings, "mbtcp.framing.lost")
         .expect("a stream that framed and then broke is a fault");
-    assert_eq!(finding.kind, Kind::Fail);
-    assert_eq!(finding.severity, Some(Severity::Error));
+    assert_eq!(finding.kind(), Kind::Fail);
+    assert_eq!(finding.severity(), Some(Severity::Error));
     assert!(
-        finding.message.contains("and then lost framing"),
+        finding.message().contains("and then lost framing"),
         "{}",
-        finding.message
+        finding.message()
     );
     assert!(
         find(&analysis.findings, "mbtcp.stream.not_modbus").is_none(),

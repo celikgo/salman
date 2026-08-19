@@ -395,8 +395,10 @@ pub static REGISTRY: &[Capability] = &[
                will not read are refused **by name** rather than as unknown, because one of \
                them has a longer record header and guessing would misparse every record while \
                looking entirely plausible. Verified against real captures and cross-checked \
-               against tcpdump -r. Nothing decodes what is inside a frame yet, and pcapng is \
-               not read.",
+               against tcpdump -r. A truncated capture gives back the records it had along \
+               with what stopped it, because a file still being written ends that way every \
+               time. What is inside a frame is decoded by io.capture.decode; pcapng is not \
+               read.",
     },
     Capability {
         id: "io.capture.reassembly",
@@ -426,9 +428,13 @@ pub static REGISTRY: &[Capability] = &[
                because they wrap and a busy connection passes 2^32 in minutes. A capture \
                that starts mid-conversation adopts a base and says so, rather than letting \
                anything read 'salman did not see the beginning' as 'nothing came before'. \
-               Duplicates from a mirror port are recognised, and a hole that never fills is \
+               Duplicates from a mirror port are recognised — and bytes too far back to \
+               compare are reported as unverified rather than as duplicates, because \
+               claiming identity nothing checked is still a claim. A hole that never fills is \
                given up on with a named gap instead of holding everything behind it for \
-               ever. Where a retransmission overlaps delivered bytes, the delivered bytes \
+               ever, and the bound is a bound: every held segment is keyed by an absolute \
+               position rather than a wrapping sequence number, so the ordering of the buffer \
+               is right by construction rather than by remembering to compare modularly. Where a retransmission overlaps delivered bytes, the delivered bytes \
                win — a choice, not a fact, and written down in docs/CONFORMANCE.md because \
                operating systems differ and the difference is what evasion exploits.",
     },
@@ -464,7 +470,10 @@ pub static REGISTRY: &[Capability] = &[
                wrong from salman not having looked. Confidence is first-class, which is why \
                SARIF is an export and not the model: that schema cannot express it. Fifteen \
                findings ship; four of the eleven groups exist so salman can describe its own \
-               limits rather than the wire's.",
+               limits rather than the wire's. A finding's fields are private and its \
+               constructors are the only way to build one, so the two rules are structural \
+               rather than conventional — they were public once, and the claim was not true \
+               while a struct literal could bypass them.",
     },
     Capability {
         id: "io.findings.timeline",

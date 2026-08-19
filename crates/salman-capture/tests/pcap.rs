@@ -110,7 +110,7 @@ fn all_four_magics_are_read_and_each_says_what_it_means() {
         assert_eq!(reader.byte_order(), order, "{magic:02X?}");
         assert_eq!(reader.scale(), scale, "{magic:02X?}");
         assert_eq!(reader.link_type(), LinkType::ETHERNET);
-        let records = reader.records().unwrap();
+        let records = reader.records().0;
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].data, FRAME);
         assert_eq!(records[0].seconds, 1);
@@ -191,7 +191,7 @@ fn the_reserved_fields_are_ignored_rather_than_validated() {
     let mut bytes = file([0xD4, 0xC3, 0xB2, 0xA1], false, 1, &[(1, 2, 4, FRAME)]);
     bytes[8..16].copy_from_slice(&[0xFF; 8]);
     let mut reader = Reader::new(&bytes).expect("reserved bytes are not salman's business");
-    assert_eq!(reader.records().unwrap().len(), 1);
+    assert_eq!(reader.records().0.len(), 1);
 }
 
 #[test]
@@ -209,7 +209,7 @@ fn a_truncated_record_is_marked_truncated_and_not_malformed() {
     // Reporting that as a malformed frame is a common and confusing mistake.
     let bytes = file([0xD4, 0xC3, 0xB2, 0xA1], false, 1, &[(1, 0, 1514, FRAME)]);
     let mut reader = Reader::new(&bytes).unwrap();
-    let records = reader.records().unwrap();
+    let records = reader.records().0;
     assert!(records[0].truncated);
     assert_eq!(records[0].data.len(), 4);
     assert_eq!(records[0].original_length, 1514);
@@ -221,7 +221,7 @@ fn a_record_whose_original_length_is_smaller_than_its_captured_length_is_read() 
     // original length would silently drop the tail of such a record.
     let bytes = file([0xD4, 0xC3, 0xB2, 0xA1], false, 1, &[(1, 0, 2, FRAME)]);
     let mut reader = Reader::new(&bytes).unwrap();
-    let records = reader.records().unwrap();
+    let records = reader.records().0;
     assert_eq!(records[0].data, FRAME, "all four bytes must survive");
     assert!(!records[0].truncated);
 }
@@ -260,7 +260,7 @@ fn records_are_numbered_from_zero_in_file_order() {
         &[(1, 0, 4, FRAME), (2, 0, 4, FRAME), (3, 0, 4, FRAME)],
     );
     let mut reader = Reader::new(&bytes).unwrap();
-    let records = reader.records().unwrap();
+    let records = reader.records().0;
     assert_eq!(
         records.iter().map(|r| r.index).collect::<Vec<_>>(),
         [0, 1, 2]
@@ -271,7 +271,7 @@ fn records_are_numbered_from_zero_in_file_order() {
 fn an_empty_capture_has_no_records_and_is_not_an_error() {
     let bytes = file([0xD4, 0xC3, 0xB2, 0xA1], false, 1, &[]);
     let mut reader = Reader::new(&bytes).unwrap();
-    assert!(reader.records().unwrap().is_empty());
+    assert!(reader.records().0.is_empty());
 }
 
 // -- timestamps ----------------------------------------------------------
@@ -323,7 +323,7 @@ fn what_salman_writes_salman_reads() {
     assert_eq!(reader.scale(), TimestampScale::Microseconds);
     assert_eq!(reader.link_type(), LinkType::ETHERNET);
     let scale = reader.scale();
-    let records = reader.records().unwrap();
+    let records = reader.records().0;
     assert_eq!(records.len(), 2);
     assert_eq!(records[0].data, FRAME);
     assert_eq!(records[0].nanos(scale), 1_700_000_000_123_456_000);
@@ -393,4 +393,37 @@ fn no_byte_string_makes_the_reader_panic() {
             let _ = reader.records();
         }
     }
+}
+
+#[test]
+fn a_truncated_capture_gives_back_what_it_had_as_well_as_the_error() {
+    // Found by review: `records` documented returning the records read before
+    // an error and threw them away. Losing a whole capture over its final
+    // frame is bad behaviour, not only a false doc comment — a file still
+    // being written ends this way every time it is read.
+    let mut bytes = file(
+        [0xD4, 0xC3, 0xB2, 0xA1],
+        false,
+        1,
+        &[(1, 0, 4, FRAME), (2, 0, 4, FRAME)],
+    );
+    // Cut the last record in half.
+    bytes.truncate(bytes.len() - 2);
+
+    let mut reader = Reader::new(&bytes).unwrap();
+    let (records, error) = reader.records();
+    assert_eq!(records.len(), 1, "the intact record must survive");
+    assert!(
+        matches!(error, Some(CaptureError::RecordPastEndOfFile { .. })),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_whole_capture_reports_no_error_at_all() {
+    let bytes = file([0xD4, 0xC3, 0xB2, 0xA1], false, 1, &[(1, 0, 4, FRAME)]);
+    let mut reader = Reader::new(&bytes).unwrap();
+    let (records, error) = reader.records();
+    assert_eq!(records.len(), 1);
+    assert!(error.is_none());
 }

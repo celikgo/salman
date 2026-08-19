@@ -149,13 +149,13 @@ impl Timeline {
             // A finding with no timestamp is about the capture as a whole
             // rather than about a moment in it, and putting it at zero would
             // sort it before everything and imply it happened first.
-            let Some(at) = finding.evidence.timestamp else {
+            let Some(at) = finding.evidence().timestamp else {
                 continue;
             };
             entries.push(Entry {
                 at_nanos: at,
                 event: Event::Finding {
-                    id: finding.id,
+                    id: finding.id(),
                     summary: summarise(finding),
                 },
                 during_scan: None,
@@ -283,10 +283,10 @@ fn interval(nanos: u64) -> String {
 fn summarise(finding: &Finding) -> String {
     // The first sentence, or the whole message if it has none. A timeline row
     // that wrapped over four lines would stop being a timeline.
-    let message = &finding.message;
+    let message = finding.message();
     match message.find(". ") {
-        Some(stop) => message.get(..stop + 1).unwrap_or(message).to_string(),
-        None => message.clone(),
+        Some(stop) => message.get(..=stop).unwrap_or(message).to_string(),
+        None => message.to_string(),
     }
 }
 

@@ -361,7 +361,7 @@ fn read_capture(path: &Path, modbus_port: u16, verbose: bool) -> Result<u8, Stri
 
     let mut shown = 0;
     for finding in &analysis.findings {
-        if !verbose && !finding.kind.asserts_a_fault() {
+        if !verbose && !finding.kind().asserts_a_fault() {
             continue;
         }
         println!("{finding}");
@@ -379,7 +379,7 @@ fn read_capture(path: &Path, modbus_port: u16, verbose: bool) -> Result<u8, Stri
     let faults = analysis
         .findings
         .iter()
-        .filter(|f| f.kind.asserts_a_fault())
+        .filter(|f| f.kind().asserts_a_fault())
         .count();
     let quiet = analysis.findings.len() - faults;
     if faults == 0 {

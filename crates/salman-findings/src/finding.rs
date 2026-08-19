@@ -355,40 +355,30 @@ pub enum DedupScope {
 
 /// One claim about decoded bytes.
 ///
-/// Built through the constructors rather than by filling in fields, because
-/// two of the model's rules are enforced by which constructor exists: only
-/// [`Finding::fail`] takes a severity, and every other constructor requires a
+/// **The fields are private and the constructors are the only way to build
+/// one.** That is what makes the model's two rules structural rather than
+/// conventional: only [`Finding::fail`] takes a severity, and every
+/// constructor for a kind that is not an assertion of fault requires a
 /// [`Justification`].
+///
+/// They were public once, and review pointed out that the documentation's
+/// claim — that a `Pass` carrying a severity of `Error` "cannot be written
+/// down" — was simply untrue while a struct literal could write it down. A
+/// rule a caller can step around is a convention, and this file called it
+/// something stronger.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
-    /// A stable dotted identifier, such as `mbtcp.length.disagrees_with_pdu`.
-    ///
-    /// This is API. Filters in someone's build server and suppressions in
-    /// someone's configuration file depend on it, so renaming one is a
-    /// breaking change.
-    pub id: &'static str,
-    /// What kind of claim this is.
-    pub kind: Kind,
-    /// How bad, when it is an assertion of fault.
-    pub severity: Option<Severity>,
-    /// What sort of thing was observed.
-    pub group: Group,
-    /// How sure salman is.
-    pub confidence: Confidence,
-    /// Why this is not an assertion of fault, when it is not.
-    pub justification: Option<Justification>,
-    /// What a person needs to check the claim.
-    pub evidence: Evidence,
-    /// What to do next.
-    pub next_check: Option<NextCheck>,
-    /// How to collapse repeats.
-    pub dedup: Dedup,
-    /// Which part of salman made the claim.
-    ///
-    /// It matters when the decoder is the thing that is wrong.
-    pub source: &'static str,
-    /// One sentence, for a person.
-    pub message: String,
+    id: &'static str,
+    kind: Kind,
+    severity: Option<Severity>,
+    group: Group,
+    confidence: Confidence,
+    justification: Option<Justification>,
+    evidence: Evidence,
+    next_check: Option<NextCheck>,
+    dedup: Dedup,
+    source: &'static str,
+    message: String,
 }
 
 impl Finding {
@@ -549,6 +539,78 @@ impl Finding {
         }
     }
 
+    /// Its stable dotted identifier, such as `mbtcp.length.disagrees_with_pdu`.
+    ///
+    /// This is API. Filters in someone's build server and suppressions in
+    /// someone's configuration file depend on it, so renaming one is a
+    /// breaking change.
+    #[must_use]
+    pub const fn id(&self) -> &'static str {
+        self.id
+    }
+
+    /// What kind of claim it is.
+    #[must_use]
+    pub const fn kind(&self) -> Kind {
+        self.kind
+    }
+
+    /// How bad, when it is an assertion of fault, and `None` otherwise.
+    #[must_use]
+    pub const fn severity(&self) -> Option<Severity> {
+        self.severity
+    }
+
+    /// What sort of thing was observed.
+    #[must_use]
+    pub const fn group(&self) -> Group {
+        self.group
+    }
+
+    /// How sure salman is.
+    #[must_use]
+    pub const fn confidence(&self) -> Confidence {
+        self.confidence
+    }
+
+    /// Why this is not an assertion of fault, when it is not.
+    #[must_use]
+    pub const fn justification(&self) -> Option<Justification> {
+        self.justification
+    }
+
+    /// What a person needs to check the claim.
+    #[must_use]
+    pub const fn evidence(&self) -> &Evidence {
+        &self.evidence
+    }
+
+    /// What to do next, if salman has a suggestion.
+    #[must_use]
+    pub const fn next_check(&self) -> Option<&NextCheck> {
+        self.next_check.as_ref()
+    }
+
+    /// How repeats of this finding are collapsed.
+    #[must_use]
+    pub const fn dedup(&self) -> &Dedup {
+        &self.dedup
+    }
+
+    /// Which part of salman made the claim.
+    ///
+    /// It matters when the decoder is the thing that is wrong.
+    #[must_use]
+    pub const fn source(&self) -> &'static str {
+        self.source
+    }
+
+    /// One sentence, for a person.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
     /// Says what to do next.
     #[must_use]
     pub fn suggesting(mut self, next: NextCheck) -> Self {
@@ -565,8 +627,9 @@ impl Finding {
 
     /// Whether the two structural rules hold.
     ///
-    /// They hold by construction, and this exists so a test can say so rather
-    /// than a reader having to take the constructors on trust.
+    /// They hold by construction now that the fields are private, and this
+    /// remains so a test can say so rather than a reader having to take the
+    /// constructors on trust.
     #[must_use]
     pub const fn is_well_formed(&self) -> bool {
         let severity_ok = if self.kind.asserts_a_fault() {

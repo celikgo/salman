@@ -390,17 +390,26 @@ impl<'a> Reader<'a> {
         }))
     }
 
-    /// Every remaining record, stopping at the first error.
+    /// Every remaining record, and whatever stopped the reading.
     ///
-    /// # Errors
+    /// Both, rather than one or the other. A truncated capture is ordinary —
+    /// a file still being written, a `tcpdump` that was killed — and throwing
+    /// away every record because the last one is short would lose a whole
+    /// capture over its final frame. The error says where it stopped, so a
+    /// caller can report the gap rather than pretend the file ended tidily.
     ///
-    /// Returns the first [`CaptureError`], with the records read before it.
-    pub fn records(&mut self) -> Result<Vec<Record<'a>>, CaptureError> {
+    /// An earlier version of this returned a `Result` and documented that it
+    /// gave back the records read before the error, which it did not: the `?`
+    /// discarded them.
+    pub fn records(&mut self) -> (Vec<Record<'a>>, Option<CaptureError>) {
         let mut out = Vec::new();
-        while let Some(record) = self.next_record()? {
-            out.push(record);
+        loop {
+            match self.next_record() {
+                Ok(Some(record)) => out.push(record),
+                Ok(None) => return (out, None),
+                Err(error) => return (out, Some(error)),
+            }
         }
-        Ok(out)
     }
 }
 

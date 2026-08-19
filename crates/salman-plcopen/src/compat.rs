@@ -103,6 +103,17 @@ impl Row {
     }
 }
 
+/// A row's construct name is `&'static str`, and a generated row's name is
+/// built at run time.
+///
+/// Leaking is the honest trade here: the matrix is generated once per process,
+/// there are at most a couple of dozen such names, and the alternative is
+/// making every row in the table own a `String` to accommodate the few that
+/// need one.
+fn leaked(name: String) -> &'static str {
+    Box::leak(name.into_boxed_str())
+}
+
 /// A minimal project carrying one POU.
 fn with(pou: Pou) -> Project {
     Project {
@@ -139,6 +150,24 @@ fn variable(type_name: &str) -> Variable {
         address: None,
         initial_value: None,
     }
+}
+
+/// Whether the document names this type with an element of its own rather
+/// than as a `derived` reference.
+///
+/// The elementary types have elements in the schema, and writing one as
+/// `<derived name="INT"/>` would change what the document means while leaving
+/// salman's own model identical — which is exactly the kind of loss a matrix
+/// comparing models cannot see.
+fn writes_its_own_element(project: &Project, type_name: &str) -> bool {
+    let mut bytes = Vec::new();
+    if write(project, "2026-01-01T00:00:00", &mut bytes).is_err() {
+        return false;
+    }
+    let Ok(text) = String::from_utf8(bytes) else {
+        return false;
+    };
+    !text.contains(&format!(r#"<derived name="{type_name}""#))
 }
 
 /// Writes a project, reads it back, and says what happened.
@@ -203,10 +232,38 @@ pub fn matrix() -> Vec<Row> {
     }
 
     // Types.
+    // Every elementary type v2.01 has, not one of them standing for the rest.
+    // The row said "elementary types round-trip" on the strength of a single
+    // BOOL, and an unbounded `<string/>` did not: it came back as
+    // `<derived name="STRING"/>`, a user-declared type where an elementary one
+    // was meant. Review found it by reading what the row was derived from.
+    for type_name in [
+        "BOOL", "BYTE", "WORD", "DWORD", "LWORD", "SINT", "INT", "DINT", "LINT", "USINT", "UINT",
+        "UDINT", "ULINT", "REAL", "LREAL", "TIME", "DATE", "DT", "TOD", "STRING", "WSTRING",
+    ] {
+        let project = program_with_variable(variable(type_name));
+        let mut outcome = try_round_trip(&project);
+        // The model is not the document. A type written as a `derived`
+        // reference comes back with the same name and compares equal while
+        // saying something else entirely to another reader, so the emitted
+        // element is checked too.
+        if outcome == Outcome::RoundTrips && !writes_its_own_element(&project, type_name) {
+            outcome = Outcome::Changed;
+        }
+        if outcome != Outcome::RoundTrips {
+            rows.push(Row {
+                construct: leaked(format!("the elementary type `{type_name}`")),
+                outcome,
+                note: "written as a named type reference, so another reader sees a \
+                       user-declared type where an elementary one was meant",
+            });
+        }
+    }
     rows.push(Row::tried(
-        "elementary types",
+        "every elementary type v2.01 has, one document each",
         &program_with_variable(variable("BOOL")),
-        "",
+        "twenty-one of them, each tried on its own; any that did not survive has a row of \
+         its own above",
     ));
     rows.push(Row::lossy(
         "`LTIME`, `LDATE`, `LTOD`, `LDT`, `CHAR`, `WCHAR`",

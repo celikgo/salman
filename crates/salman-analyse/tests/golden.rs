@@ -252,7 +252,11 @@ fn the_golden_capture_contains_what_it_is_meant_to_contain() {
         "three requests were answered, one of them with an exception"
     );
 
-    let ids: Vec<&str> = analysis.findings.iter().map(|f| f.id).collect();
+    let ids: Vec<&str> = analysis
+        .findings
+        .iter()
+        .map(salman_findings::finding::Finding::id)
+        .collect();
     assert!(
         ids.contains(&"mbtcp.exception"),
         "the refusal must be reported: {ids:?}"

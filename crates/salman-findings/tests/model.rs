@@ -46,7 +46,7 @@ fn only_an_assertion_of_fault_carries_a_severity() {
         "the length field and the protocol data unit disagree",
         evidence(),
     );
-    assert_eq!(failure.severity, Some(Severity::Error));
+    assert_eq!(failure.severity(), Some(Severity::Error));
 
     for finding in [
         Finding::pass("x.pass", "s", Group::Protocol, "fine", evidence()),
@@ -78,9 +78,10 @@ fn only_an_assertion_of_fault_carries_a_severity() {
         Finding::informational("x.info", "s", Group::Protocol, "worth knowing", evidence()),
     ] {
         assert_eq!(
-            finding.severity, None,
+            finding.severity(),
+            None,
             "{} carries a severity and does not assert a fault",
-            finding.id
+            finding.id()
         );
         assert!(finding.is_well_formed());
     }
@@ -119,7 +120,7 @@ fn anything_that_is_not_an_assertion_of_fault_says_why() {
             evidence(),
         ),
     ] {
-        assert!(finding.justification.is_some(), "{}", finding.id);
+        assert!(finding.justification().is_some(), "{}", finding.id());
         assert!(finding.is_well_formed());
     }
 }
@@ -294,14 +295,14 @@ fn deduplication_is_part_of_the_finding_rather_than_the_reporter() {
         DedupScope::PerRegisterRange,
     ));
 
-    assert_eq!(finding.dedup.scope, DedupScope::PerRegisterRange);
-    assert_eq!(finding.dedup.key, "unit 1 registers 0..4");
+    assert_eq!(finding.dedup().scope, DedupScope::PerRegisterRange);
+    assert_eq!(finding.dedup().key, "unit 1 registers 0..4");
 }
 
 #[test]
 fn a_finding_defaults_to_being_reported_once() {
     let finding = Finding::pass("x.y", "s", Group::Protocol, "m", evidence());
-    assert_eq!(finding.dedup.scope, DedupScope::Once);
+    assert_eq!(finding.dedup().scope, DedupScope::Once);
 }
 
 // -- the kinds themselves ------------------------------------------------
@@ -332,7 +333,7 @@ fn a_pass_is_a_real_answer_and_not_the_absence_of_a_failure() {
         "every frame's length field agreed with its protocol data unit",
         evidence(),
     );
-    assert_eq!(checked.kind, Kind::Pass);
-    assert_eq!(checked.confidence, Confidence::Certain);
+    assert_eq!(checked.kind(), Kind::Pass);
+    assert_eq!(checked.confidence(), Confidence::Certain);
     assert!(checked.to_string().contains("pass["));
 }

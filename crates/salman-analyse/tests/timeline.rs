@@ -218,7 +218,7 @@ fn a_finding_about_the_whole_capture_is_left_off_the_axis() {
         analysis
             .findings
             .iter()
-            .any(|f| f.evidence.timestamp.is_none()),
+            .any(|f| f.evidence().timestamp.is_none()),
         "this capture should produce at least one finding about the whole file"
     );
 
@@ -237,7 +237,7 @@ fn a_finding_about_the_whole_capture_is_left_off_the_axis() {
     let timestamped = analysis
         .findings
         .iter()
-        .filter(|f| f.evidence.timestamp.is_some())
+        .filter(|f| f.evidence().timestamp.is_some())
         .count();
     assert_eq!(on_axis, timestamped);
 }

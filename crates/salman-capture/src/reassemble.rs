@@ -15,9 +15,20 @@
 //!
 //! **Sequence numbers wrap.** They are 32 bits and a busy connection passes
 //! `0xFFFFFFFF` in minutes at gigabit speeds. Comparing them with `<` is wrong
-//! at exactly the moment the comparison matters, so every comparison here is
-//! modular: `a` is before `b` when `b - a`, computed with wrapping arithmetic,
-//! is less than 2³¹.
+//! at exactly the moment the comparison matters.
+//!
+//! Rather than remember to compare modularly everywhere, each stream converts
+//! every sequence number it sees into an **absolute position** — a 64-bit
+//! count of bytes from where the stream was joined — and does all its ordering
+//! and arithmetic on that. Held segments are keyed by absolute position, so
+//! the ordering of the buffer that holds them is right by construction.
+//!
+//! That last part is why. An earlier version compared modularly everywhere it
+//! wrote a comparison, and keyed its held segments on the raw sequence number
+//! in a `BTreeMap` — whose ordering is numeric, and which therefore put a
+//! post-wrap segment ahead of a pre-wrap one. The one comparison that was not
+//! modular was the one nobody had written down. It stranded captured bytes and
+//! then reported them as never captured.
 //!
 //! **A capture rarely starts at the SYN.** Most captures begin in the middle
 //! of a conversation that was already running. The first sequence number seen
@@ -107,13 +118,30 @@ pub enum Note {
         /// How many bytes were already known.
         bytes: usize,
     },
-    /// A segment was byte-for-byte identical to one already seen.
+    /// A segment carried bytes salman already has, and agreed with them
+    /// everywhere it could check.
     ///
     /// Typical of a mirror or SPAN port delivering each packet twice, which is
     /// why this is separate from a retransmission: nothing on the network
     /// resent anything.
+    ///
+    /// **"Everywhere it could check" is load-bearing.** salman keeps a bounded
+    /// window of delivered bytes, so bytes older than that window cannot be
+    /// compared at all. [`Note::Unverified`] is what salman says then — this
+    /// note is only for a comparison that actually happened.
     Duplicate {
         /// How many bytes were repeated.
+        bytes: usize,
+    },
+    /// A segment carried bytes salman already has and could not compare.
+    ///
+    /// They are too far back for the window of delivered bytes salman keeps.
+    /// Reporting this as a duplicate would be a positive claim of identity
+    /// that nothing checked, and reporting it as a disagreement would be a
+    /// claim about a device that salman cannot support. Neither is true, so
+    /// this says what actually happened.
+    Unverified {
+        /// How many bytes could not be compared.
         bytes: usize,
     },
     /// A retransmission overlapped delivered bytes and disagreed with them.
@@ -161,6 +189,11 @@ impl fmt::Display for Note {
                 "{bytes} bytes arrived twice, identically, which usually means the capture \
                  point is a mirror port rather than that anything was resent"
             ),
+            Self::Unverified { bytes } => write!(
+                f,
+                "{bytes} bytes arrived again from too far back to compare, so salman cannot \
+                 say whether they were the same bytes"
+            ),
             Self::OverlapDisagreed { sequence, bytes } => write!(
                 f,
                 "{bytes} bytes at sequence {sequence} were sent again with different \
@@ -181,6 +214,21 @@ impl fmt::Display for Note {
             Self::Reset => f.write_str("this connection was reset"),
         }
     }
+}
+
+/// What comparing repeated bytes against delivered ones established.
+///
+/// Three answers rather than two, because "salman could not compare these"
+/// is not the same as "these were the same" and reporting it as such would be
+/// a positive claim of identity that nothing checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Comparison {
+    /// They agreed everywhere they could be compared.
+    Same,
+    /// They disagreed.
+    Different,
+    /// Too far back to compare against anything salman still holds.
+    Unknown,
 }
 
 /// What one segment produced.
@@ -204,17 +252,30 @@ impl Delivery {
 #[derive(Debug, Clone)]
 #[allow(clippy::struct_field_names)]
 pub struct Stream {
-    next: u32,
+    /// The sequence number of the next byte to deliver.
+    next_seq: u32,
+    /// That same point, as a count of bytes from where the stream was joined.
+    ///
+    /// Everything that orders or measures works on this rather than on the
+    /// sequence number, so nothing here has to remember to compare modularly.
+    next_abs: u64,
     started: bool,
     /// Set when the capture joined this stream after it had already started.
     mid_stream: bool,
     finished: bool,
-    pending: BTreeMap<u32, Vec<u8>>,
+    /// Held segments, keyed by **absolute position**. Ordinary ordering.
+    pending: BTreeMap<u64, Vec<u8>>,
     pending_bytes: usize,
     delivered: u64,
     /// The last few delivered bytes, so an overlapping retransmission can be
     /// compared rather than assumed identical.
     recent: Vec<u8>,
+    /// The absolute position the first byte of `recent` sits at.
+    ///
+    /// Kept explicitly rather than derived from `next_abs` and `recent.len()`,
+    /// because `next_abs` jumps when a hole is given up on and the two would
+    /// then disagree — comparing an overlap against the wrong bytes.
+    recent_at: u64,
 }
 
 /// How many delivered bytes are kept for comparing against an overlap.
@@ -227,7 +288,8 @@ const RECENT_BYTES: usize = 1024;
 impl Stream {
     fn new() -> Self {
         Self {
-            next: 0,
+            next_seq: 0,
+            next_abs: 0,
             started: false,
             mid_stream: false,
             finished: false,
@@ -235,6 +297,24 @@ impl Stream {
             pending_bytes: 0,
             delivered: 0,
             recent: Vec::new(),
+            recent_at: 0,
+        }
+    }
+
+    /// Where `sequence` sits, as an absolute position.
+    ///
+    /// `None` when it is further from what is expected than half the sequence
+    /// space, which is not a distance any real segment is at: it means the
+    /// numbers belong to a different connection, or the capture is
+    /// nonsensical. Refusing beats placing it somewhere arbitrary.
+    fn absolute(&self, sequence: u32) -> Option<u64> {
+        // Cast to i32 to read the wrapped difference as a signed distance,
+        // which is correct for anything within 2^31 either way.
+        let delta = sequence.wrapping_sub(self.next_seq).cast_signed();
+        if delta >= 0 {
+            self.next_abs.checked_add(delta.unsigned_abs().into())
+        } else {
+            self.next_abs.checked_sub(delta.unsigned_abs().into())
         }
     }
 
@@ -259,7 +339,13 @@ impl Stream {
     /// The sequence number expected next.
     #[must_use]
     pub const fn next_sequence(&self) -> u32 {
-        self.next
+        self.next_seq
+    }
+
+    /// Moves the stream on by `bytes`, in both spaces at once.
+    fn advance(&mut self, bytes: u64) {
+        self.next_seq = self.next_seq.wrapping_add(bytes as u32);
+        self.next_abs = self.next_abs.saturating_add(bytes);
     }
 }
 
@@ -292,24 +378,44 @@ impl Reassembler {
         }
 
         if segment.syn {
-            // A SYN occupies one sequence number, so data starts after it.
-            stream.next = segment.sequence.wrapping_add(1);
+            // A SYN occupies one sequence number of its own, and any payload
+            // it carries starts *after* that number. Treating the SYN's
+            // sequence as the first data byte loses the first byte of the
+            // payload and then reports the rest as a retransmission — which is
+            // what happened before, on the rare but legal SYN-with-data that
+            // TCP Fast Open produces.
+            stream.next_seq = segment.sequence.wrapping_add(1);
+            stream.next_abs = 0;
             stream.started = true;
             stream.mid_stream = false;
+            stream.recent.clear();
+            stream.recent_at = 0;
         } else if !stream.started {
             // No SYN was captured. Adopt what is here as the base and say so,
             // rather than letting anything downstream read "salman did not see
             // the beginning" as "nothing came before".
-            stream.next = segment.sequence;
+            stream.next_seq = segment.sequence;
+            stream.next_abs = 0;
             stream.started = true;
             stream.mid_stream = true;
+            stream.recent_at = 0;
             delivery.notes.push(Note::MidStream {
                 base: segment.sequence,
             });
         }
 
         if !segment.payload.is_empty() {
-            Self::accept(stream, segment.sequence, segment.payload, &mut delivery);
+            // A SYN's payload starts one past the SYN's own sequence number,
+            // because the flag occupies that number. Passing the SYN's number
+            // makes the payload look as though it overlaps by a byte: the
+            // first byte is dropped as already delivered and the rest reported
+            // as a retransmission. TCP Fast Open produces exactly this segment.
+            let payload_at = if segment.syn {
+                segment.sequence.wrapping_add(1)
+            } else {
+                segment.sequence
+            };
+            Self::accept(stream, payload_at, segment.payload, &mut delivery);
             Self::drain(stream, &mut delivery);
             Self::bound_pending(stream, &mut delivery);
         }
@@ -323,76 +429,114 @@ impl Reassembler {
 
     /// Places one segment's payload, in order or held for later.
     fn accept(stream: &mut Stream, sequence: u32, payload: &[u8], delivery: &mut Delivery) {
-        let end = sequence.wrapping_add(payload.len() as u32);
+        let Some(start) = stream.absolute(sequence) else {
+            // Further from what is expected than half the sequence space. No
+            // real segment is at that distance; placing it somewhere would be
+            // inventing a position for it.
+            delivery.notes.push(Note::OutOfOrder { ahead: u32::MAX });
+            return;
+        };
+        let end = start.saturating_add(payload.len() as u64);
+        let next = stream.next_abs;
 
         // Entirely behind what has been delivered: nothing new.
-        if at_or_before(end, stream.next) {
-            let already = Self::compare_with_recent(stream, sequence, payload);
-            delivery.notes.push(if already {
-                Note::Duplicate {
-                    bytes: payload.len(),
-                }
-            } else {
-                Note::OverlapDisagreed {
-                    sequence,
-                    bytes: payload.len(),
-                }
-            });
+        if end <= next {
+            delivery
+                .notes
+                .push(match Self::agrees_with_delivered(stream, start, payload) {
+                    Comparison::Same => Note::Duplicate {
+                        bytes: payload.len(),
+                    },
+                    Comparison::Different => Note::OverlapDisagreed {
+                        sequence,
+                        bytes: payload.len(),
+                    },
+                    Comparison::Unknown => Note::Unverified {
+                        bytes: payload.len(),
+                    },
+                });
             return;
         }
 
         // Straddles the boundary: the overlapping prefix was already
         // delivered, and delivered bytes win. See the module documentation for
         // why that is the policy.
-        if before(sequence, stream.next) {
-            let Some(overlap) = distance(sequence, stream.next) else {
-                return;
-            };
-            let overlap = overlap as usize;
+        if start < next {
+            let overlap = (next - start) as usize;
             let Some(fresh) = payload.get(overlap..) else {
                 return;
             };
             let already = payload.get(..overlap).unwrap_or(&[]);
-            if Self::compare_with_recent(stream, sequence, already) {
-                delivery.notes.push(Note::Retransmission { bytes: overlap });
-            } else {
-                delivery.notes.push(Note::OverlapDisagreed {
-                    sequence,
-                    bytes: overlap,
+            delivery
+                .notes
+                .push(match Self::agrees_with_delivered(stream, start, already) {
+                    Comparison::Same => Note::Retransmission { bytes: overlap },
+                    Comparison::Different => Note::OverlapDisagreed {
+                        sequence,
+                        bytes: overlap,
+                    },
+                    Comparison::Unknown => Note::Unverified { bytes: overlap },
                 });
-            }
             Self::deliver(stream, fresh, delivery);
             return;
         }
 
-        if sequence == stream.next {
+        if start == next {
             Self::deliver(stream, payload, delivery);
             return;
         }
 
         // Ahead of what is expected: hold it until the hole fills.
-        if let Some(ahead) = distance(stream.next, sequence) {
-            let existing = stream.pending.insert(sequence, payload.to_vec());
-            match existing {
-                Some(old) if old == payload => {
-                    // Already held, identically. Put it back and say so.
-                    stream.pending.insert(sequence, old);
-                    delivery.notes.push(Note::Duplicate {
+        Self::hold(stream, start, payload, delivery);
+    }
+
+    /// Holds a segment that arrived early, keeping whichever copy is longer.
+    ///
+    /// A retransmission of a held segment used to replace it wholesale. When
+    /// the retransmission was shorter — which happens when a sender resegments
+    /// — that discarded captured bytes with nothing saying so, and reported a
+    /// disagreement between two things that agreed everywhere they overlapped.
+    fn hold(stream: &mut Stream, start: u64, payload: &[u8], delivery: &mut Delivery) {
+        let ahead = (start - stream.next_abs).min(u64::from(u32::MAX)) as u32;
+        match stream.pending.get(&start) {
+            Some(held) if held.len() >= payload.len() => {
+                // Already have this much or more. If the shared prefix agrees,
+                // nothing was resent that salman does not have.
+                let shared = payload.len().min(held.len());
+                let same = held.get(..shared) == payload.get(..shared);
+                delivery.notes.push(if same {
+                    Note::Duplicate {
                         bytes: payload.len(),
-                    });
-                }
-                Some(old) => {
-                    stream.pending_bytes = stream.pending_bytes.saturating_sub(old.len());
-                    stream.pending_bytes += payload.len();
-                    delivery.notes.push(Note::OverlapDisagreed {
-                        sequence,
-                        bytes: payload.len(),
-                    });
-                }
-                None => {
-                    stream.pending_bytes += payload.len();
-                    delivery.notes.push(Note::OutOfOrder { ahead });
-                }
+                    }
+                } else {
+                    Note::OverlapDisagreed {
+                        sequence: stream.next_seq.wrapping_add(ahead),
+                        bytes: shared,
+                    }
+                });
+            }
+            Some(held) => {
+                // The new copy is longer. Keep it, and say only what is true
+                // about the part salman already had.
+                let shared = held.len();
+                let same = held.as_slice() == payload.get(..shared).unwrap_or(&[]);
+                let previous = held.len();
+                stream.pending.insert(start, payload.to_vec());
+                stream.pending_bytes = stream.pending_bytes.saturating_sub(previous);
+                stream.pending_bytes += payload.len();
+                delivery.notes.push(if same {
+                    Note::Retransmission { bytes: shared }
+                } else {
+                    Note::OverlapDisagreed {
+                        sequence: stream.next_seq.wrapping_add(ahead),
+                        bytes: shared,
+                    }
+                });
+            }
+            None => {
+                stream.pending.insert(start, payload.to_vec());
+                stream.pending_bytes += payload.len();
+                delivery.notes.push(Note::OutOfOrder { ahead });
             }
         }
     }
@@ -400,83 +544,102 @@ impl Reassembler {
     /// Hands bytes to the caller and advances the stream.
     fn deliver(stream: &mut Stream, bytes: &[u8], delivery: &mut Delivery) {
         delivery.bytes.extend_from_slice(bytes);
-        stream.next = stream.next.wrapping_add(bytes.len() as u32);
-        stream.delivered += bytes.len() as u64;
+        stream.advance(bytes.len() as u64);
         stream.recent.extend_from_slice(bytes);
+        stream.delivered += bytes.len() as u64;
         if stream.recent.len() > RECENT_BYTES {
             let excess = stream.recent.len() - RECENT_BYTES;
             stream.recent.drain(..excess);
+            stream.recent_at += excess as u64;
         }
     }
 
     /// Delivers whatever held segments have become contiguous.
     fn drain(stream: &mut Stream, delivery: &mut Delivery) {
         loop {
-            let Some((&sequence, _)) = stream.pending.first_key_value() else {
+            let Some((&start, _)) = stream.pending.first_key_value() else {
                 return;
             };
-            if before(stream.next, sequence) {
+            if start > stream.next_abs {
                 // Still a hole in front of it.
                 return;
             }
-            let Some(held) = stream.pending.remove(&sequence) else {
+            let Some(held) = stream.pending.remove(&start) else {
                 return;
             };
             stream.pending_bytes = stream.pending_bytes.saturating_sub(held.len());
-            let end = sequence.wrapping_add(held.len() as u32);
-            if at_or_before(end, stream.next) {
+            let end = start.saturating_add(held.len() as u64);
+            if end <= stream.next_abs {
                 // Entirely covered by what has since been delivered.
                 continue;
             }
-            let skip = distance(sequence, stream.next).unwrap_or(0) as usize;
+            let skip = (stream.next_abs - start) as usize;
             let fresh = held.get(skip..).unwrap_or(&[]);
             Self::deliver(stream, fresh, delivery);
         }
     }
 
-    /// Gives up on a hole that has held too much behind it.
+    /// Gives up on holes until the buffer is back inside its bound.
+    ///
+    /// A loop, not one jump. Giving up on a single hole per segment is not a
+    /// bound at all: a stream with many holes grows past it for ever, and once
+    /// past it the jump fires on every packet and skips forward over live data,
+    /// producing a byte stream no sender ever sent.
     fn bound_pending(stream: &mut Stream, delivery: &mut Delivery) {
-        if stream.pending_bytes <= MAX_PENDING_BYTES {
-            return;
+        // Bounded so that a pathological stream cannot spin here even if the
+        // arithmetic below is ever wrong again.
+        for _ in 0..64 {
+            if stream.pending_bytes <= MAX_PENDING_BYTES {
+                return;
+            }
+            let Some((&start, _)) = stream.pending.first_key_value() else {
+                return;
+            };
+            if start <= stream.next_abs {
+                // Nothing in front of it to give up on; drain will take it.
+                Self::drain(stream, delivery);
+                continue;
+            }
+            let skipped = start - stream.next_abs;
+            delivery.notes.push(Note::Gap {
+                from: stream.next_seq,
+                bytes: skipped.min(u64::from(u32::MAX)) as u32,
+            });
+            // Jump the hole in both spaces, and forget the recent window: the
+            // bytes it holds are no longer adjacent to where the stream now is,
+            // so comparing an overlap against them would compare the wrong
+            // bytes.
+            stream.advance(skipped);
+            stream.recent.clear();
+            stream.recent_at = stream.next_abs;
+            Self::drain(stream, delivery);
         }
-        // Jump to the earliest held segment. Everything between what was
-        // expected and that point was never captured, and saying so is the
-        // point: silence would look like the device sent nothing.
-        let Some((&sequence, _)) = stream.pending.first_key_value() else {
-            return;
-        };
-        let skipped = distance(stream.next, sequence).unwrap_or(0);
-        delivery.notes.push(Note::Gap {
-            from: stream.next,
-            bytes: skipped,
-        });
-        stream.next = sequence;
-        Self::drain(stream, delivery);
     }
 
-    /// Whether `payload` matches what was delivered at `sequence`, as far as
-    /// the recent window can tell.
-    ///
-    /// Returns `true` when it cannot tell, because reporting a disagreement
-    /// salman cannot demonstrate would be a confident lie about a device.
-    fn compare_with_recent(stream: &Stream, sequence: u32, payload: &[u8]) -> bool {
+    /// What comparing a repeat against what was delivered established.
+    fn agrees_with_delivered(stream: &Stream, start: u64, payload: &[u8]) -> Comparison {
         if payload.is_empty() {
-            return true;
+            return Comparison::Same;
         }
-        // Where in the recent window this sequence falls.
-        let recent_start = stream.next.wrapping_sub(stream.recent.len() as u32);
-        let Some(offset) = distance(recent_start, sequence) else {
-            return true;
+        let Some(offset) = start.checked_sub(stream.recent_at) else {
+            // Before anything still held: too far back to compare.
+            return Comparison::Unknown;
         };
-        let offset = offset as usize;
+        let Ok(offset) = usize::try_from(offset) else {
+            return Comparison::Unknown;
+        };
         let Some(window) = stream.recent.get(offset..) else {
-            return true;
+            return Comparison::Unknown;
         };
         let comparable = window.len().min(payload.len());
         if comparable == 0 {
-            return true;
+            return Comparison::Unknown;
         }
-        window.get(..comparable) == payload.get(..comparable)
+        if window.get(..comparable) == payload.get(..comparable) {
+            Comparison::Same
+        } else {
+            Comparison::Different
+        }
     }
 
     /// One direction of one connection, if anything has been seen of it.

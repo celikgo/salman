@@ -752,15 +752,17 @@ of the implementation.
   of scalars, which is a distinction the messages do not draw.
 - **`VAR_ACCESS` and `VAR_CONFIG` semantics.** The sections parse; nothing acts on them. A
   `VAR_CONFIG` instance path is refused by name.
-- **A formatter, a language server, a project file, a GUI, a network model, a plant model,
-  any importer, any AI layer, and every protocol except Modbus.** None of these has any code
-  in this repository, except that the project file exists as a format
-  (`crates/salman-project`) that no subcommand reads yet. Modbus does: `crates/salman-modbus`
-  decodes and encodes it, `crates/salman-modbus-net` has a client and a simulator, and
-  `crates/salman-link` binds a device's registers to the process image. Nothing reads a
-  capture file. See `docs/ROADMAP.md` for when each is intended. The declarative test harness,
-  which an earlier version of this list said did not exist, does: it is `salman-test`, it is
-  driven by `salman test`, and the worked example depends on it.
+- **A formatter, a language server, a GUI, a network model, a plant model, any AI layer, any
+  importer other than PLCopen XML, and every protocol except Modbus.** None of these has any
+  code in this repository. See `docs/ROADMAP.md` for when each is intended.
+
+  Four things this bullet denied while they existed, which is worth recording rather than
+  quietly editing: **the project file** is read by `salman project`; **captures** are read by
+  `salman capture`, decoded through `crates/salman-capture` and analysed by
+  `crates/salman-analyse`; **PLCopen XML** is read and written by `crates/salman-plcopen`;
+  and the declarative test harness is `salman-test`, driven by `salman test`. Each stayed
+  denied here for a while after it landed, and each was found by review rather than by
+  anybody reading this list.
 
 ---
 

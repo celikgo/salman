@@ -45,10 +45,12 @@
 pub mod compat;
 pub mod model;
 pub mod read;
+pub mod render;
 pub mod write;
 
 pub use model::{Body, Interface, Pou, PouKind, Project, VarSection, Variable};
 pub use read::{ReadError, read};
+pub use render::{Rejected, Shape};
 pub use write::{WriteError, write};
 
 /// The namespace of the version salman modelled: v2.01.

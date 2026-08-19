@@ -371,9 +371,13 @@ fn note_finding(
                 .at_time(timestamp),
         )),
         // Ordinary on any real network, and reporting them as problems is how
-        // a diagnostic tool loses the reader's trust.
+        // a diagnostic tool loses the reader's trust. `Unverified` is among
+        // them: bytes arriving again from further back than salman's window is
+        // a limit of salman's, not a fault of the device's, and it does not
+        // affect the stream that was delivered.
         Note::Retransmission { .. }
         | Note::Duplicate { .. }
+        | Note::Unverified { .. }
         | Note::OutOfOrder { .. }
         | Note::Finished
         | Note::Reset => None,

@@ -395,6 +395,10 @@ pub fn decode(link: LinkType, frame: &[u8], truncated: bool) -> Result<Decoded<'
     match ether_type {
         ETHERTYPE_IPV4 => decode_ipv4(rest, truncated),
         ETHERTYPE_IPV6 => decode_ipv6(rest, truncated),
+        // Still a tag means the frame ran out inside one. salman follows VLAN
+        // tags, so saying "0x8100 is not IPv4 or IPv6" would be a false
+        // statement about salman rather than about the frame.
+        tag if is_vlan_tag(tag) => Ok(not_decoded(NotDecoded::TruncatedBeforeHeaders)),
         other => Ok(not_decoded(NotDecoded::EtherType(other))),
     }
 }
@@ -424,13 +428,24 @@ fn version_ether_type(frame: &[u8]) -> Result<u16, FrameError> {
     }
 }
 
-/// Steps past any VLAN tags and returns the real type and what follows.
-fn follow_vlan_tags(mut ether_type: u16, mut rest: &[u8]) -> Result<(u16, &[u8]), FrameError> {
-    let mut depth = 0;
-    while matches!(
+/// Whether an EtherType is a VLAN tag rather than a protocol.
+const fn is_vlan_tag(ether_type: u16) -> bool {
+    matches!(
         ether_type,
         ETHERTYPE_C_TAG | ETHERTYPE_S_TAG | ETHERTYPE_S_TAG_ALT
-    ) {
+    )
+}
+
+/// Steps past any VLAN tags and returns the real type and what follows.
+///
+/// A frame that runs out inside a tag comes back still holding the tag's own
+/// type. The caller has to notice that, because reporting it as "EtherType
+/// 0x8100 is not IPv4 or IPv6" says something false about salman — it does
+/// follow those — and makes a snapshot-truncated frame on a VLAN trunk
+/// indistinguishable from an ordinary ARP.
+fn follow_vlan_tags(mut ether_type: u16, mut rest: &[u8]) -> Result<(u16, &[u8]), FrameError> {
+    let mut depth = 0;
+    while is_vlan_tag(ether_type) {
         depth += 1;
         if depth > MAX_VLAN_TAGS {
             return Err(FrameError::TooManyVlanTags {

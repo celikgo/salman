@@ -125,7 +125,7 @@ fn a_capture_file_becomes_modbus_transactions() {
     let mut requests = Vec::new();
     let mut duplicates = 0;
 
-    for record in reader.records().unwrap() {
+    for record in reader.records().0 {
         let Ok(Decoded::Tcp(segment)) = decode(link, record.data, record.truncated) else {
             continue;
         };
@@ -183,7 +183,7 @@ fn the_padding_on_an_acknowledgement_produces_no_transaction_at_all() {
     let mut reassembler = Reassembler::new();
     let mut framer = Framer::new();
 
-    for record in reader.records().unwrap() {
+    for record in reader.records().0 {
         let Ok(Decoded::Tcp(segment)) = decode(link, record.data, record.truncated) else {
             continue;
         };
@@ -221,5 +221,5 @@ fn a_capture_salman_wrote_reads_back_identically() {
 
     let capture = build();
     let mut reader = Reader::new(&capture).unwrap();
-    assert_eq!(reader.records().unwrap().len(), 8);
+    assert_eq!(reader.records().0.len(), 8);
 }

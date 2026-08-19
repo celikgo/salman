@@ -235,6 +235,19 @@ fn write_type<W: Write>(writer: &mut EventWriter<W>, name: &str) -> Result<(), W
         return Ok(());
     }
 
+    // `STRING` and `WSTRING` without a declared length. The schema spells them
+    // in lower case and gives the length attribute as optional, so an
+    // unbounded one is `<string/>`. Writing `<derived name="STRING"/>` instead
+    // — which is what happened before — keeps the name and changes what the
+    // document means: another reader sees a user-declared type where an
+    // elementary one was meant, and salman's own model round-trips regardless,
+    // so nothing noticed.
+    if matches!(name, "STRING" | "WSTRING") {
+        writer.write(XmlEvent::start_element(name.to_lowercase().as_str()))?;
+        writer.write(XmlEvent::end_element())?;
+        return Ok(());
+    }
+
     if is_elementary(name) {
         writer.write(XmlEvent::start_element(name))?;
         writer.write(XmlEvent::end_element())?;
@@ -248,10 +261,10 @@ fn write_type<W: Write>(writer: &mut EventWriter<W>, name: &str) -> Result<(), W
 /// Whether the schema has an element of this name for an elementary type.
 ///
 /// v2.01's type set is frozen at IEC 61131-3 2nd edition: `LTIME`, `LDATE`,
-/// `LTOD`, `LDT`, `CHAR` and `WCHAR` are **not** in it, and neither is an
-/// uppercase `STRING` — the schema spells those two in lower case, which is a
-/// trap worth knowing about. Anything not on this list is written as a
-/// `derived` reference, which is what a user-declared type is.
+/// `LTOD`, `LDT`, `CHAR` and `WCHAR` are **not** in it. `STRING` and `WSTRING`
+/// are, and the schema spells them in lower case — they are handled above
+/// rather than here. Anything not on this list is written as a `derived`
+/// reference, which is what a user-declared type is.
 fn is_elementary(name: &str) -> bool {
     matches!(
         name,

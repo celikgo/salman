@@ -404,3 +404,136 @@ fn the_two_versions_are_not_read_as_one_document() {
     );
     assert_eq!(project.pous[0].name, "Main");
 }
+
+// -- what review found: matching by name at any depth ---------------------
+
+#[test]
+fn an_interface_inside_an_add_data_blob_does_not_replace_the_pous_own() {
+    // Found by review. `<addData>` is where vendors put anything they like,
+    // and the schema hangs it off almost every element. Matching `<interface>`
+    // by name wherever it appeared meant a vendor blob replaced the POU's
+    // declarations with its own — a document producing a different program
+    // from the one it describes.
+    let text = document(CODESYS_ST).replace(
+        "<interface>",
+        r#"<addData>
+             <data name="vendor" handleUnknown="implementation">
+               <interface><localVars><variable name="Vendor"><type><BOOL/></type></variable></localVars></interface>
+             </data>
+           </addData>
+           <interface>"#,
+    );
+    let project = read(text.as_bytes()).unwrap();
+    let interface = &project.pous[0].interface;
+    let names: Vec<&str> = interface
+        .sections
+        .iter()
+        .flat_map(|(_, vars)| vars.iter().map(|v| v.name.as_str()))
+        .collect();
+    assert_eq!(
+        names,
+        ["Start", "Count", "Motor"],
+        "a vendor blob's interface replaced the POU's own"
+    );
+}
+
+#[test]
+fn a_section_named_element_nested_inside_a_section_does_not_close_it() {
+    // The same fault from the other side: a `</localVars>` at any depth ended
+    // the section, and every variable after it vanished with nothing recording
+    // that it had.
+    let text = document(CODESYS_ST).replace(
+        r#"<variable name="Count">"#,
+        r#"<variable name="Before">
+             <type><BOOL/></type>
+             <addData><data name="v" handleUnknown="discard"><localVars/></data></addData>
+           </variable>
+           <variable name="Count">"#,
+    );
+    let project = read(text.as_bytes()).unwrap();
+    let (_, locals) = &project.pous[0].interface.sections[1];
+    let names: Vec<&str> = locals.iter().map(|v| v.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["Before", "Count", "Motor"],
+        "the variables after the nested element were lost"
+    );
+}
+
+#[test]
+fn a_type_element_nested_below_a_variable_does_not_become_the_variables_type() {
+    // `read_variable` matched `<type>` at any depth and stopped at the first
+    // `</variable>` at any depth, so a nested one took over.
+    let text = document(CODESYS_ST).replace(
+        r#"<variable name="Count">
+              <type><INT/></type>"#,
+        r#"<variable name="Count">
+              <type><INT/></type>
+              <addData><data name="v" handleUnknown="discard">
+                <variable name="Inner"><type><LREAL/></type></variable>
+              </data></addData>"#,
+    );
+    let project = read(text.as_bytes()).unwrap();
+    let (_, locals) = &project.pous[0].interface.sections[1];
+    assert_eq!(locals[0].name, "Count");
+    assert_eq!(
+        locals[0].type_name, "INT",
+        "a nested variable's type replaced this one's"
+    );
+    assert_eq!(
+        locals.len(),
+        2,
+        "the nested variable must not become a declaration of its own"
+    );
+}
+
+#[test]
+fn two_xhtml_elements_inside_st_are_refused_rather_than_joined() {
+    // Found by review. The schema requires exactly one, and joining two with
+    // nothing between them fuses the last token of the first to the first
+    // token of the second: `END_IF` and `Motor` become `END_IFMotor`, which is
+    // a different program that may well compile.
+    let two = r#"<ST><xhtml:p xmlns:xhtml="http://www.w3.org/1999/xhtml">Count := 1;</xhtml:p><xhtml:p xmlns:xhtml="http://www.w3.org/1999/xhtml">Count := 2;</xhtml:p></ST>"#;
+    let error = read(document(two).as_bytes()).unwrap_err();
+    let ReadError::StructuredTextNotWrapped { found, .. } = &error else {
+        panic!("{error}")
+    };
+    assert!(found.contains("exactly one"), "{found}");
+    assert!(found.contains("fuse"), "the message must say why: {found}");
+}
+
+#[test]
+fn a_composite_initial_value_is_not_reduced_to_one_of_its_fields() {
+    // Found by review. An array or structure initialiser holds one
+    // `simpleValue` per field, and taking the last one found anywhere made a
+    // whole variable's initial value into its final field's — silently.
+    // salman does not model composite initialisers, and no value is better
+    // than a wrong one.
+    let text = document(CODESYS_ST).replace(
+        "<initialValue><simpleValue value=\"7\"/></initialValue>",
+        r#"<initialValue><arrayValue>
+             <value><simpleValue value="1"/></value>
+             <value><simpleValue value="2"/></value>
+             <value><simpleValue value="99"/></value>
+           </arrayValue></initialValue>"#,
+    );
+    let project = read(text.as_bytes()).unwrap();
+    let (_, locals) = &project.pous[0].interface.sections[1];
+    assert_eq!(
+        locals[0].initial_value, None,
+        "a composite initialiser was reduced to one of its fields"
+    );
+}
+
+#[test]
+fn an_addata_element_inside_a_body_is_not_mistaken_for_a_language() {
+    // `<addData>` and `<documentation>` are permitted inside `<body>` and are
+    // not programming languages. Reporting one as a language salman cannot
+    // read would put a false loss on the report.
+    let body = format!(
+        "{CODESYS_ST}<addData><data name=\"v\" handleUnknown=\"discard\"><x/></data></addData>"
+    );
+    let project = read(document(&body).as_bytes()).unwrap();
+    assert_eq!(project.pous[0].bodies.len(), 1);
+    assert_eq!(project.unread_bodies().count(), 0);
+}

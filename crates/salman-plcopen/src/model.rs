@@ -235,15 +235,76 @@ impl Project {
     /// A POU whose body is in a language salman does not read is emitted as a
     /// comment saying so, rather than skipped: a file that silently lost half
     /// its program would compile and be wrong.
+    ///
+    /// **Every string the document controls is checked before it reaches the
+    /// output.** Structured Text has no escaping, so a variable named
+    /// `X : INT; END_VAR Motor := TRUE; END_PROGRAM PROGRAM Injected VAR Y`
+    /// turned one `PROGRAM` into two before this check existed — declarations
+    /// and statements that were in no document. Anything that is not a single
+    /// identifier, address or literal becomes a comment naming it, and
+    /// [`Project::rejected`] lists them.
     #[must_use]
     pub fn to_structured_text(&self) -> String {
+        self.render().0
+    }
+
+    /// Everything a document contained that salman would not put into source.
+    ///
+    /// Empty for any document salman wrote and for any ordinary export. A
+    /// non-empty list means the file contained a name, address or value that
+    /// is not one, and a caller should say so rather than let a user wonder
+    /// where a variable went.
+    #[must_use]
+    pub fn rejected(&self) -> Vec<crate::render::Rejected> {
+        self.render().1
+    }
+
+    /// The rendering and what it refused, in one pass.
+    fn render(&self) -> (String, Vec<crate::render::Rejected>) {
+        use crate::render::{Rejected, Shape, is_one, rejection_comment};
         use core::fmt::Write;
+
         let mut out = String::new();
+        let mut rejected = Vec::new();
+
+        // Checks one document-controlled string, recording it if it is refused.
+        let mut check = |pou: &str, what: &'static str, value: &str, shape: Shape| {
+            if is_one(value, shape) {
+                true
+            } else {
+                rejected.push(Rejected {
+                    pou: pou.to_string(),
+                    what,
+                    value: value.to_string(),
+                });
+                false
+            }
+        };
+
         for pou in &self.pous {
             let (open, close) = pou.kind.keywords();
+            if !check(&pou.name, "name", &pou.name, Shape::Identifier) {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    rejection_comment("POU", Shape::Identifier, &pou.name)
+                );
+                continue;
+            }
             let _ = write!(out, "{open} {}", pou.name);
             if let Some(returns) = &pou.interface.return_type {
-                let _ = write!(out, " : {returns}");
+                if check(&pou.name, "return type", returns, Shape::Identifier) {
+                    let _ = write!(out, " : {returns}");
+                } else {
+                    // A function with no return type does not parse, so the
+                    // whole POU is refused rather than emitted broken.
+                    let _ = writeln!(
+                        out,
+                        "\n{}",
+                        rejection_comment("return type", Shape::Identifier, returns)
+                    );
+                    continue;
+                }
             }
             let _ = writeln!(out);
 
@@ -253,13 +314,41 @@ impl Project {
                 }
                 let _ = writeln!(out, "{}", section.keyword());
                 for variable in variables {
+                    if !check(&pou.name, "name", &variable.name, Shape::Identifier)
+                        || !check(&pou.name, "type", &variable.type_name, Shape::Identifier)
+                    {
+                        let _ = writeln!(
+                            out,
+                            "  {}",
+                            rejection_comment("variable", Shape::Identifier, &variable.name)
+                        );
+                        continue;
+                    }
                     let _ = write!(out, "  {}", variable.name);
                     if let Some(address) = &variable.address {
-                        let _ = write!(out, " AT {address}");
+                        if check(&pou.name, "address", address, Shape::Address) {
+                            let _ = write!(out, " AT {address}");
+                        } else {
+                            // Dropping the address quietly would leave a
+                            // variable that looks located and is not, which is
+                            // the failure the located-variable work exists to
+                            // stop. The declaration goes, not just the address.
+                            let _ = writeln!(
+                                out,
+                                "\n  {}",
+                                rejection_comment("address", Shape::Address, address)
+                            );
+                            continue;
+                        }
                     }
                     let _ = write!(out, " : {}", variable.type_name);
                     if let Some(initial) = &variable.initial_value {
-                        let _ = write!(out, " := {initial}");
+                        if check(&pou.name, "initial value", initial, Shape::Literal) {
+                            let _ = write!(out, " := {initial}");
+                        } else {
+                            let _ =
+                                write!(out, " (* initial value {initial:?} was not imported *)");
+                        }
                     }
                     let _ = writeln!(out, ";");
                 }
@@ -269,21 +358,27 @@ impl Project {
             for body in &pou.bodies {
                 match body {
                     Body::StructuredText { text, .. } => {
+                        // The body is code by definition, so it is not checked
+                        // for shape — but it is what a compiler will read, and
+                        // it is the one part of a document that is *meant* to
+                        // be Structured Text.
                         let _ = writeln!(out, "{}", text.trim_end());
                     }
                     Body::Other { language } => {
-                        // Named rather than dropped. A file that quietly lost
-                        // half its program would compile and be wrong.
                         let _ = writeln!(
                             out,
-                            "(* salman does not read {language}; this body was not imported *)"
+                            "(* salman does not read {}; this body was not imported *)",
+                            language
+                                .chars()
+                                .filter(char::is_ascii_alphanumeric)
+                                .collect::<String>()
                         );
                     }
                 }
             }
             let _ = writeln!(out, "{close}\n");
         }
-        out
+        (out, rejected)
     }
 
     /// Every body in a language salman does not read, with the POU it is in.

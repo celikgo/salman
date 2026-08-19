@@ -561,3 +561,28 @@ fn an_unfragmented_packet_is_still_decoded_however_its_flags_are_set() {
         assert_eq!(segment.payload, b"whole", "flags 0x{word:04X}");
     }
 }
+
+#[test]
+fn a_frame_cut_inside_a_vlan_tag_is_reported_as_truncated_rather_than_as_not_ip() {
+    // Found by review. Running out inside a tag left the tag's own type in
+    // hand, and reporting "EtherType 0x8100 is not IPv4 or IPv6" says
+    // something false about salman — it does follow those — while making a
+    // snapshot-truncated frame on a VLAN trunk indistinguishable from an
+    // ordinary ARP. A report counting "frames that were not IP" would absorb
+    // every truncated frame in the capture.
+    let mut frame = vec![0x11_u8; 6];
+    frame.extend_from_slice(&[0x22; 6]);
+    frame.extend_from_slice(&0x8100_u16.to_be_bytes());
+    frame.extend_from_slice(&[0x00, 0x64]); // the tag's control bytes, then nothing
+
+    let decoded = decode(LinkType::ETHERNET, &frame, true).unwrap();
+    assert!(
+        matches!(
+            decoded,
+            Decoded::NotDecoded {
+                what: NotDecoded::TruncatedBeforeHeaders
+            }
+        ),
+        "{decoded:?}"
+    );
+}

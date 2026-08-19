@@ -464,3 +464,205 @@ fn a_stream_never_delivers_more_than_it_was_given() {
         "the stream delivered is not the stream sent"
     );
 }
+
+// -- what review found ---------------------------------------------------
+
+#[test]
+fn a_segment_held_across_the_wrap_is_delivered_rather_than_stranded() {
+    // Found by review, with this exact sequence. The held segments were keyed
+    // on the raw sequence number in a map ordered numerically, so a post-wrap
+    // segment sorted ahead of a pre-wrap one — and the pre-wrap segment,
+    // sitting exactly where the stream expected it, was never looked at. It
+    // was then reported as "never captured" while salman held it.
+    //
+    // The one comparison that was not modular was the one nobody had written
+    // down: the ordering inside the data structure.
+    let mut reassembler = Reassembler::new();
+    reassembler.push(&syn(0xFFFF_FEFF));
+    // next is now 0xFFFF_FF00.
+
+    let held_before_wrap = reassembler.push(&segment(0xFFFF_FF10, b"AAAAAAAAAAAAAAAA"));
+    assert!(held_before_wrap.bytes.is_empty());
+    let held_after_wrap = reassembler.push(&segment(0x0000_0000, b"BBBBBBBBBBBBBBBB"));
+    assert!(held_after_wrap.bytes.is_empty());
+
+    // The segment that fills the hole. Everything contiguous must follow it.
+    let fills = reassembler.push(&segment(0xFFFF_FF00, b"CCCCCCCCCCCCCCCC"));
+    assert_eq!(
+        fills.bytes, b"CCCCCCCCCCCCCCCCAAAAAAAAAAAAAAAA",
+        "the segment held across the wrap was stranded"
+    );
+
+    let stream = reassembler.stream(client(), server()).unwrap();
+    assert_eq!(stream.next_sequence(), 0xFFFF_FF20);
+    // The post-wrap segment is still held, correctly: there is a real hole
+    // between 0xFFFFFF20 and 0x00000000.
+    assert_eq!(stream.pending_bytes(), 16);
+}
+
+#[test]
+fn the_pending_bound_is_a_bound() {
+    // Found by review. Giving up on one hole per segment is not a bound: a
+    // stream with many holes grows past it for ever. Worse than the memory,
+    // once past it the jump fired on every packet and skipped forward over
+    // live data, producing a byte stream no sender ever sent.
+    let mut reassembler = Reassembler::new();
+    reassembler.push(&syn(0));
+
+    // Alternating loss: every other byte never arrives. Each one is its own
+    // hole, so nothing can ever be delivered and the buffer only grows.
+    let byte = [0xAA_u8];
+    for index in 0..40_000_u32 {
+        reassembler.push(&segment(2 + index * 2, &byte));
+    }
+    let held = reassembler
+        .stream(client(), server())
+        .unwrap()
+        .pending_bytes();
+    assert!(
+        held <= MAX_PENDING_BYTES,
+        "the buffer holds {held} bytes against a bound of {MAX_PENDING_BYTES}"
+    );
+}
+
+#[test]
+fn a_shorter_retransmission_of_a_held_segment_does_not_discard_bytes() {
+    // Found by review. A retransmission replaced a held segment wholesale, so
+    // a shorter one — which happens whenever a sender resegments — threw away
+    // captured bytes with nothing saying so, and reported a disagreement
+    // between two things that agreed everywhere they overlapped.
+    let mut reassembler = Reassembler::new();
+    reassembler.push(&syn(0));
+
+    // Held ahead of a hole.
+    reassembler.push(&segment(11, b"HELLOWORLD"));
+    // The same data, resegmented shorter.
+    let again = reassembler.push(&segment(11, b"HELLO"));
+    assert!(
+        !again
+            .notes
+            .iter()
+            .any(|n| matches!(n, Note::OverlapDisagreed { .. })),
+        "two segments that agree were reported as disagreeing: {:?}",
+        again.notes
+    );
+
+    // Fill the hole; all ten bytes must still be there.
+    let fills = reassembler.push(&segment(1, b"0123456789"));
+    assert_eq!(
+        fills.bytes, b"0123456789HELLOWORLD",
+        "the longer held copy was replaced by the shorter one"
+    );
+}
+
+#[test]
+fn a_longer_retransmission_of_a_held_segment_keeps_the_extra_bytes() {
+    let mut reassembler = Reassembler::new();
+    reassembler.push(&syn(0));
+    reassembler.push(&segment(11, b"HELLO"));
+    reassembler.push(&segment(11, b"HELLOWORLD"));
+    let fills = reassembler.push(&segment(1, b"0123456789"));
+    assert_eq!(fills.bytes, b"0123456789HELLOWORLD");
+}
+
+#[test]
+fn an_overlap_is_never_compared_against_the_wrong_bytes_after_a_gap() {
+    // The recent window used to be located by subtracting its length from the
+    // stream position, which stops being true the moment the position jumps
+    // over a hole. An overlap would then be compared against bytes from
+    // somewhere else entirely and a disagreement reported that did not exist.
+    let mut reassembler = Reassembler::new();
+    reassembler.push(&syn(0));
+    reassembler.push(&segment(1, b"AAAAAAAA"));
+
+    // Force a jump by overflowing the bound with one far-ahead segment.
+    let big = vec![0xBB_u8; MAX_PENDING_BYTES + 1];
+    let jumped = reassembler.push(&segment(100_000, &big));
+    assert!(
+        jumped.notes.iter().any(|n| matches!(n, Note::Gap { .. })),
+        "{:?}",
+        jumped.notes
+    );
+
+    // Now a retransmission of bytes from before the jump. salman cannot tell
+    // whether they agree — the window was cleared — and must not claim they
+    // disagree.
+    let old = reassembler.push(&segment(1, b"AAAAAAAA"));
+    assert!(
+        !old.notes
+            .iter()
+            .any(|n| matches!(n, Note::OverlapDisagreed { .. })),
+        "a disagreement was claimed that salman cannot demonstrate: {:?}",
+        old.notes
+    );
+}
+
+#[test]
+fn a_syn_carrying_data_keeps_all_of_it() {
+    // Found by review. A SYN occupies one sequence number of its own, and any
+    // payload it carries starts after that number — so passing the SYN's own
+    // number made the payload look as though it overlapped by a byte. The
+    // first byte was dropped as already delivered and the rest reported as a
+    // retransmission. TCP Fast Open produces exactly this segment.
+    let mut reassembler = Reassembler::new();
+    let delivery = reassembler.push(&Segment {
+        syn: true,
+        ..segment(1000, b"early data")
+    });
+    assert_eq!(delivery.bytes, b"early data", "the first byte was lost");
+    assert!(
+        !delivery
+            .notes
+            .iter()
+            .any(|n| matches!(n, Note::Retransmission { .. })),
+        "a phantom retransmission was reported: {:?}",
+        delivery.notes
+    );
+    // And the stream carries on from the right place.
+    assert_eq!(reassembler.push(&segment(1011, b" more")).bytes, b" more");
+}
+
+#[test]
+fn a_repeat_too_far_back_to_compare_is_not_called_a_duplicate() {
+    // Found by review. `Duplicate` says the bytes were byte-for-byte
+    // identical, and salman keeps a bounded window of delivered bytes — so
+    // anything older than that window was never compared. Claiming identity
+    // there is a positive claim nothing checked; claiming disagreement is a
+    // claim about a device salman cannot support. Neither is true.
+    let mut reassembler = Reassembler::new();
+    reassembler.push(&syn(0));
+
+    // Deliver well past the recent window.
+    let filler = vec![0x55_u8; 4096];
+    reassembler.push(&segment(1, &filler));
+
+    // Now resend the very first bytes, long since out of the window.
+    let repeat = reassembler.push(&segment(1, b"XXXX"));
+    assert!(
+        repeat
+            .notes
+            .iter()
+            .any(|n| matches!(n, Note::Unverified { bytes: 4 })),
+        "expected an unverified note, got {:?}",
+        repeat.notes
+    );
+    assert!(
+        !repeat
+            .notes
+            .iter()
+            .any(|n| matches!(n, Note::Duplicate { .. } | Note::OverlapDisagreed { .. })),
+        "salman claimed something it could not check: {:?}",
+        repeat.notes
+    );
+
+    // And a repeat that IS inside the window is still compared properly.
+    let recent = reassembler.push(&segment(4000, &filler[..8]));
+    assert!(
+        recent
+            .notes
+            .iter()
+            .any(|n| matches!(n, Note::Duplicate { .. })),
+        "{:?}",
+        recent.notes
+    );
+}

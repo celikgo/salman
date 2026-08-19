@@ -3,11 +3,22 @@
 //!
 //! # What this is strict about, and what it is not
 //!
-//! **Strict about the namespace.** An element in a namespace this reader does
-//! not know is skipped with its whole subtree, rather than matched by local
-//! name. Two formats with the same element names and different meanings is
-//! exactly the situation PLCopen XML and IEC 61131-10 are in, and a reader
-//! that matched on `project` alone would read one as the other.
+//! **Strict about the namespace, and about depth.** An element in a namespace
+//! this reader does not know is skipped with its whole subtree, and every
+//! element is matched as a **direct child** of the one it belongs to rather
+//! than wherever its name appears. Two formats with the same element names and
+//! different meanings is exactly the situation PLCopen XML and IEC 61131-10
+//! are in, and a reader that matched on `project` alone would read one as the
+//! other.
+//!
+//! Both halves of that were once only half true, and review found it. Matching
+//! by name at any depth meant an `<addData>` blob holding an `<interface>`
+//! replaced the POU's own, a section-named element nested anywhere closed the
+//! section and lost every variable after it, and a `</variable>` at any depth
+//! ended the variable. Every one of those is a document quietly producing a
+//! different program from the one it describes, which is the failure this
+//! whole layer exists to prevent. [`Reader::children`] is the discipline that
+//! replaced it.
 //!
 //! **Not strict about the ST wrapper.** Any single element in the XHTML
 //! namespace is accepted, because the specification constrains the namespace
@@ -195,6 +206,40 @@ impl<R: Read> Reader<R> {
         Ok(self.project)
     }
 
+    /// Calls `on_child` for each **direct** child of the element just entered,
+    /// and skips the subtree of any child the closure does not take.
+    ///
+    /// This is the discipline the whole reader is built on, and it exists
+    /// because the earlier version did not have it. Matching an element by
+    /// name wherever it appeared meant an `<addData>` blob containing an
+    /// `<interface>` replaced the POU's own, a section-named element nested
+    /// anywhere closed the section early and lost every variable after it, and
+    /// a `</variable>` at any depth ended the variable. Every one of those is a
+    /// document quietly producing a different program from the one it
+    /// describes.
+    ///
+    /// `on_child` returns `true` if it consumed the child **including its end
+    /// tag**, and `false` to have it skipped whole.
+    fn children<F>(&mut self, mut on_child: F) -> Result<(), ReadError>
+    where
+        F: FnMut(&mut Self, &OwnedName, &[OwnedAttribute]) -> Result<bool, ReadError>,
+    {
+        loop {
+            match self.next()? {
+                XmlEvent::StartElement {
+                    name, attributes, ..
+                } => {
+                    if !on_child(self, &name, &attributes)? {
+                        self.skip_subtree()?;
+                    }
+                }
+                // The end tag of the element whose children these are.
+                XmlEvent::EndElement { .. } | XmlEvent::EndDocument => return Ok(()),
+                _ => {}
+            }
+        }
+    }
+
     /// Reads one `<pou>`, from its start tag to its end tag.
     fn read_pou(&mut self, attributes: &[OwnedAttribute]) -> Result<Pou, ReadError> {
         let name = attribute(attributes, "name");
@@ -206,94 +251,71 @@ impl<R: Read> Reader<R> {
             })?;
 
         let mut pou = Pou {
-            name,
+            name: name.clone(),
             kind,
             interface: Interface::default(),
             bodies: Vec::new(),
         };
 
-        let mut depth = 0_usize;
-        loop {
-            match self.next()? {
-                XmlEvent::StartElement {
-                    name: element,
-                    attributes,
-                    ..
-                } => {
-                    if self.in_plcopen(&element) {
-                        match element.local_name.as_str() {
-                            "interface" => {
-                                pou.interface = self.read_interface()?;
-                                continue;
-                            }
-                            "body" => {
-                                self.read_body(&pou.name, &mut pou.bodies)?;
-                                continue;
-                            }
-                            _ => {}
-                        }
-                    }
-                    let _ = attributes;
-                    depth += 1;
-                }
-                XmlEvent::EndElement { name: element } => {
-                    if depth == 0 && self.in_plcopen(&element) && element.local_name == "pou" {
-                        break;
-                    }
-                    depth = depth.saturating_sub(1);
-                }
-                XmlEvent::EndDocument => break,
-                _ => {}
+        self.children(|reader, element, _| {
+            if !reader.in_plcopen(element) {
+                return Ok(false);
             }
-        }
+            match element.local_name.as_str() {
+                "interface" => {
+                    pou.interface = reader.read_interface()?;
+                    Ok(true)
+                }
+                "body" => {
+                    reader.read_body(&name, &mut pou.bodies)?;
+                    Ok(true)
+                }
+                // `actions`, `transitions`, `addData`, `documentation`: all
+                // skipped whole, so nothing inside them can be mistaken for a
+                // child of the POU.
+                _ => Ok(false),
+            }
+        })?;
         Ok(pou)
     }
 
     /// Reads an `<interface>`.
     fn read_interface(&mut self) -> Result<Interface, ReadError> {
         let mut interface = Interface::default();
-        let mut current: Option<(VarSection, Vec<Variable>)> = None;
-
-        loop {
-            match self.next()? {
-                XmlEvent::StartElement {
-                    name, attributes, ..
-                } if self.in_plcopen(&name) => match name.local_name.as_str() {
-                    "returnType" => {
-                        interface.return_type = Some(self.read_type_name()?);
-                    }
-                    other => {
-                        if let Some(section) = VarSection::from_element(other) {
-                            if let Some(finished) = current.take() {
-                                interface.sections.push(finished);
-                            }
-                            current = Some((section, Vec::new()));
-                        } else if other == "variable" {
-                            let variable = self.read_variable(&attributes)?;
-                            if let Some((_, variables)) = current.as_mut() {
-                                variables.push(variable);
-                            }
-                        }
-                    }
-                },
-                XmlEvent::EndElement { name } if self.in_plcopen(&name) => {
-                    if name.local_name == "interface" {
-                        break;
-                    }
-                    if VarSection::from_element(&name.local_name).is_some()
-                        && let Some(finished) = current.take()
-                    {
-                        interface.sections.push(finished);
-                    }
-                }
-                XmlEvent::EndDocument => break,
-                _ => {}
+        self.children(|reader, element, _| {
+            if !reader.in_plcopen(element) {
+                return Ok(false);
             }
-        }
-        if let Some(finished) = current.take() {
-            interface.sections.push(finished);
-        }
+            if element.local_name == "returnType" {
+                interface.return_type = Some(reader.read_type_name()?);
+                return Ok(true);
+            }
+            let Some(section) = VarSection::from_element(&element.local_name) else {
+                return Ok(false);
+            };
+            let variables = reader.read_var_section()?;
+            interface.sections.push((section, variables));
+            Ok(true)
+        })?;
         Ok(interface)
+    }
+
+    /// Reads the variables of one `<...Vars>` section.
+    ///
+    /// A `<variable>` is only a variable when it is a direct child of a
+    /// section. One found anywhere else used to be parsed in full and then
+    /// dropped on the floor, with nothing recording that it had been.
+    fn read_var_section(&mut self) -> Result<Vec<Variable>, ReadError> {
+        let mut variables = Vec::new();
+        self.children(|reader, element, attributes| {
+            if reader.in_plcopen(element) && element.local_name == "variable" {
+                variables.push(reader.read_variable(attributes)?);
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        })?;
+        Ok(variables)
     }
 
     /// Reads one `<variable>`.
@@ -305,133 +327,121 @@ impl<R: Read> Reader<R> {
             initial_value: None,
         };
 
-        loop {
-            match self.next()? {
-                XmlEvent::StartElement { name, .. } if self.in_plcopen(&name) => {
-                    match name.local_name.as_str() {
-                        "type" => variable.type_name = self.read_type_name()?,
-                        "initialValue" => {
-                            variable.initial_value = self.read_initial_value()?;
-                        }
-                        _ => {}
-                    }
-                }
-                XmlEvent::EndElement { name }
-                    if self.in_plcopen(&name) && name.local_name == "variable" =>
-                {
-                    break;
-                }
-                XmlEvent::EndDocument => break,
-                _ => {}
+        self.children(|reader, element, _| {
+            if !reader.in_plcopen(element) {
+                return Ok(false);
             }
-        }
+            match element.local_name.as_str() {
+                "type" => {
+                    variable.type_name = reader.read_type_name()?;
+                    Ok(true)
+                }
+                "initialValue" => {
+                    variable.initial_value = reader.read_initial_value()?;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
+        })?;
         Ok(variable)
     }
 
-    /// Reads a `<type>` or `<returnType>`, whose child element names the type.
+    /// Reads a `<type>` or `<returnType>`, whose one child names the type.
     ///
     /// `<BOOL/>` for an elementary type, `<derived name="Foo"/>` for a named
     /// one. Anything else keeps its element name, so a type salman does not
     /// model is reported by its own name rather than as the nearest guess.
+    /// Only the **first** child counts: a composite type's inner elements are
+    /// not names of the type.
     fn read_type_name(&mut self) -> Result<String, ReadError> {
-        let mut found = String::new();
-        let mut depth = 0_usize;
-        loop {
-            match self.next()? {
-                XmlEvent::StartElement {
-                    name, attributes, ..
-                } => {
-                    if depth == 0 && found.is_empty() {
-                        found = match name.local_name.as_str() {
-                            "derived" => attribute(&attributes, "name"),
-                            "string" | "wstring" => {
-                                let upper = name.local_name.to_uppercase();
-                                match non_empty(attribute(&attributes, "length")) {
-                                    Some(length) => format!("{upper}[{length}]"),
-                                    None => upper,
-                                }
-                            }
-                            other => other.to_string(),
-                        };
-                    }
-                    depth += 1;
-                }
-                XmlEvent::EndElement { name } => {
-                    if depth == 0 {
-                        let _ = name;
-                        break;
-                    }
-                    depth -= 1;
-                }
-                XmlEvent::EndDocument => break,
-                _ => {}
+        let mut found: Option<String> = None;
+        self.children(|reader, element, attributes| {
+            if found.is_some() || !reader.in_plcopen(element) {
+                return Ok(false);
             }
-        }
-        Ok(found)
+            found = Some(match element.local_name.as_str() {
+                "derived" => attribute(attributes, "name"),
+                "string" | "wstring" => {
+                    let upper = element.local_name.to_uppercase();
+                    match non_empty(attribute(attributes, "length")) {
+                        Some(length) => format!("{upper}[{length}]"),
+                        None => upper,
+                    }
+                }
+                other => other.to_string(),
+            });
+            Ok(false)
+        })?;
+        Ok(found.unwrap_or_default())
     }
 
     /// Reads an `<initialValue>`, whose `simpleValue` child carries it.
+    ///
+    /// The **first** `simpleValue` that is a direct child, and no other. An
+    /// earlier version took the last one found anywhere in the subtree, so a
+    /// structure or array initialiser — which holds one `simpleValue` per
+    /// field — came back as its final field's value, silently, for the whole
+    /// variable.
     fn read_initial_value(&mut self) -> Result<Option<String>, ReadError> {
-        let mut value = None;
-        let mut depth = 0_usize;
-        loop {
-            match self.next()? {
-                XmlEvent::StartElement {
-                    name, attributes, ..
-                } => {
-                    if name.local_name == "simpleValue" {
-                        value = non_empty(attribute(&attributes, "value"));
-                    }
-                    depth += 1;
+        let mut value: Option<String> = None;
+        let mut composite = false;
+        self.children(|reader, element, attributes| {
+            if !reader.in_plcopen(element) {
+                return Ok(false);
+            }
+            match element.local_name.as_str() {
+                "simpleValue" if value.is_none() => {
+                    value = non_empty(attribute(attributes, "value"));
                 }
-                XmlEvent::EndElement { .. } => {
-                    if depth == 0 {
-                        break;
-                    }
-                    depth -= 1;
-                }
-                XmlEvent::EndDocument => break,
+                // A structure or array initialiser is not one value, and
+                // salman does not model it. Taking any single field's value
+                // would be worse than taking none.
+                "arrayValue" | "structValue" => composite = true,
                 _ => {}
             }
-        }
-        Ok(value)
+            Ok(false)
+        })?;
+        Ok(if composite { None } else { value })
     }
 
     /// Reads a `<body>`, which holds one language element.
     fn read_body(&mut self, pou: &str, bodies: &mut Vec<Body>) -> Result<(), ReadError> {
-        loop {
-            match self.next()? {
-                XmlEvent::StartElement { name, .. } if self.in_plcopen(&name) => {
-                    match name.local_name.as_str() {
-                        "ST" => {
-                            let body = self.read_structured_text(pou)?;
-                            bodies.push(body);
-                        }
-                        other => {
-                            bodies.push(Body::Other {
-                                language: other.to_string(),
-                            });
-                            self.skip_subtree()?;
-                        }
-                    }
-                }
-                XmlEvent::EndElement { name }
-                    if self.in_plcopen(&name) && name.local_name == "body" =>
-                {
-                    break;
-                }
-                XmlEvent::EndDocument => break,
-                _ => {}
+        let mut taken = false;
+        self.children(|reader, element, _| {
+            if !reader.in_plcopen(element) || taken {
+                return Ok(false);
             }
-        }
+            if element.local_name == "ST" {
+                let body = reader.read_structured_text(pou)?;
+                bodies.push(body);
+                taken = true;
+                return Ok(true);
+            }
+            // A language salman does not read, named rather than discarded.
+            // `addData` and `documentation` are also permitted here and are
+            // not languages, so they are skipped rather than named.
+            if matches!(element.local_name.as_str(), "IL" | "LD" | "FBD" | "SFC") {
+                bodies.push(Body::Other {
+                    language: element.local_name.clone(),
+                });
+                taken = true;
+            }
+            Ok(false)
+        })?;
         Ok(())
     }
 
-    /// Reads an `<ST>` and unwraps whatever XHTML element the code is in.
+    /// Reads an `<ST>` and unwraps the one XHTML element the code is in.
+    ///
+    /// **Exactly one**, which the schema requires and which an earlier version
+    /// did not check: two elements were accepted and their text concatenated
+    /// with nothing between them, so the last token of one and the first of the
+    /// next fused into a single identifier.
     fn read_structured_text(&mut self, pou: &str) -> Result<Body, ReadError> {
         let mut wrapper: Option<String> = None;
         let mut text = String::new();
         let mut stray = String::new();
+        let mut extra = 0_usize;
         let mut depth = 0_usize;
 
         loop {
@@ -439,11 +449,12 @@ impl<R: Read> Reader<R> {
                 XmlEvent::StartElement { name, .. } => {
                     if depth == 0 {
                         if name.namespace.as_deref() == Some(XHTML_NAMESPACE) {
-                            wrapper = Some(name.local_name.clone());
+                            if wrapper.is_some() {
+                                extra += 1;
+                            } else {
+                                wrapper = Some(name.local_name.clone());
+                            }
                         } else {
-                            // Some other namespace inside <ST>. The schema
-                            // does not permit it, and guessing what it means
-                            // would be inventing.
                             return Err(ReadError::StructuredTextNotWrapped {
                                 pou: pou.to_string(),
                                 found: format!("an element <{name}> in another namespace"),
@@ -469,6 +480,18 @@ impl<R: Read> Reader<R> {
                 XmlEvent::EndDocument => break,
                 _ => {}
             }
+        }
+
+        if extra > 0 {
+            return Err(ReadError::StructuredTextNotWrapped {
+                pou: pou.to_string(),
+                found: format!(
+                    "{} elements in the XHTML namespace; the schema permits exactly one, and \
+                     joining their text would fuse the last token of one to the first of the \
+                     next",
+                    extra + 1
+                ),
+            });
         }
 
         match wrapper {
