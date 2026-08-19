@@ -150,9 +150,25 @@ jobs:
       # Built as its own step so that a compile error is reported as a compile
       # error, rather than as the first target in the loop below failing for
       # reasons the log makes look like a crash.
+      # --target is pinned, and must stay pinned.
+      #
+      # cargo-fuzz stopped defaulting to the host triple and began choosing
+      # x86_64-unknown-linux-musl, which broke this job twice over:
+      #
+      #   error: sanitizer is incompatible with statically linked libc,
+      #          disable it using `-C target-feature=-crt-static`
+      #   error[E0463]: can't find crate for `std`
+      #
+      # musl links libc statically and AddressSanitizer cannot instrument a
+      # statically linked libc; the target is not installed on the runner
+      # either. Naming the gnu triple fixes both, and — more to the point —
+      # stops a future change in cargo-fuzz's default from silently deciding
+      # what this job fuzzes on. Rule 7 says every parser is fuzzed in CI, and
+      # a fuzz job that cannot build is a rule that is not being enforced: this
+      # failed nightly, in a repository whose README said all workflows passed.
       - name: Build every fuzz target
         working-directory: fuzz
-        run: cargo +nightly fuzz build
+        run: cargo +nightly fuzz build --target x86_64-unknown-linux-gnu
 
       - name: Run every fuzz target
         working-directory: fuzz
@@ -172,7 +188,8 @@ jobs:
           #                     the run instead of taking the runner down.
           for target in $(cargo +nightly fuzz list); do
             echo "::group::fuzzing $target"
-            cargo +nightly fuzz run "$target" -- \
+            cargo +nightly fuzz run "$target" \
+              --target x86_64-unknown-linux-gnu -- \
               -max_total_time="$FUZZ_SECONDS" \
               -timeout=10 \
               -rss_limit_mb=2048

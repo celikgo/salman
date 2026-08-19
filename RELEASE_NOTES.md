@@ -30,7 +30,8 @@ service, no registry key, no licence server. Deleting the file uninstalls it.
 Gatekeeper will refuse it until you clear the quarantine attribute — that is
 stated here rather than left as a surprise.
 
-Or build it, which takes about eleven seconds from an empty target directory:
+Or build it from source. A release build from an empty target directory took
+12.5 s on an M-series laptop; it is a small tree with 26 third-party crates in it:
 
 ```bash
 git clone https://github.com/celikgo/salman.git
