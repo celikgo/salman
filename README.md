@@ -9,6 +9,10 @@
 [![fuzz](https://github.com/celikgo/salman/actions/workflows/fuzz.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/fuzz.yml)
 [![version consistency](https://github.com/celikgo/salman/actions/workflows/version-consistency.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/version-consistency.yml)
 
+![The conveyor example: four lines of Structured Text using an RS latch and a TOF run-on timer, beside the declarative YAML test that asserts the motor is still on at T#1s999ms and off two milliseconds later, and the run output reporting eight tests passed.](docs/assets/social-preview.png)
+
+<sub>Both files are `examples/conveyor/`, unedited, and the result line is what `salman test` prints. The clock is virtual: that one assertion costs 2003 scans of plant time and no wall time.</sub>
+
 A vendor-neutral, text-first, git-native workbench for IEC 61131-3 PLC engineering,
 industrial communication, and deterministic-network simulation.
 
