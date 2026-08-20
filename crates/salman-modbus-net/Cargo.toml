@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Modbus TCP client and simulator over blocking sockets, gated by salman's posture model"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["modbus", "modbus-tcp", "plc", "industrial", "scada"]
+categories = ["network-programming", "simulation"]
 
 [dependencies]
 salman-core.workspace = true

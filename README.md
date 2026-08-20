@@ -1,8 +1,8 @@
 # salman
 
 [![ci](https://github.com/celikgo/salman/actions/workflows/ci.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/ci.yml)
-[![determinism](https://github.com/celikgo/salman/actions/workflows/determinism.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/determinism.yml)
 [![performance budget](https://github.com/celikgo/salman/actions/workflows/perf.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/perf.yml)
+[![determinism](https://github.com/celikgo/salman/actions/workflows/determinism.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/determinism.yml)
 [![supply chain](https://github.com/celikgo/salman/actions/workflows/supply-chain.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/supply-chain.yml)
 [![docs links](https://github.com/celikgo/salman/actions/workflows/docs-links.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/docs-links.yml)
 [![interop](https://github.com/celikgo/salman/actions/workflows/interop.yml/badge.svg)](https://github.com/celikgo/salman/actions/workflows/interop.yml)
@@ -26,27 +26,19 @@ source available to it settled the question.
 
 ## Quick start
 
-No licence server, no vendor SDK, no C toolchain. Rust is the only prerequisite,
-and `rustup` installs the pinned toolchain by itself.
+Three commands, from an empty directory to a Structured Text program running
+with its tests passing. Rust is the only prerequisite, and `rustup` installs the
+pinned toolchain by itself — no licence server, no vendor SDK, no C toolchain.
 
 ```bash
 git clone https://github.com/celikgo/salman.git
 cd salman
-cargo build --release
+cargo run --release -- test examples/conveyor/conveyor.st examples/conveyor/
 ```
 
-Type-check, run and test the worked example — a conveyor with a start/stop
-interlock, a part counter and a jam timer:
-
-```bash
-./target/release/salman check examples/conveyor/conveyor.st
-./target/release/salman run   examples/conveyor/conveyor.st --until T#5s --record Running,Count
-./target/release/salman test  examples/conveyor/conveyor.st examples/conveyor/
-```
-
-`check` prints `no errors`. `run` executes 5001 scans of simulated time and
-writes a trace with a SHA-256 fingerprint in its header — run it twice, on two
-machines, and the fingerprint is the same. `test` runs the declarative suite:
+The third command builds salman and runs the declarative test suite for the
+worked example — a conveyor with a start/stop interlock, a part counter and a
+jam timer:
 
 ```
  pass  the belt does not run until the start button is pressed  (2 scans, T#1ms)
@@ -72,36 +64,54 @@ exercise.
 `salman test` exits non-zero on failure and can write JUnit XML, so the same
 command is a CI job. There is no GUI to drive and no licence to check out.
 
-### Without cloning
+The same binary type-checks a program and runs one on its own:
+
+```bash
+cargo run --release -- check examples/conveyor/conveyor.st
+cargo run --release -- run   examples/conveyor/conveyor.st --until T#5s --record Running,Count
+```
+
+`check` prints `no errors`. `run` executes 5001 scans of simulated time and
+writes a trace with a SHA-256 fingerprint in its header — run it twice, on two
+machines, and the fingerprint is the same.
+
+### Getting a binary without cloning
 
 Prebuilt binaries for Linux, macOS (Intel and Apple silicon) and Windows are
 attached to each [release](https://github.com/celikgo/salman/releases). Download
-one, mark it executable, and the commands above work unchanged. salman is a
-single self-contained binary: there is no installer, no service and no registry
-key, and deleting the file uninstalls it.
+one, mark it executable, and every command in this README works with `salman` in
+place of `cargo run --release --`. salman is a single self-contained executable:
+no installer, no service, no registry key, and deleting the file uninstalls it.
 
-salman is not on crates.io yet. Publishing there is permanent, and the name is
-not worth claiming until the interface has settled past pre-alpha.
+The workspace is packaged for crates.io — every crate carries its metadata and
+`cargo package --workspace` verifies all thirteen — and `release.yml` publishes
+them when a version tag is pushed. Until that tag is cut there is nothing on
+crates.io to install, so `cargo install salman-cli` will not find salman yet and
+the releases page is the way to get a binary without a Rust toolchain.
+
+The worked example lives in this repository rather than in the binary, so the
+clone above is still the shortest path to watching salman do something.
 
 ---
 
 ## What it costs to run
 
 Measured by the `performance budget` workflow on GitHub-hosted runners, not on a
-developer's laptop. These are the numbers from the run on commit `3c41d1a`:
+developer's laptop. These are the numbers from the run on commit `624e176`:
 
 | | Linux x86-64 | macOS aarch64 | Windows x86-64 |
 |---|---|---|---|
-| Cold start of `salman version` | ~0.9 ms | 1–4 ms | ~8 ms |
+| Cold start of `salman version` | ~0.8 ms | ~0.9 ms | ~7 ms |
 | Binary on disk | 3.4 MB | 2.8 MB | 3.1 MB |
-| Peak resident set | 2.7 MB | 1.9 MB | not gated |
-| `cargo test --workspace`, excluding the build | 1–2 s | 2 s | ~3 s |
+| Peak resident set | 2.8 MB | 1.9 MB | not gated |
+| `cargo test --workspace`, excluding the build | ~2 s | ~2 s | ~3 s |
 
 The sizes are exact and the times are approximate on purpose: the runners are
-shared-tenant virtual machines, and two runs of the same commit measured macOS
-cold start at 1.21 ms and 4.26 ms. Publishing either to two decimal places would
-imply a precision that is not there. The exact numbers from each run, and the
-budget that gates them, are in the performance budget section below.
+shared-tenant virtual machines, and three runs of the same commit have measured
+macOS cold start at 0.93 ms, 1.21 ms and 4.26 ms. Publishing any of them to two
+decimal places would imply a precision that is not there. The exact numbers from
+each run, and the budget that gates them, are in the performance budget section
+below.
 
 A conventional vendor IEC 61131-3 environment is a multi-gigabyte installation
 that wants a licence server and, usually, Windows. salman is one binary of about
@@ -112,9 +122,9 @@ defend, and [`perf-budget.toml`](perf-budget.toml) is the gate that keeps them
 true — the `perf` workflow fails the build when a measurement exceeds it.
 
 Two honest caveats. These are single runs on shared-tenant virtual machines, so
-they move by more than a little — the same commit measured macOS cold start at
-1.21 ms and, on the next run, 4.26 ms. Treat them as an order of magnitude,
-which is all the budget gates. And peak resident set is measured on `salman
+they move by more than a little — the same commit has measured macOS cold start
+at 0.93 ms on one run and 4.26 ms on another. Treat them as an order of
+magnitude, which is all the budget gates. And peak resident set is measured on `salman
 version`, the smallest thing the binary does — 30 000 scans of the conveyor
 example peaks around 2.9 MB, and nothing in CI gates that figure.
 
@@ -310,7 +320,7 @@ Hard gates. A pull request violating any of them does not merge.
    `.github/workflows/ci.yml`.
 2. **Never document a surface that does not exist.** A stub says it is a stub, in
    its own output and in the docs.
-3. **One source of version truth** — the root `VERSION` file, checked when
+3. **One source of version truth** — the `crates/salman-core/VERSION` file, checked when
    `salman-core` compiles, so it cannot drift on any machine.
 4. **Every URL in every doc resolves**, checked in CI.
 5. **The lightweight budget is a tested gate**, not a slogan.

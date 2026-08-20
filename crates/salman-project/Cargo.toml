@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "The salman project file: sources, devices, and how their registers reach the process image"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["plc", "iec61131", "automation", "config", "modbus"]
+categories = ["development-tools", "config"]
 
 [dependencies]
 salman-core.workspace = true

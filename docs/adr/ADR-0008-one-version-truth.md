@@ -2,13 +2,16 @@
 
 - **Status**: Accepted
 - **Date**: 2026-08-18
+- **Amended**: 2026-08-20 — the `VERSION` file moved from the repository root to
+  `crates/salman-core/VERSION` so that it travels in the published `.crate`
+  tarball. See "The packaging problem, and how it was solved" below.
 - **Deciders**: the salman authors
 
 ## Context
 
 The version number of this project is written down in more places than anyone remembers
 while making a release. At 0.0.1 it appears as `[workspace.package] version`, three times
-as a version requirement in `[workspace.dependencies]`, in the root `VERSION` file, and in
+as a version requirement in `[workspace.dependencies]`, in the `VERSION` file, and in
 what `salman version` prints for a user.
 
 Version skew is a quiet failure. A binary that reports one number while its release notes
@@ -22,8 +25,8 @@ script, a reviewer who notices. Each works until the once it does not.
 
 ## Decision
 
-The root `VERSION` file is authoritative. `crates/salman-core/src/version.rs` embeds it
-with `include_str!` and asserts, in a `const` block, that its contents equal
+`crates/salman-core/VERSION` is authoritative. `crates/salman-core/src/version.rs` embeds
+it with `include_str!` and asserts, in a `const` block, that its contents equal
 `CARGO_PKG_VERSION`. The two therefore cannot drift on any machine: a mismatch is a build
 failure everywhere, for everyone, not a CI job that someone might skip, disable or fail to
 run on a branch.
@@ -52,7 +55,7 @@ unnecessary.
 
 A compile-time assertion inside a `const` block is unusual enough that a reader will stop
 at it, so it carries a comment explaining what it proves and why it is not a test. If that
-comment is ever removed, the next person to see a build fail with "the root VERSION file
+comment is ever removed, the next person to see a build fail with "the VERSION file
 disagrees with the version in Cargo.toml" will spend a while on it.
 
 Any crate that wants the version must depend on `salman-core`. That is free for
@@ -60,18 +63,41 @@ Any crate that wants the version must depend on `salman-core`. That is free for
 that has no other reason to depend on core now has one, or must fall back to
 `env!("CARGO_PKG_VERSION")` and rely on the workspace inheritance to keep it right.
 
-`include_str!("../../../VERSION")` reaches outside the crate directory, which couples
-`salman-core` to its position in this repository. Publishing `salman-core` to crates.io as
-it stands would fail, because the packaged crate would not contain the file it includes.
-That is a real limitation of this design and would have to be solved — most likely by
-generating the constant at package time — on the day salman publishes a library crate.
+## The packaging problem, and how it was solved
+
+This decision originally put `VERSION` at the repository root and reached it with
+`include_str!("../../../VERSION")`. That path leaves the package directory, and the
+consequence was recorded here from the start: `cargo package` does not carry files from
+outside the crate, so a published `salman-core` would ship a source file including a file
+that was not in the tarball. It compiled in a git checkout and failed for everyone else.
+
+That day arrived when salman published to crates.io, and the fix is the smallest one that
+keeps the guarantee intact: **the file moved to `crates/salman-core/VERSION`**, and the
+include became `include_str!("../VERSION")`. There is still exactly one `VERSION` file and
+it is still read at compile time on every machine — it simply now lives inside the package
+that reads it, so `cargo install salman-cli` gets the same compile-time proof that a
+developer in a git checkout gets.
+
+The alternative of generating the constant at package time, floated when this ADR was
+written, was reconsidered and rejected: it makes the published crate's version truth
+different in kind from the checkout's, so the guarantee would hold in the place it is easy
+to verify and be a generated artefact in the place it actually ships. A build script was
+reconsidered for the same reason and rejected again, on the same supply-chain grounds
+given below — moving a file is a smaller change than executing arbitrary code on every
+downstream machine.
+
+The cost is that `VERSION` is no longer at the repository root, where a reader might look
+for it first. `.github/workflows/version-consistency.yml` and
+`.github/workflows/release.yml` read it at its new path, and `CONTRIBUTING.md` points at
+it.
 
 ## Alternatives considered
 
 **A build script.** `build.rs` could read `VERSION` and emit the constant, and would solve
-the packaging problem above cleanly. It lost on supply chain: a build script is arbitrary
-code executed on every machine that builds the project, including CI runners and any
-downstream consumer, and this workspace has none. Adding the first one to move a
+the packaging problem above cleanly. (Revisited in 2026-08 when the crate was
+published, and rejected again — see the section above.) It lost on supply chain: a build
+script is arbitrary code executed on every machine that builds the project, including CI
+runners and any downstream consumer, and this workspace has none. Adding the first one to move a
 five-character string is a poor trade.
 
 **cargo-release, cargo-workspaces or a similar release tool.** These are good tools and
@@ -88,7 +114,7 @@ in a diff at speed.
 
 **Cargo's workspace inheritance alone.** Already in use, and it is what keeps the member
 crates consistent with `[workspace.package]`. It lost as a complete answer because it says
-nothing about the root `VERSION` file, nothing about the literals in
+nothing about the `VERSION` file, nothing about the literals in
 `[workspace.dependencies]`, and nothing about what the binary prints.
 
 ## How this is enforced
@@ -103,8 +129,9 @@ nothing about the root `VERSION` file, nothing about the literals in
 * `crates/salman-cli/src/main.rs`, `cli_version_string_is_the_project_version` — clap's
   `--version` output carries the `VERSION` file value.
 * `.github/workflows/version-consistency.yml`, job "VERSION agrees with Cargo metadata and
-  with `salman version`", whose steps check every workspace package version, every version
-  literal in the workspace manifest, and the output of the built binary.
+  with `salman version`", which reads `crates/salman-core/VERSION` and whose steps check
+  every workspace package version, every version literal in the workspace manifest, and
+  the output of the built binary.
 * `crates/salman-core/src/capability.rs`, capability `core.version-truth`, which cites the
   test above as its evidence and would fail the build of `salman-core` if that test were
   deleted (see ADR-0010).

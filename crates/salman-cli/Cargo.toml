@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "salman command line interface"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["plc", "iec61131", "structured-text", "modbus", "automation"]
+categories = ["command-line-utilities", "development-tools", "simulation"]
 
 [[bin]]
 name = "salman"

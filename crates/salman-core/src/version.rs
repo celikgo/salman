@@ -1,25 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The single source of version truth.
 //!
-//! The root `VERSION` file is authoritative. This module embeds it at compile
-//! time and asserts — also at compile time — that it agrees with the version
-//! Cargo was given. The two therefore cannot drift: a mismatch is a build
-//! failure on every machine, not a CI job that someone might skip.
+//! The `VERSION` file beside this crate's manifest is authoritative. This
+//! module embeds it at compile time and asserts — also at compile time — that
+//! it agrees with the version Cargo was given. The two therefore cannot drift:
+//! a mismatch is a build failure on every machine, not a CI job that someone
+//! might skip.
 //!
-//! See `docs/adr/ADR-0008-one-version-truth.md`.
+//! The file lives inside this crate rather than at the repository root so that
+//! it travels in the published `.crate` tarball. An `include_str!` reaching
+//! above the package directory compiles in a git checkout and fails for every
+//! person who installs from crates.io, which would make the guarantee hold
+//! only for the people who least need it. See
+//! `docs/adr/ADR-0008-one-version-truth.md`.
 
-/// Raw contents of the root `VERSION` file, including its trailing newline.
-const VERSION_FILE: &str = include_str!("../../../VERSION");
+/// Raw contents of the `VERSION` file, including its trailing newline.
+const VERSION_FILE: &str = include_str!("../VERSION");
 
 /// The salman version string, e.g. `"0.1.0"`.
 ///
-/// Read from the root `VERSION` file, not from Cargo metadata.
+/// Read from the `VERSION` file, not from Cargo metadata.
 pub const VERSION: &str = trim_ascii_end(VERSION_FILE);
 
 /// Compile-time proof that `VERSION` and Cargo's package version agree.
 const _: () = assert!(
     str_eq(VERSION, env!("CARGO_PKG_VERSION")),
-    "the root VERSION file disagrees with the version in Cargo.toml"
+    "the VERSION file disagrees with the version in Cargo.toml"
 );
 
 /// Trims trailing ASCII whitespace in a `const` context.

@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Reading a capture and saying what happened on it"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["modbus", "pcap", "industrial", "diagnostics", "analysis"]
+categories = ["network-programming", "development-tools"]
 
 [dependencies]
 salman-core.workspace = true

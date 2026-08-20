@@ -60,7 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ inputs.tag || github.ref_name }}"
-          version=$(tr -d '[:space:]' < VERSION)
+          version=$(tr -d '[:space:]' < crates/salman-core/VERSION)
           if [ "$tag" != "v$version" ]; then
             echo "::error::tag $tag does not match VERSION ($version); expected v$version"
             exit 1
@@ -192,6 +192,69 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
+  # crates.io. Last, and only after every binary built and printed the right
+  # version, because this step is the one that cannot be undone.
+  # ---------------------------------------------------------------------------
+  #
+  # WHY IT RUNS LAST
+  #
+  # A GitHub release can be deleted and re-cut. A crates.io publish cannot: a
+  # published version is permanent, `cargo yank` only stops new dependents from
+  # resolving it, and the version number can never be reused. So this job waits
+  # behind `build`, which compiles all four target triples and makes each binary
+  # print its own version before it is uploaded. If salman does not build and
+  # run on every platform, nothing reaches crates.io.
+  #
+  # WHY `--workspace` AND NOT THIRTEEN `cargo publish` CALLS
+  #
+  # Thirteen crates depend on each other, and crates.io rejects a crate whose
+  # dependencies are not already on the index. Getting that order right by hand
+  # means maintaining a topological sort in a YAML file, where it will rot the
+  # first time a crate gains a dependency. `cargo publish --workspace` computes
+  # the order from the dependency graph itself and waits for each crate to
+  # appear on the index before publishing the one that needs it.
+  #
+  # `--locked` because a release must build from the committed lockfile, the
+  # same as every other job here.
+  #
+  # THE TOKEN
+  #
+  # `CARGO_REGISTRY_TOKEN` is a repository secret holding a crates.io API token
+  # scoped to publish-update (and publish-new for the first release of a new
+  # crate). crates.io Trusted Publishing would remove the long-lived secret
+  # entirely and is the better end state; it cannot bootstrap the first publish
+  # of a crate that does not exist yet, so it is a follow-up rather than a
+  # blocker. If the secret is absent the job stops with a clear message instead
+  # of failing deep inside cargo.
+  publish-crates:
+    name: publish the workspace to crates.io
+    needs: [check-version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.check-version.outputs.tag }}
+
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+
+      - name: The publish token is present
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "::error::CARGO_REGISTRY_TOKEN is not set; add it under Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+          echo "ok: a crates.io token is configured"
+
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --workspace --locked
+
+  # ---------------------------------------------------------------------------
   # Publish. Draft, so a person reads the notes before anyone else does.
   # ---------------------------------------------------------------------------
   publish:
@@ -218,7 +281,13 @@ jobs:
           cat dist/SHA256SUMS
           ls -la dist
 
-      - name: Draft the release
+      # `workflow_dispatch` on a tag that has already been released is a
+      # supported thing to do — it is how a published release gets its assets
+      # rebuilt, and how a tag cut before crates.io publishing existed gets
+      # pushed to the registry by the job above. `gh release create` fails on
+      # an existing tag, so this uploads to it instead of failing the run and
+      # leaving publish-crates' success sitting next to a red job.
+      - name: Draft the release, or refresh the assets on an existing one
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.check-version.outputs.tag }}
@@ -229,8 +298,13 @@ jobs:
             echo "::error::RELEASE_NOTES.md is missing; the notes are written by hand from docs/STATUS.md"
             exit 1
           fi
-          gh release create "$TAG" \
-            --draft \
-            --title "salman $TAG" \
-            --notes-file "$notes" \
-            dist/*
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists; refreshing its assets rather than creating it"
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" \
+              --draft \
+              --title "salman $TAG" \
+              --notes-file "$notes" \
+              dist/*
+          fi

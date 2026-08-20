@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Unit and golden-trace tests for IEC 61131-3 code"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["plc", "iec61131", "testing", "structured-text", "ci"]
+categories = ["development-tools::testing", "simulation"]
 
 [dependencies]
 salman-core.workspace = true

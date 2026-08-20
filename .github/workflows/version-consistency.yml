@@ -1,8 +1,8 @@
-# Rule 3: one source of version truth — the root VERSION file.
+# Rule 3: one source of version truth — crates/salman-core/VERSION.
 #
 # WHY THIS EXISTS ALONGSIDE THE COMPILE-TIME CHECK
 #
-# crates/salman-core/src/version.rs embeds the root VERSION file with
+# crates/salman-core/src/version.rs embeds crates/salman-core/VERSION with
 # `include_str!` and asserts, in a `const` block, that it equals
 # CARGO_PKG_VERSION. That check is stronger than any workflow: it fails the
 # build on every machine, not just on CI, and it cannot be skipped.
@@ -49,16 +49,16 @@ jobs:
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
 
-      - name: Read the root VERSION file
+      - name: Read the VERSION file
         id: version
         run: |
           set -euo pipefail
           # The file is expected to hold exactly one line. Trailing whitespace
           # is tolerated here because version.rs tolerates it too; anything
           # else is a disagreement worth failing on.
-          version=$(tr -d '[:space:]' < VERSION)
+          version=$(tr -d '[:space:]' < crates/salman-core/VERSION)
           if [ -z "$version" ]; then
-            echo "::error file=VERSION::the VERSION file is empty"
+            echo "::error file=crates/salman-core/VERSION::the VERSION file is empty"
             exit 1
           fi
           echo "VERSION file says: $version"
