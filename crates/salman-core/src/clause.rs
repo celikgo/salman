@@ -1396,13 +1396,38 @@ mod tests {
         // Rule 3: a generated document that can drift from its generator is a
         // document that will. The fix when this fails is to regenerate
         // docs/IEC_CITATIONS.md, never to edit it.
+        //
+        // The regeneration is the same gesture the other generated artefacts
+        // use — `SALMAN_UPDATE_GOLDEN=1`, as in
+        // `crates/salman-plcopen/tests/compat.rs` — so that a contributor who
+        // has learnt it once does not have to learn a second one here. Read the
+        // diff before committing it: a citation registry that regenerates
+        // without anybody looking is a registry nobody is checking.
         let path = repo_root().join("docs/IEC_CITATIONS.md");
-        let committed = std::fs::read_to_string(&path)
-            .unwrap_or_else(|err| panic!("docs/IEC_CITATIONS.md cannot be read: {err}"));
+        let rendered = render_markdown();
+
+        if std::env::var_os("SALMAN_UPDATE_GOLDEN").is_some() {
+            std::fs::write(&path, &rendered).unwrap_or_else(|err| {
+                panic!("cannot write {}: {err}", path.display());
+            });
+            return;
+        }
+
+        let committed = std::fs::read_to_string(&path).unwrap_or_else(|err| {
+            panic!(
+                "{} cannot be read: {err}. Write it with \
+                 `SALMAN_UPDATE_GOLDEN=1 cargo test -p salman-core \
+                 the_committed_citation_document_matches_what_the_registry_renders`, \
+                 then read it before committing",
+                path.display()
+            )
+        });
         assert_eq!(
-            committed,
-            render_markdown(),
-            "docs/IEC_CITATIONS.md has drifted from salman_core::clause::REGISTRY"
+            committed, rendered,
+            "docs/IEC_CITATIONS.md has drifted from salman_core::clause::REGISTRY. \
+             Regenerate it with `SALMAN_UPDATE_GOLDEN=1 cargo test -p salman-core \
+             the_committed_citation_document_matches_what_the_registry_renders` and read \
+             the diff; do not edit the document by hand"
         );
     }
 }

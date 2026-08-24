@@ -101,7 +101,9 @@ visible and an overstated one is not. In practice:
   checks is deleted from the registry, not left standing with nothing behind it.
 - `docs/STATUS.md`, `docs/IEC_CITATIONS.md` and
   `docs/PLCOPEN_COMPATIBILITY.md` are **generated**. Edit the registry that
-  produces them, never the file; a test fails if the committed copy has drifted.
+  produces them, never the file; a test fails if the committed copy has drifted,
+  and its failure message names the command that regenerates it. `CLAUDE.md`
+  lists all three commands in one table.
 - salman claims no conformance and no certification to anything. See
   [`LEGAL.md`](LEGAL.md) §2 for the phrasings that are allowed and the ones that
   are not.
