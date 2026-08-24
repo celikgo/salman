@@ -78,13 +78,23 @@ configured in [`clippy.toml`](clippy.toml). Both must be clean.
 
 ### 3. Determinism — if you touched the runtime, the trace format, or anything ordered
 
+Run the same project twice and compare the bytes:
+
 ```bash
-cargo test --workspace determinism
+cargo build --release
+./target/release/salman run examples/conveyor/conveyor.st --until T#5s --record Motor,State --trace /tmp/a.trace
+./target/release/salman run examples/conveyor/conveyor.st --until T#5s --record Motor,State --trace /tmp/b.trace
+cmp /tmp/a.trace /tmp/b.trace
 ```
 
-The `determinism` workflow runs the same project twice and compares traces byte
-for byte. Anything that iterates a `HashMap`, reads the wall clock, or depends
-on address layout will break it. That is the point: see
+Anything that iterates a `HashMap`, reads the wall clock, or depends on address
+layout will break that, which is the point. `cargo test --workspace` covers the
+committed golden trace through
+`the_recorded_trace_matches_the_committed_golden_file`, and the `determinism`
+workflow runs that suite on Linux, macOS and Windows — so a platform that
+disagreed with the golden file would fail there. The workflow's own
+byte-for-byte comparison of traces produced *on each platform* is still a
+placeholder, which the job says out loud on every run. See
 [`docs/adr/ADR-0005-determinism.md`](docs/adr/ADR-0005-determinism.md).
 
 ### 4. Fuzzing — if you touched a parser or a decoder
