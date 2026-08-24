@@ -2,26 +2,39 @@
 #
 # READ THIS BEFORE TRUSTING THE GREEN TICK
 #
-# This workflow does not yet check trace determinism, because at 0.0.1 there is
-# no simulation runtime in this repository and therefore no trace to compare.
-# What it does today is run the workspace test suite on Linux, macOS and
-# Windows — which is a real cross-platform gate, and is all this job claims —
-# plus one step that says out loud, on every run, that the comparison itself is
-# still missing.
+# This workflow checks half of rule 6, and the half it checks is worth stating
+# precisely, because both overstating and understating it are easy.
 #
-# The placeholder is deliberate and is not decoration. A determinism workflow
-# that passed because it compared nothing would be worse than no workflow: it
-# would put a green tick next to the project's central promise on the strength
-# of having done no work. The step below is written so that anyone reading a
-# successful run sees exactly which half is real.
+# What it does: runs the workspace test suite on Linux, macOS and Windows. That
+# suite contains `the_recorded_trace_matches_the_committed_golden_file`
+# (crates/salman-cli/tests/conveyor_example.rs), which re-renders the conveyor's
+# trace and asserts it equals the committed examples/conveyor/conveyor.trace,
+# byte for byte. .gitattributes marks *.trace as -text so git never rewrites
+# those bytes. So a platform whose runtime produced a different trace fails
+# here, on every push and every pull request. Cross-platform agreement with one
+# committed trace is gated, and that is a real gate.
+#
+# What it does NOT do: produce a trace on each platform, upload it, and compare
+# the three against each other. That is the mechanism ADR-0005 describes, and it
+# is still unwritten. The difference is not cosmetic — the golden test covers
+# one project and one recorded signal set, and when it fails it says this
+# platform disagrees with a file, not which two platforms disagree with each
+# other or by how much.
+#
+# The placeholder step below says that on every run. It is deliberate and is not
+# decoration: a determinism workflow that passed while comparing nothing would
+# put a green tick next to the project's central promise on the strength of
+# having done no work. Rule 6 in README.md is the promise; ADR-0005 is the
+# mechanism; ADR-0009 is why a workflow must not be named after a gate it does
+# not enforce.
 #
 # WHY THIS IS SEPARATE FROM ci.yml, GIVEN THE MATRIX IS THE SAME TODAY
 #
 # The overlap with ci.yml's `test` job is real and temporary. This workflow is
-# the place the trace comparison lands, and when it does it will need artefact
-# upload from each OS and a comparison job that fans them back in — a shape
+# the place the cross-platform comparison lands, and when it does it will need
+# artefact upload from each OS and a job that fans them back in — a shape
 # ci.yml should not grow. Keeping the file now means the determinism gate has
-# somewhere to arrive, and means its current emptiness is visible rather than
+# somewhere to arrive, and means what it does not yet do is visible rather than
 # implied.
 name: determinism
 
@@ -60,27 +73,32 @@ jobs:
         run: cargo test --workspace --all-features
 
       # ---------------------------------------------------------------------
-      # PLACEHOLDER. This step compares nothing. It exists so that the gap is
-      # stated in the run log instead of being hidden by a passing job.
+      # PLACEHOLDER. This step compares nothing itself. It exists so that the
+      # half of rule 6 that is still unenforced is stated in the run log
+      # instead of being hidden by a passing job.
       #
-      # What is missing: salman has no VM, so `salman run` does not exist and
-      # no trace file is produced. The comparison this workflow is named after
-      # — run the same project with the same seed on all three platforms,
-      # hash the resulting traces, assert the hashes are equal — cannot be
-      # written until salman-vm can produce a trace.
+      # It no longer says the runtime is missing. It was written at 0.0.1, when
+      # salman had no VM and produced no trace; that stopped being true at
+      # 0.1.0, and a placeholder describing a blocker that has been cleared is
+      # worse than no placeholder, because it invites a reader to discount the
+      # part that is still real. ADR-0009 names updating this text as the next
+      # thing to fix in this file.
       #
-      # When salman-vm lands, this step is replaced by: run the reference
-      # project, upload the trace as an artefact per OS, and add a job that
-      # downloads all three and compares them byte for byte. Until then it must
-      # keep printing, on every run, that it has not done that.
+      # What is actually missing: producing a trace on each platform, uploading
+      # it as an artefact, and adding a job that downloads all three and
+      # compares them against each other. Nothing blocks that except nobody
+      # having written it. When it lands, this step is deleted rather than
+      # reworded — ADR-0009: the placeholder was filled and retired, it was not
+      # left.
       # ---------------------------------------------------------------------
-      - name: "PLACEHOLDER: trace determinism is NOT checked yet (no runtime exists)"
+      - name: "PLACEHOLDER: traces are not yet compared across platforms"
         shell: bash
         run: |
-          echo "::warning title=Determinism not yet enforced::This workflow ran the test suite on ${{ matrix.os }} but did NOT compare any simulation trace. salman 0.0.1 has no VM and produces no trace, so there is nothing to compare. The byte-for-byte trace comparison lands with salman-vm; see the comment block in .github/workflows/determinism.yml."
+          echo "::warning title=Determinism only half enforced::The suite that ran on ${{ matrix.os }} includes the_recorded_trace_matches_the_committed_golden_file, so this platform's runtime does agree with the committed examples/conveyor/conveyor.trace byte for byte. What did NOT run is the comparison this workflow is named after: a trace produced on each platform, uploaded, and compared against the other two. See the comment block in .github/workflows/determinism.yml and docs/adr/ADR-0005-determinism.md."
           echo
-          echo "  What ran:        cargo test --workspace --all-features on ${{ matrix.os }}"
-          echo "  What did NOT run: cross-platform trace comparison (rule 6)"
-          echo "  Blocked on:      salman-vm producing a trace"
+          echo "  What ran:         cargo test --workspace --all-features on ${{ matrix.os }},"
+          echo "                    including the committed golden-trace comparison"
+          echo "  What did NOT run: traces produced per-platform and compared to each other"
+          echo "  Blocked on:       nothing — the artefact upload and fan-in job are unwritten"
           echo
-          echo "This step is a placeholder. It asserts nothing and proves nothing."
+          echo "This step asserts nothing. The gate above it does."
