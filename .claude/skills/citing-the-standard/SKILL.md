@@ -147,19 +147,22 @@ fail because of a rename you made somewhere else. The rest read only `REGISTRY`,
    number. There is no penalty for saying so; there is a large one for a confident wrong
    number in a document whose whole purpose is provenance.
 3. **Add it to `REGISTRY`.**
-4. **Regenerate `docs/IEC_CITATIONS.md`.** And here is the sharp edge:
-   **there is no writer.** `docs/STATUS.md` has `salman status --markdown`, and
-   `docs/PLCOPEN_COMPATIBILITY.md` has `SALMAN_UPDATE_GOLDEN=1`. `clause.rs` has neither —
-   only `render_markdown()` and a test that compares its output against the committed file.
-   So the practical route today is to call `render_markdown()` and redirect it, for example
-   with a throwaway test or example that prints it, or to reconstruct the file from the
-   assertion diff. `the_committed_citation_document_matches_what_the_registry_renders` fails
-   with *"docs/IEC_CITATIONS.md has drifted from salman_core::clause::REGISTRY"* and does not
-   tell you how to fix it, because there is no command to name.
+4. **Regenerate `docs/IEC_CITATIONS.md`:**
 
-   The fix for that asymmetry is small — a `SALMAN_UPDATE_GOLDEN` branch in that test, exactly
-   like `crates/salman-plcopen/tests/compat.rs` has — and it is worth doing the next time
-   someone is in this file.
+   ```bash
+   SALMAN_UPDATE_GOLDEN=1 cargo test -p salman-core \
+       the_committed_citation_document_matches_what_the_registry_renders
+   ```
+
+   The same gesture regenerates `docs/PLCOPEN_COMPATIBILITY.md` and the analyser's golden
+   reports, so it is one thing to learn rather than three.
+   `the_committed_citation_document_matches_what_the_registry_renders` is both the writer and
+   the drift check: with the variable set it writes the file and returns, without it it
+   compares, and its failure message names the command.
+
+   **Read the diff before you commit it.** A citation registry that regenerates without
+   anybody looking is a registry nobody is checking, which is the failure mode the whole
+   provenance apparatus exists to prevent.
 5. **Never edit `docs/IEC_CITATIONS.md` by hand.** Its own header says so, and the drift test
    will catch you.
 

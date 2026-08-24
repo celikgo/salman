@@ -174,12 +174,15 @@ after the fact by the three drift tests, and step 3 is checked only for the file
    cargo build --release
    ./target/release/salman status --markdown > docs/STATUS.md
    SALMAN_UPDATE_GOLDEN=1 cargo test -p salman-plcopen --test compat
-   # docs/IEC_CITATIONS.md has no writer — see the citing-the-standard skill
+   SALMAN_UPDATE_GOLDEN=1 cargo test -p salman-core \
+       the_committed_citation_document_matches_what_the_registry_renders
    ```
 
-   `docs/IEC_CITATIONS.md` only changes if `clause.rs` changed, and its drift test will tell
-   you. `docs/STATUS.md` changes whenever the capability registry does, which on this project
-   is most releases.
+   Two of the three take `SALMAN_UPDATE_GOLDEN=1`, which is also what the analyser's golden
+   reports take. `docs/IEC_CITATIONS.md` only changes if `clause.rs` changed;
+   `docs/STATUS.md` changes whenever the capability registry does, which on this project is
+   most releases. **Read each diff.** These three documents are the evidence behind salman's
+   compatibility claims, and regenerating them without looking is how a claim quietly widens.
 
 2. **Refresh the README performance tables.** There are two, and they currently name two
    *different* commits — `624e176` beside "What it costs to run" and `d85c241` beside "The

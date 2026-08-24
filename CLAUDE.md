@@ -117,7 +117,7 @@ From `clippy.toml`:
 | File | Generated from | Regenerate with | Drift caught by |
 |---|---|---|---|
 | [`docs/STATUS.md`](docs/STATUS.md) | `crates/salman-core/src/capability.rs` | `salman status --markdown > docs/STATUS.md` | `capability.rs`, `the_committed_status_document_matches_what_the_registry_renders` |
-| [`docs/IEC_CITATIONS.md`](docs/IEC_CITATIONS.md) | `crates/salman-core/src/clause.rs` | no writer exists — see `.claude/skills/citing-the-standard/` | `clause.rs`, `the_committed_citation_document_matches_what_the_registry_renders` |
+| [`docs/IEC_CITATIONS.md`](docs/IEC_CITATIONS.md) | `crates/salman-core/src/clause.rs` | `SALMAN_UPDATE_GOLDEN=1 cargo test -p salman-core the_committed_citation_document_matches_what_the_registry_renders` | `clause.rs`, the same test |
 | [`docs/PLCOPEN_COMPATIBILITY.md`](docs/PLCOPEN_COMPATIBILITY.md) | round-tripping every construct | `SALMAN_UPDATE_GOLDEN=1 cargo test -p salman-plcopen --test compat` | `compat.rs`, `the_committed_matrix_matches_what_the_code_does_now` |
 
 `docs/CONFORMANCE.md` is **not** generated. It says so about itself, and calls itself the
