@@ -274,7 +274,6 @@ through. It refuses, under `U0501`, with a message naming the construct:
 
 | What | The message begins | Test |
 |---|---|---|
-| `AT %...` located variables | `salman does not implement AT %IX0.0 yet` | `diagnostics.rs: located_variables_report_that_the_io_mapping_layer_does_not_exist` |
 | Exponentiation `**` | `salman does not compile exponentiation` | `diagnostics.rs: exponentiation_reports_that_it_is_not_implemented` |
 | Subscripting an array whose elements occupy more than one slot | `salman does not compile subscripting an array whose elements are` | none |
 | Assigning a whole aggregate through a subscript or a direct address, in either direction, including out of a function block output or a `VAR_IN_OUT` | `salman does not compile assigning a whole structure, array or function block instance` | `semantics.rs: assigning_a_whole_structure_through_a_subscript_is_refused` |
@@ -567,7 +566,7 @@ what makes a watch list, a trace and a force list possible without a second symb
 | `[x]` | A `FUNCTION` keeps no state between calls | Its locals start from their declared initial value on every call, which is what IEC 61131-3:2013 §6.6.2 "Functions" (Ed 3.0) makes a function mean. `semantics.rs: a_function_keeps_no_state_between_calls`, `semantics.rs: a_function_local_starts_from_its_declared_initial_value_on_every_call`, `semantics.rs: a_function_may_call_another_function` |
 | `[x]` | Two instances of one `PROGRAM` keep separate state | `semantics.rs: two_instances_of_one_program_keep_separate_state` |
 | `[ ]` | Enforcing a `STRING[n]` length or a subrange's bounds **at run time** | Neither is in the emitted code. Both are checked against constants at compile time, and that much is tested — `sema.rs: a_literal_outside_a_subrange_is_refused`, `sema.rs: a_string_literal_longer_than_its_target_is_refused` — but a value arriving through a variable is not checked. See the section before the tables |
-| `[ ]` | `AT %IX0.0` located variables | Lexed, parsed and resolved — `parser.rs: a_located_variable_keeps_the_address_it_was_bound_to` — and then **refused by the compiler** under `U0501`, because there is no IO mapping layer to bind them to: `diagnostics.rs: located_variables_report_that_the_io_mapping_layer_does_not_exist` |
+| `[x]` | `AT %IX0.0` located variables | A located variable **is** its location: it gets no slot, so it cannot hold a stale copy. The declared width must match the address size (`E0503`) and a program may not write its own inputs (`E0504`). `parser.rs: a_located_variable_keeps_the_address_it_was_bound_to`, `located.rs: a_located_variable_gets_no_storage_of_its_own`, `located.rs: a_located_output_follows_a_located_input_through_the_image`, `diagnostics.rs: a_located_variable_must_be_as_wide_as_the_location_it_names`, `diagnostics.rs: a_program_may_not_write_a_variable_located_in_the_input_image` |
 | `[x]` | Whole-aggregate assignment and argument passing: `A := B` between arrays or structures, and a structure passed to a `VAR_INPUT` | Compiled as a multi-slot copy. Not supported through a subscript or a direct address, where it is refused by name |
 | `[ ]` | Arrays whose elements occupy more than one slot: an array of function block instances, or of a structure with more than one field | The declaration is accepted and given slots; subscripting one is not compiled. `T[1](...)` is refused by the checker as `E0314`, `A[1].X` and `A[1] := B` by the compiler as `U0501` and `E0501`. An array of a single-field structure occupies one slot per element and does work |
 | `[ ]` | Inline structures and enumerations in a variable declaration | Named, not implemented: `parser.rs: an_inline_structure_or_enumeration_asks_for_a_named_type` |
@@ -650,12 +649,12 @@ though the debugger and the trace can see it.
 | `[x]` | One freewheeling task per `PROGRAM` when a file declares no `CONFIGURATION` | `sema.rs: a_unit_with_no_configuration_produces_none`, `sema.rs: a_program_with_no_task_runs_freewheeling_and_is_listed_as_untasked`. A salman convenience, not a standard rule; see policy 18 |
 | `[-]` | Real-time clock mode | `ClockMode::RealTime` exists, disables the determinism claim and records jitter; nothing in the tree drives it from a host clock |
 | `[ ]` | Pre-emption | Not modelled at all; a scan is atomic. See policy 17 |
-| `[ ]` | Mapping a located variable to the process image | The image is reachable only through a directly represented variable written out in an expression, such as `%IX0.0`. An `AT %...` binding is refused by the compiler |
+| `[x]` | Mapping a device's registers onto the process image | Declared in the project file rather than in code, checked before it runs, and applied at the scan boundaries: inputs before the latch, outputs after the publish. `project.rs: a_working_project_reads`, `project.rs: two_devices_that_claim_the_same_image_bits_are_refused`. Output mappings run against a simulated device only — see `docs/adr/ADR-0014-salman-does-not-drive-a-plant.md`. No subcommand runs a link yet |
 
 The process image is fixed at 4096 bytes for each of `%I`, `%Q` and `%M`
-(`compile::IMAGE_BYTES`). A real controller sizes its image from its IO configuration, which
-salman will have when the IO mapping layer arrives; until then an address past the end is a
-clear fault rather than a silent wrong answer
+(`compile::IMAGE_BYTES`). A real controller sizes its image from its IO configuration; salman
+has the mapping layer now and still does not size the image from it, which is policy 15a. An
+address past the end is a clear fault rather than a silent wrong answer
 (`memory.rs: an_address_past_the_end_of_its_area_reads_none_rather_than_panicking`).
 
 ### The interpreter
