@@ -100,8 +100,10 @@ layout depends on · `[x]` code generation to bytecode · `[x]` `salman check`, 
 `salman test` · `[x]` the golden-trace harness, with the trace fingerprint as the oracle ·
 `[x]` the parser fuzzed as the lexer already is · `[x]` every one of the above in the
 capability registry with named tests · `[ ]` a project file · `[ ]` a formatter whose output
-is stable · `[ ]` the cross-platform trace comparison in `.github/workflows/determinism.yml`,
-which is still a placeholder.
+is stable · `[x]` the cross-platform trace comparison in `.github/workflows/determinism.yml`,
+which records `examples/determinism/hazards.st` on all three platforms and compares the trace
+fingerprints. ADR-0005 still withholds the *claim* until that job has been green for a
+meaningful period.
 
 ---
 

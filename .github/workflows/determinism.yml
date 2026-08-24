@@ -1,41 +1,45 @@
 # Rule 6: same project, same inputs, same seed, identical trace, bit for bit.
 #
-# READ THIS BEFORE TRUSTING THE GREEN TICK
+# This workflow is the gate that promise is checked by, and it now does the two
+# halves ADR-0005 asks for.
 #
-# This workflow checks half of rule 6, and the half it checks is worth stating
-# precisely, because both overstating and understating it are easy.
+# 1. THE SUITE, ON THREE PLATFORMS. `cargo test --workspace --all-features` on
+#    Linux, macOS and Windows. That suite contains
+#    `the_recorded_trace_matches_the_committed_golden_file`
+#    (crates/salman-cli/tests/conveyor_example.rs), which re-renders the
+#    conveyor's trace and asserts it equals the committed
+#    examples/conveyor/conveyor.trace byte for byte. So each platform is checked
+#    against a file the repository carries.
 #
-# What it does: runs the workspace test suite on Linux, macOS and Windows. That
-# suite contains `the_recorded_trace_matches_the_committed_golden_file`
-# (crates/salman-cli/tests/conveyor_example.rs), which re-renders the conveyor's
-# trace and asserts it equals the committed examples/conveyor/conveyor.trace,
-# byte for byte. .gitattributes marks *.trace as -text so git never rewrites
-# those bytes. So a platform whose runtime produced a different trace fails
-# here, on every push and every pull request. Cross-platform agreement with one
-# committed trace is gated, and that is a real gate.
+# 2. THE THREE PLATFORMS AGAINST EACH OTHER. Each leg runs
+#    examples/determinism/hazards.st, uploads the trace, and the `compare` job
+#    below asserts the three fingerprints are equal. This is the half that was a
+#    placeholder until now, and it is the half that answers "which platform
+#    disagreed", which comparing each platform against a committed file cannot.
 #
-# What it does NOT do: produce a trace on each platform, upload it, and compare
-# the three against each other. That is the mechanism ADR-0005 describes, and it
-# is still unwritten. The difference is not cosmetic — the golden test covers
-# one project and one recorded signal set, and when it fails it says this
-# platform disagrees with a file, not which two platforms disagree with each
-# other or by how much.
+# WHY THE ASSERTION IS ON THE FINGERPRINT AND NOT ON THE TRACE TEXT
 #
-# The placeholder step below says that on every run. It is deliberate and is not
-# decoration: a determinism workflow that passed while comparing nothing would
-# put a green tick next to the project's central promise on the strength of
-# having done no work. Rule 6 in README.md is the promise; ADR-0005 is the
-# mechanism; ADR-0009 is why a workflow must not be named after a gate it does
-# not enforce.
+# ADR-0005 rejected comparing traces as rendered text, in one sentence worth
+# keeping in view: "salman renders text for humans and hashes bytes for the
+# gate." Rendered text puts Rust's float formatting inside the determinism
+# promise — it is platform-identical today, carries no cross-version guarantee,
+# and has changed before, so a toolchain bump could break this gate for a reason
+# that has nothing to do with the simulation.
 #
-# WHY THIS IS SEPARATE FROM ci.yml, GIVEN THE MATRIX IS THE SAME TODAY
+# It is also weaker in the way that matters most here. The reference program
+# puts a NaN, an infinity and a negative zero into the trace on purpose. All
+# three render identically on every architecture, so a NaN that stopped being
+# canonicalised would still print `NaN` — while the fingerprint, which is
+# SHA-256 over `Value::write_canonical_bytes` rather than over the text, would
+# change. So the gate asserts on the fingerprint, and prints a text diff only
+# once it has already decided something is wrong, which is the one job rendered
+# text has here: telling a human where to look.
 #
-# The overlap with ci.yml's `test` job is real and temporary. This workflow is
-# the place the cross-platform comparison lands, and when it does it will need
-# artefact upload from each OS and a job that fans them back in — a shape
-# ci.yml should not grow. Keeping the file now means the determinism gate has
-# somewhere to arrive, and means what it does not yet do is visible rather than
-# implied.
+# WHY THIS IS SEPARATE FROM ci.yml
+#
+# The overlap with ci.yml's `test` job is real. This workflow is where the
+# cross-platform comparison lives, and it needs an artefact upload from each OS
+# and a job that fans them back in — a shape ci.yml should not grow.
 name: determinism
 
 on:
@@ -53,6 +57,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # One list, in one place, so that three legs cannot record different columns
+  # and produce a disagreement that is about this file rather than about salman.
+  RECORD: Scan,Wrapping,Drift,Third,NotANumber,Infinite,NegZero,Elapsed,Phase,Alternating,Second
+  SCANS: "1000"
 
 jobs:
   cross-platform-tests:
@@ -72,33 +80,150 @@ jobs:
       - name: Run the workspace test suite
         run: cargo test --workspace --all-features
 
-      # ---------------------------------------------------------------------
-      # PLACEHOLDER. This step compares nothing itself. It exists so that the
-      # half of rule 6 that is still unenforced is stated in the run log
-      # instead of being hidden by a passing job.
+      # `cargo test` above already builds the binary, because salman-cli's
+      # integration tests drive it. This step is stated rather than relied on:
+      # a cached build costs a second, and depending on a side effect of another
+      # step is how a job breaks for a reason nobody can see.
       #
-      # It no longer says the runtime is missing. It was written at 0.0.1, when
-      # salman had no VM and produced no trace; that stopped being true at
-      # 0.1.0, and a placeholder describing a blocker that has been cleared is
-      # worse than no placeholder, because it invites a reader to discount the
-      # part that is still real. ADR-0009 names updating this text as the next
-      # thing to fix in this file.
-      #
-      # What is actually missing: producing a trace on each platform, uploading
-      # it as an artefact, and adding a job that downloads all three and
-      # compares them against each other. Nothing blocks that except nobody
-      # having written it. When it lands, this step is deleted rather than
-      # reworded — ADR-0009: the placeholder was filled and retired, it was not
-      # left.
-      # ---------------------------------------------------------------------
-      - name: "PLACEHOLDER: traces are not yet compared across platforms"
+      # The debug profile is deliberate. Debug and release produce the same
+      # fingerprint — Rust neither contracts nor reassociates the float
+      # operations salman uses — and all three legs use the same profile, so the
+      # comparison is like-for-like either way. Building release here as well
+      # would double this workflow's cost to prove something perf.yml builds
+      # already.
+      - name: Build the CLI
+        run: cargo build -p salman-cli
+
+      - name: Record the reference trace
         shell: bash
         run: |
-          echo "::warning title=Determinism only half enforced::The suite that ran on ${{ matrix.os }} includes the_recorded_trace_matches_the_committed_golden_file, so this platform's runtime does agree with the committed examples/conveyor/conveyor.trace byte for byte. What did NOT run is the comparison this workflow is named after: a trace produced on each platform, uploaded, and compared against the other two. See the comment block in .github/workflows/determinism.yml and docs/adr/ADR-0005-determinism.md."
+          set -euo pipefail
+          bin=target/debug/salman
+          if [ "${RUNNER_OS}" = "Windows" ]; then
+            bin=target/debug/salman.exe
+          fi
+          "$bin" run examples/determinism/hazards.st \
+              --scans "${SCANS}" \
+              --record "${RECORD}" \
+              --trace "trace-${{ matrix.os }}.txt"
           echo
-          echo "  What ran:         cargo test --workspace --all-features on ${{ matrix.os }},"
-          echo "                    including the committed golden-trace comparison"
-          echo "  What did NOT run: traces produced per-platform and compared to each other"
-          echo "  Blocked on:       nothing — the artefact upload and fan-in job are unwritten"
-          echo
-          echo "This step asserts nothing. The gate above it does."
+          echo "Header of trace-${{ matrix.os }}.txt:"
+          head -6 "trace-${{ matrix.os }}.txt"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: trace-${{ matrix.os }}
+          path: trace-${{ matrix.os }}.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  compare:
+    name: the three platforms agree
+    needs: cross-platform-tests
+    runs-on: ubuntu-latest
+    steps:
+      # upload-artifact v7 and download-artifact v8 are the current matched
+      # pair; the major numbers differ on purpose and are not a typo. Every
+      # trace carries its platform in its filename, so merge-multiple is safe.
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: trace-*
+          merge-multiple: true
+          path: traces
+
+      - name: Every platform produced the same fingerprint
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import difflib
+          import pathlib
+          import sys
+
+          EXPECTED = {"ubuntu-latest", "macos-latest", "windows-latest"}
+          PREFIX = "# fingerprint: "
+
+          traces = {}
+          failures = []
+
+          for path in sorted(pathlib.Path("traces").glob("trace-*.txt")):
+              platform = path.stem[len("trace-"):]
+              text = path.read_text()
+              fingerprint = next(
+                  (
+                      line[len(PREFIX):].strip()
+                      for line in text.splitlines()
+                      if line.startswith(PREFIX)
+                  ),
+                  None,
+              )
+              if fingerprint is None:
+                  failures.append(
+                      f"{platform}: the trace carries no fingerprint line, so "
+                      f"there is nothing to compare"
+                  )
+                  continue
+              traces[platform] = (fingerprint, text)
+
+          # A partial or empty artefact set must not pass. A comparison that
+          # compared nothing is the exact failure mode this repository exists to
+          # avoid, and a green tick on it would be worse than no gate at all.
+          for platform in sorted(EXPECTED - set(traces)):
+              failures.append(
+                  f"{platform}: no trace arrived from it, so the three "
+                  f"platforms were not compared"
+              )
+
+          for platform in sorted(traces):
+              print(f"  {platform:<16} {traces[platform][0]}")
+          print()
+
+          fingerprints = {f for f, _ in traces.values()}
+
+          if len(fingerprints) > 1:
+              failures.append(
+                  "the platforms do not agree: "
+                  + ", ".join(f"{p} = {traces[p][0]}" for p in sorted(traces))
+              )
+              # The fingerprint says that something differs; only the text says
+              # where. Print it, for a human.
+              reference = sorted(traces)[0]
+              for platform in sorted(traces):
+                  if platform == reference or traces[platform][1] == traces[reference][1]:
+                      continue
+                  print(f"--- {reference} against {platform} ---")
+                  diff = difflib.unified_diff(
+                      traces[reference][1].splitlines(),
+                      traces[platform][1].splitlines(),
+                      fromfile=reference,
+                      tofile=platform,
+                      lineterm="",
+                      n=1,
+                  )
+                  for i, line in enumerate(diff):
+                      if i >= 40:
+                          print("  ... truncated")
+                          break
+                      print(f"  {line}")
+                  print()
+          elif len({t for _, t in traces.values()}) > 1:
+              # Same canonical bytes, different rendering. Not a determinism
+              # failure by ADR-0005's definition — the gate is the fingerprint —
+              # but it means float formatting differs between platforms, which
+              # nobody expects and somebody should look at.
+              print(
+                  "::warning title=Traces render differently::Every platform "
+                  "agrees on the fingerprint, so the values are identical, but "
+                  "the rendered text differs. That is formatting, not "
+                  "arithmetic. See docs/adr/ADR-0005-determinism.md."
+              )
+
+          for message in failures:
+              print(f"::error title=Determinism::{message}")
+          if failures:
+              sys.exit(1)
+
+          print(
+              f"All {len(traces)} platforms produced the same trace "
+              f"fingerprint: {fingerprints.pop()}"
+          )
+          PY

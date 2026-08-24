@@ -329,10 +329,13 @@ Hard gates. A pull request violating any of them does not merge.
 4. **Every URL in every doc resolves**, checked in CI.
 5. **The lightweight budget is a tested gate**, not a slogan.
 6. **Determinism.** Same project, same inputs, same seed, identical trace, bit
-   for bit. See [`docs/adr/ADR-0005-determinism.md`](docs/adr/ADR-0005-determinism.md)
-   for the mechanisms and for the honest scope of the claim — cross-platform
-   determinism is currently an untested premise that the determinism workflow
-   exists to settle.
+   for bit. The `determinism` workflow records
+   [`examples/determinism/hazards.st`](examples/determinism/hazards.st) on Linux,
+   macOS and Windows and asserts the three trace fingerprints are equal. See
+   [`docs/adr/ADR-0005-determinism.md`](docs/adr/ADR-0005-determinism.md) for the
+   mechanisms and for the honest scope of the claim: the gate exists now, and
+   salman still does not claim cross-platform determinism until it has been green
+   on all three for a meaningful period. One run is evidence, not a period.
 7. **Untrusted input is treated as hostile.** Every parser is fuzzed in CI and
    must never panic, allocate without bound, or read out of bounds.
 8. **Read-only by default.**
