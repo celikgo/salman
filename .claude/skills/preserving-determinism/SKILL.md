@@ -26,16 +26,16 @@ matter, and several documents in this repository state only the first.
 and cache restore, two steps do work:
 
 1. `cargo test --workspace --all-features`
-2. a step named `PLACEHOLDER: trace determinism is NOT checked yet (no runtime exists)`,
-   which emits a GitHub warning annotation and ends:
+2. a step named `PLACEHOLDER: traces are not yet compared across platforms`, which emits a
+   GitHub warning annotation and ends:
 
-   > This step is a placeholder. It asserts nothing and proves nothing.
+   > This step asserts nothing. The gate above it does.
 
-That placeholder's text is stale — it says salman has no VM and `salman run` does not exist,
-and both were false by 0.1.0. `ADR-0005`'s *How this is enforced* records that honestly: the
-placeholder is unblocked, what replaces it is a per-OS artefact upload plus a fan-in job
-comparing the three, and *that work has not been done*. `docs/ROADMAP.md` lists it under what
-v0.1 still owes.
+That placeholder used to say salman had no VM and no trace, which was true at 0.0.1 and false
+by 0.1.0; it now says what is actually missing. `ADR-0005`'s *How this is enforced* records
+the same thing: what replaces the step is a per-OS artefact upload plus a fan-in job comparing
+the three, and *that work has not been done*. `docs/ROADMAP.md` lists it under what v0.1 still
+owes. Nothing blocks it except nobody having written it.
 
 **But step 1 is not nothing.** The workspace suite contains
 `the_recorded_trace_matches_the_committed_golden_file`
