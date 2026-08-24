@@ -4,12 +4,13 @@
 # halves ADR-0005 asks for.
 #
 # 1. THE SUITE, ON THREE PLATFORMS. `cargo test --workspace --all-features` on
-#    Linux, macOS and Windows. That suite contains
-#    `the_recorded_trace_matches_the_committed_golden_file`
-#    (crates/salman-cli/tests/conveyor_example.rs), which re-renders the
-#    conveyor's trace and asserts it equals the committed
-#    examples/conveyor/conveyor.trace byte for byte. So each platform is checked
-#    against a file the repository carries.
+#    Linux, macOS and Windows. That suite re-renders two traces and asserts each
+#    equals a file the repository carries: the conveyor's, in
+#    crates/salman-cli/tests/conveyor_example.rs, and this workflow's own
+#    reference program's, in crates/salman-cli/tests/determinism_reference.rs.
+#    So each platform is checked against a committed artefact — which is what
+#    catches a change that alters the trace on all three platforms equally, and
+#    would therefore leave the comparison below green.
 #
 # 2. THE THREE PLATFORMS AGAINST EACH OTHER. Each leg runs
 #    examples/determinism/hazards.st, uploads the trace, and the `compare` job

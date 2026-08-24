@@ -1,0 +1,18 @@
+# The golden trace for the determinism reference.
+#
+#   salman test examples/determinism/hazards.st examples/determinism/
+#
+# This is the same run `.github/workflows/determinism.yml` records on each
+# platform — same scan count, same recorded columns — so the committed trace
+# below pins exactly what the gate compares. The two must stay in step: if the
+# scan count or the record list changes in one, it changes in the other, or the
+# golden stops describing the thing being gated.
+#
+# Regenerate with `--update-golden`, and read the diff. A golden nobody reads is
+# a test that asserts whatever the code last did.
+
+- test: "the reference trace is what it was"
+  record: [Scan, Wrapping, Drift, Third, NotANumber, Infinite, NegZero, Elapsed, Phase, Alternating, Second]
+  golden: hazards.trace
+  steps:
+    - { scans: 1000 }
