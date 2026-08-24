@@ -83,16 +83,25 @@ pinned toolchain, for programs whose floating-point operations stay within the
 exactly-specified set, with NaN canonicalised at the value boundary. Nothing is claimed for
 32-bit targets, for parallel evaluation, or across toolchain upgrades.
 
-Cross-OS artefact determinism is currently an untested premise — the determinism workflow
-exists to discover whether it holds, and salman must not claim it until that job has been
-green on all three operating systems for a meaningful period. Today
-`.github/workflows/determinism.yml` runs the test suite on three platforms and then prints
-a warning saying that it compared no trace. The blocker is no longer the runtime: `salman
-run` exists and writes a trace, and `crates/salman-vm/src/task.rs`,
-`the_same_configuration_run_twice_produces_the_same_trace_fingerprint`, shows two runs on
-one machine agree. What is missing is the cross-platform half — per-OS artefact upload and
-a fan-in job comparing the three byte for byte — and until that is written the green tick on
-that workflow means "the tests passed everywhere", not "the traces matched".
+Cross-OS artefact determinism is a premise the determinism workflow exists to discover the
+truth of, and **salman must not claim it until that job has been green on all three operating
+systems for a meaningful period.** That condition is unchanged by the gate existing: one green
+run is evidence, not a period.
+
+The gate itself is now written. `.github/workflows/determinism.yml` runs
+`examples/determinism/hazards.st` on Linux, macOS and Windows, uploads each trace as a per-OS
+artefact, and a fan-in job asserts the three fingerprints are equal. The reference program
+exists to put the hazards named above into one trace — a NaN, an infinity, a negative zero, a
+`REAL` accumulating a value with no exact binary representation, `LREAL` division, and integer
+overflow — because a trace with none of them in it would compare equal for want of anything to
+disagree about.
+
+The assertion is on the fingerprint rather than on the trace text, which is the position
+*Alternatives considered* takes below: salman renders text for humans and hashes bytes for the
+gate. It matters most exactly here. `NaN` renders as `NaN` on every architecture, so a NaN that
+stopped being canonicalised would be invisible in the text and would change the fingerprint.
+The job prints a text diff when the fingerprints already disagree, which is the one job
+rendered text has in a gate: telling a person where to look.
 
 The costs are real. Bumping the Rust toolchain invalidates the premise until the gate has
 run again, so a compiler upgrade is a reviewed change with a determinism argument attached
@@ -131,12 +140,13 @@ the ones that pass on one platform. A single-platform gate would have caught non
 
 ## How this is enforced
 
-- `.github/workflows/determinism.yml` runs `cargo test --workspace --all-features` on
-  `ubuntu-latest`, `macos-latest` and `windows-latest` with `fail-fast: false`, and prints a
-  warning on every run stating that the trace comparison itself is not yet implemented. That
-  placeholder is now unblocked — `salman run` produces a trace — and what replaces it is a
-  per-OS artefact upload and a job that compares the three byte for byte. That work has not
-  been done, so the warning is still what the job prints.
+- `.github/workflows/determinism.yml` does two things on `ubuntu-latest`, `macos-latest` and
+  `windows-latest` with `fail-fast: false`. It runs `cargo test --workspace --all-features`,
+  which contains `the_recorded_trace_matches_the_committed_golden_file` and so checks each
+  platform against a trace the repository carries. And it records
+  `examples/determinism/hazards.st`, uploads the trace per OS, and fans them into a `compare`
+  job that asserts the three fingerprints are equal, refuses to pass on fewer than three
+  traces, and prints a diff of the rendered traces when they disagree.
 - `clippy.toml` bans the transcendental functions via `disallowed-methods` and `HashMap` /
   `HashSet` via `disallowed-types`, each with the reason next to the rule.
   `.github/workflows/ci.yml` runs clippy with `-D warnings`, so a violation fails the build.

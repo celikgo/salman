@@ -15,49 +15,63 @@ nothing and everyone learns to ignore it.
 anything here — it lists the seven mechanisms and, more usefully, the failure modes that
 motivated each. This skill is the operating manual.
 
-## The most important thing to know first
+## What the gate actually is
 
-**The step named after the trace comparison compares nothing. The comparison happens anyway,
-sideways, and it is weaker than the one that was designed.** Both halves of that sentence
-matter, and several documents in this repository state only the first.
+`.github/workflows/determinism.yml` checks rule 6 in two halves, and they answer different
+questions. Both are real; neither is the whole claim.
 
-`.github/workflows/determinism.yml` has one job, `cross-platform-tests`, on `ubuntu-latest`,
-`macos-latest` and `windows-latest` with `fail-fast: false`. After checkout, toolchain install
-and cache restore, two steps do work:
-
-1. `cargo test --workspace --all-features`
-2. a step named `PLACEHOLDER: traces are not yet compared across platforms`, which emits a
-   GitHub warning annotation and ends:
-
-   > This step asserts nothing. The gate above it does.
-
-That placeholder used to say salman had no VM and no trace, which was true at 0.0.1 and false
-by 0.1.0; it now says what is actually missing. `ADR-0005`'s *How this is enforced* records
-the same thing: what replaces the step is a per-OS artefact upload plus a fan-in job comparing
-the three, and *that work has not been done*. `docs/ROADMAP.md` lists it under what v0.1 still
-owes. Nothing blocks it except nobody having written it.
-
-**But step 1 is not nothing.** The workspace suite contains
+**Half one: each platform against a committed file.** The `cross-platform-tests` job runs
+`cargo test --workspace --all-features` on `ubuntu-latest`, `macos-latest` and
+`windows-latest` with `fail-fast: false`. That suite contains
 `the_recorded_trace_matches_the_committed_golden_file`
-(`crates/salman-cli/tests/conveyor_example.rs`), which runs the conveyor's golden-trace test
-case and asserts the freshly rendered trace equals the committed
-`examples/conveyor/conveyor.trace`, string for string. `.gitattributes` marks `*.trace` as
-`-text` so git never rewrites those bytes, `a_golden_trace_file_contains_no_carriage_returns`
-in the same file asserts that git has not, and Rust's `read_to_string` translates no line
-endings. So a platform whose runtime produced a different trace **would fail that test on that
-platform**, on every push and every pull request.
+(`crates/salman-cli/tests/conveyor_example.rs`), which re-renders the conveyor's trace and
+asserts it equals the committed `examples/conveyor/conveyor.trace`, string for string.
+`.gitattributes` marks `*.trace` as `-text` so git never rewrites those bytes,
+`a_golden_trace_file_contains_no_carriage_returns` asserts that git has not, and Rust's
+`read_to_string` translates no line endings. A platform whose runtime disagreed with that file
+fails there.
 
-The accurate summary, and the one to use when you are writing about this:
+**Half two: the three platforms against each other.** The same job then records
+`examples/determinism/hazards.st` for 1000 scans and uploads the trace as a per-OS artefact.
+The `compare` job downloads all three and asserts their **fingerprints** are equal. That is
+the half that answers *which* platform disagreed, which comparing each one against a file
+cannot.
 
-- Cross-platform agreement **with one committed golden trace** is gated today, through the
-  ordinary test suite running on three operating systems.
-- What is missing is the designed mechanism: traces produced on each platform, uploaded, and
-  compared to *each other*. That difference is not cosmetic. The golden test covers one
-  project and one recorded signal set, and when it fails it tells you that this platform
-  disagrees with a file — not which two platforms disagree with each other, and not by how
-  much.
-- So do not write that CI proves the general claim, and do not write that CI checks nothing.
-  Both are wrong.
+### Why the assertion is on the fingerprint
+
+`ADR-0005` rejected comparing traces as rendered text, and put the reason in one sentence:
+**salman renders text for humans and hashes bytes for the gate.** Text puts Rust's float
+formatting inside the determinism promise — platform-identical today, no cross-version
+guarantee, and it has changed before, so a toolchain bump could break the gate for a reason
+unrelated to the simulation.
+
+It is also weaker exactly where it matters. `examples/determinism/hazards.st` puts a NaN, an
+infinity and a negative zero in the trace deliberately, and **all three render identically on
+every architecture** — a NaN that stopped being canonicalised would still print `NaN`. The
+fingerprint is SHA-256 over `Value::write_canonical_bytes`, so it would change. The job prints
+a text diff only once the fingerprints have already disagreed, which is the one job rendered
+text has in a gate: telling a person where to look.
+
+### What the reference program covers, and what it cannot
+
+`Drift` is a `REAL` accumulating `0.1`; by scan 1000 it reads `99.9990463256836` rather than
+`100.0`, and that number is a fingerprint of 32-bit float arithmetic. `Third` is `LREAL`
+division. `Wrapping` is `SINT` overflow, which is *salman policy* rather than a standard
+requirement. `Elapsed` is `TIME` rendered back as an IEC literal. `examples/determinism/README.md`
+has the full table.
+
+It cannot cover transcendentals (banned by `clippy.toml`; salman implements no standard
+functions), `**` (refused by the compiler as `U0501`), hash-map ordering (there are no
+`HashMap`s to exercise) or thread scheduling (the runtime is single-threaded). Each is absent
+because it is absent from salman, not because it was judged unimportant.
+
+### What the gate still does not license
+
+**salman does not claim cross-platform determinism**, and this gate existing does not change
+that. `ADR-0005` is explicit: the claim waits "until that job has been green on all three
+operating systems for a meaningful period", and one green run is evidence, not a period.
+`README.md` rule 6 says the same. Write that the gate exists and runs; do not write that the
+premise is settled.
 
 Everything below is what holds determinism up in the code itself.
 
@@ -281,12 +295,34 @@ If your change touched the runtime, the trace format, or anything ordered:
    fingerprint still comes from `write_canonical_bytes` and not from the rendered text.
 6. If you needed a hash map, an allow-at-the-site with a reason, not a wider allow.
 
-## What would count as fixing the gap
+## If you change the reference program
 
-If you are here to finish rule 6 rather than to avoid breaking it, the shape is already
-specified in the comment block at the top of `determinism.yml` and in ADR-0005: run a
-reference project on each of the three runners, upload the trace as a per-OS artefact, and
-add a fan-in job that downloads all three and compares them byte for byte. Delete the
-placeholder step in the same commit — a warning that no longer describes reality is worse
-than no warning — and update `ADR-0005`'s *How this is enforced*, `docs/ROADMAP.md`, and the
-first section of this skill. That is a change several documents are waiting for.
+`examples/determinism/hazards.st` is a fixture, and the rule for it is the one in its own
+header: **every variable earns its place by being a hazard `ADR-0005` names.** Adding a column
+because the trace looks short is how a gate turns into decoration.
+
+Two things follow.
+
+**Adding a column changes the fingerprint on every platform at once**, so the gate stays green
+and tells you nothing about whether the change was right. Run it locally before and after and
+read the diff yourself; the gate cannot do that for you.
+
+**When salman grows a hazard, the fixture grows a column in the same commit.** The ones absent
+today are absent from salman, not judged unimportant: transcendentals wait on `libm`, `**` is
+refused by the compiler as `U0501`, and there are no `HashMap`s to exercise. When `SIN` lands,
+it belongs in this file, and `examples/determinism/README.md` has the table to extend.
+
+## What is still owed
+
+The gate exists; the **claim** does not. `ADR-0005` withholds it "until that job has been green
+on all three operating systems for a meaningful period", and one green run is evidence, not a
+period. `README.md` rule 6 says the same. Until then the honest sentence is that salman checks
+cross-platform determinism on every push and does not yet assert it.
+
+Two gaps worth knowing, neither of which this gate closes:
+
+- **The reference program has no committed golden trace.** A change that altered its trace on
+  all three platforms equally would pass. The conveyor's golden covers that for the constructs
+  it uses; nothing covers it for the float columns.
+- **A toolchain bump invalidates the premise** until the gate has run again, which is why
+  `rust-toolchain.toml` calls itself a reviewed change.

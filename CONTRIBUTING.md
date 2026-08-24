@@ -167,9 +167,10 @@ layout will break that, which is the point. `cargo test --workspace` covers the
 committed golden trace through
 `the_recorded_trace_matches_the_committed_golden_file`, and the `determinism`
 workflow runs that suite on Linux, macOS and Windows — so a platform that
-disagreed with the golden file would fail there. The workflow's own
-byte-for-byte comparison of traces produced *on each platform* is still a
-placeholder, which the job says out loud on every run. See
+disagreed with the golden file would fail there. That workflow also records
+`examples/determinism/hazards.st` on each platform and compares the three trace
+fingerprints against each other, which is the check that says *which* platform
+disagreed. See
 [`docs/adr/ADR-0005-determinism.md`](docs/adr/ADR-0005-determinism.md) and
 `.claude/skills/preserving-determinism/`.
 
