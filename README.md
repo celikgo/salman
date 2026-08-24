@@ -360,6 +360,7 @@ every dependency, its licence and how it enters.
 
 | | |
 |---|---|
+| [`docs/PIPELINE_WALKTHROUGH.md`](docs/PIPELINE_WALKTHROUGH.md) | The worked example from source to passing test, with the real output at every stage. Start here if Structured Text is new to you |
 | [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md) | What of IEC 61131-3 is implemented, tested, absent, or a salman decision |
 | [`docs/STATUS.md`](docs/STATUS.md) | Generated capability table |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Milestones, open questions and prior art |
@@ -369,6 +370,8 @@ every dependency, its licence and how it enters.
 | [`LEGAL.md`](LEGAL.md) | Standards copyright, trademarks, safety, licence, export control |
 | [`SECURITY.md`](SECURITY.md) | Reporting, supported versions, what salman deliberately cannot do |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to build, the test tiers, the ADR process, the bar for a new protocol |
+| [`CLAUDE.md`](CLAUDE.md) | One-page orientation: crate layout, the lints, the generated files, the traps |
+| [`.claude/skills/`](.claude/skills/) | Working knowledge, one file per job: the language pipeline, determinism, the protocol seam, the citation policy, releasing |
 | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1, and how to report |
 
 ## Contributing
