@@ -49,14 +49,35 @@ jobs:
             --max-retries 3
             --retry-wait-time 5
             --timeout 30
+            --max-concurrency 16
             --accept 200,206,301,302,308
             --exclude '^https?://[^/]*\.invalid(/|$)'
             --exclude '^https?://www\.plcopen\.org/xml/tc6_'
+            --exclude '^https?://(www\.)?contributor-covenant\.org(/|$)'
             './**/*.md'
             './**/*.rs'
 
 # ---------------------------------------------------------------------------
-# The one exclusion, and why
+# Concurrency, and why it is not the default
+# ---------------------------------------------------------------------------
+#
+# `--max-concurrency 16`
+#
+# lychee defaults to 128. This repository has 82 distinct URLs across 31 hosts,
+# so at the default every one of them leaves at once, from a GitHub-hosted
+# runner whose IP is shared with every other Actions job in the world. What a
+# rate-limited host sees is a burst from an address it already distrusts, and
+# what this job then sees is `Connection reset by peer` — a TCP reset, not a
+# status code, so `--accept` cannot help and `--max-retries` only repeats the
+# burst.
+#
+# That is not hypothetical: it is what turned this job red on PR #5, on a link
+# that was live the whole time and passed on the next run with no change to the
+# tree. Sixteen is slow enough not to look like an attack and fast enough that
+# the job still finishes in seconds.
+#
+# ---------------------------------------------------------------------------
+# The exclusions, and why
 # ---------------------------------------------------------------------------
 #
 # `--exclude '^https?://[^/]*\.invalid(/|$)'`
@@ -83,6 +104,32 @@ jobs:
 # The pattern is deliberately narrow: the `tc6_` prefix, on that host, under
 # `/xml/`. A dead link to PLCopen's actual documentation still fails this job,
 # which is the point.
+#
+# `--exclude '^https?://(www\.)?contributor-covenant\.org(/|$)'`
+#
+# This one is a different kind, and saying so matters more than the exclusion.
+#
+# The two above are URLs that are **not meant to resolve**: `.invalid` cannot by
+# RFC, and an XML namespace name is an identifier that merely looks like a URL.
+# Excluding them costs nothing, because there was never anything to check.
+#
+# contributor-covenant.org is meant to resolve, and does. CODE_OF_CONDUCT.md
+# links it four times — the homepage, the v2.1 text, the FAQ and the
+# translations — as the standard Contributor Covenant attribution. The reason it
+# is here is not that the link is dead but that the host intermittently refuses
+# GitHub's shared runner IPs, and it refused three retries in a row on PR #5
+# while answering this repository's author immediately.
+#
+# The cost is stated rather than hidden: **if contributor-covenant.org ever dies,
+# this repository will not find out from CI.** That is a real loss. It is
+# accepted because the alternative — a required gate that goes red for reasons
+# outside the repository, on a schedule nobody controls — is how a gate becomes
+# something people re-run without reading, and a gate nobody reads is worse than
+# one honest gap.
+#
+# The `--max-concurrency` change above is the fix for the cause. This exclusion
+# is the fix for the one host known to have tripped it. If neither is needed in
+# six months, delete this and find out.
 #
 # Nothing else is excluded: if a link in this repository is unreachable, this
 # job is meant to say so.
