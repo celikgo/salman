@@ -10,6 +10,79 @@ contributions.
 
 ---
 
+## If you have never written Structured Text
+
+Most people arriving here have not, and nothing about IEC 61131-3 is guessable
+from a background in general-purpose programming. A PLC program has no `main`,
+runs its whole body again every few milliseconds for ever, and reads its inputs
+from a snapshot taken before it started. Reading the code without knowing that
+will mislead you.
+
+Start with **[`docs/PIPELINE_WALKTHROUGH.md`](docs/PIPELINE_WALKTHROUGH.md)**. It
+takes `examples/conveyor/conveyor.st` — a conveyor with a start-stop station, a
+part counter and a jam timer — and follows it from the source text through every
+stage of the compiler and runtime to a passing test, with the real output at each
+step. It explains the scan cycle, what a function block is, and what `RS`, `TOF`,
+`TON`, `R_TRIG` and `CTU` do, on the way. It also says which of the thirteen
+crates did what, which is the fastest way to learn the layout.
+
+Three commands, and you have run the whole thing:
+
+```bash
+cargo build --release
+./target/release/salman check examples/conveyor/conveyor.st
+./target/release/salman test  examples/conveyor/conveyor.st examples/conveyor/
+```
+
+Then break something on purpose — change `T#2s` to `T#3s` in `conveyor.st` and
+run the tests again. Two should fail, and the messages should tell you exactly
+which timing boundary moved. That is the loop this whole project is built around.
+
+## Where the working knowledge lives
+
+[`CLAUDE.md`](CLAUDE.md) is the one-page orientation: the crate layout, the
+toolchain pin, the lints that will bite you, which files are generated, and the
+traps. It is written for an agent and works just as well for a person.
+
+The five skills in [`.claude/skills/`](.claude/skills/) are the detail, each on
+one job:
+
+| | |
+|---|---|
+| `extending-structured-text` | Adding a language feature end to end, and the ritual below |
+| `preserving-determinism` | What is gated, what is not, and how to check locally |
+| `adding-a-fieldbus-protocol` | The seam a second protocol sits on — read before proposing one |
+| `citing-the-standard` | The citation policy, which is a legal constraint |
+| `releasing-salman` | Workflow interactions and the maintainer's manual checks |
+
+They are plain Markdown. Nothing needs an agent to read them.
+
+## When the standard does not answer the question
+
+This will happen to you, and it is the part of contributing here that has no
+equivalent elsewhere. IEC 61131-3 is paywalled, several of its rules are
+ambiguous, and vendors resolve them differently. salman's rule is that **it does
+not guess silently**. When you hit one:
+
+1. **Mark it in the source**, at the decision, with a comment containing the
+   words `salman policy`, saying what the question is, what salman does, and what
+   you could not verify or which two sources contradict each other.
+2. **Record it in [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md)** under
+   `## salman policy`, as the next numbered entry. Thirty are there already; copy
+   their shape.
+3. **Give it a test whose name is a sentence**, and name that test in the
+   `CONFORMANCE.md` entry — for example
+   `negative_durations_are_accepted_by_the_generic_dialect_and_refused_by_the_strict_one`.
+
+If you have no choice to defend — you believe something but could not confirm it —
+it belongs in that file's `## UNVERIFIED` section instead, with a line saying what
+would settle it. The difference matters, and the file explains why.
+
+All three steps in the same pull request. A decision made in code and nowhere
+else is the one thing this project treats as worse than a missing feature.
+
+---
+
 ## The one rule that matters
 
 **Never write a claim the code does not support.**
@@ -95,7 +168,8 @@ workflow runs that suite on Linux, macOS and Windows — so a platform that
 disagreed with the golden file would fail there. The workflow's own
 byte-for-byte comparison of traces produced *on each platform* is still a
 placeholder, which the job says out loud on every run. See
-[`docs/adr/ADR-0005-determinism.md`](docs/adr/ADR-0005-determinism.md).
+[`docs/adr/ADR-0005-determinism.md`](docs/adr/ADR-0005-determinism.md) and
+`.claude/skills/preserving-determinism/`.
 
 ### 4. Fuzzing — if you touched a parser or a decoder
 
