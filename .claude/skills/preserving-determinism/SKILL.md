@@ -54,8 +54,9 @@ text has in a gate: telling a person where to look.
 
 ### What the reference program covers, and what it cannot
 
-`Drift` is a `REAL` accumulating `0.1`; by scan 1000 it reads `99.9990463256836` rather than
-`100.0`, and that number is a fingerprint of 32-bit float arithmetic. `Third` is `LREAL`
+`Drift` is a `REAL` accumulating `0.1`; it reads `0.10000000149011612` after one scan and
+`49.99980926513672` after the run's five hundred — the 1000 scans are shared between two
+tasks — and those digits are a fingerprint of 32-bit float arithmetic. `Third` is `LREAL`
 division. `Wrapping` is `SINT` overflow, which is *salman policy* rather than a standard
 requirement. `Elapsed` is `TIME` rendered back as an IEC literal. `examples/determinism/README.md`
 has the full table.
@@ -319,10 +320,14 @@ on all three operating systems for a meaningful period", and one green run is ev
 period. `README.md` rule 6 says the same. Until then the honest sentence is that salman checks
 cross-platform determinism on every push and does not yet assert it.
 
-Two gaps worth knowing, neither of which this gate closes:
+One gap worth knowing, which this gate does not close: **a toolchain bump invalidates the
+premise** until the gate has run again, which is why `rust-toolchain.toml` calls itself a
+reviewed change.
 
-- **The reference program has no committed golden trace.** A change that altered its trace on
-  all three platforms equally would pass. The conveyor's golden covers that for the constructs
-  it uses; nothing covers it for the float columns.
-- **A toolchain bump invalidates the premise** until the gate has run again, which is why
-  `rust-toolchain.toml` calls itself a reviewed change.
+What *is* closed: the reference program has a committed golden,
+`examples/determinism/hazards.trace`, checked by
+`crates/salman-cli/tests/determinism_reference.rs`. A change that altered the trace on all
+three platforms equally would leave the cross-platform gate green, and that test is what
+catches it. Three more tests keep the fixture honest: the golden must pin the same scan count
+and column list the workflow records, the trace must still contain every hazard the fixture
+exists for, and it must still carry rows from a second task.
