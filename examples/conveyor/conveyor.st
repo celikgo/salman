@@ -48,9 +48,10 @@ END_FUNCTION
 
 PROGRAM Conveyor
 VAR
-    (* Field inputs. In a real project these are located; salman 0.0.1 has no
-       IO mapping layer, so the example drives them as plain variables and the
-       tests write them directly. *)
+    (* Field inputs. In a real project these are located — `Start_PB AT %IX0.0`
+       — and a project file maps a device's registers onto the process image.
+       The example keeps them as plain variables so that it runs with nothing
+       attached: `salman test` takes a source file, not a project. *)
     Start_PB    : BOOL;
     Stop_PB     : BOOL;
     Part_Sensor : BOOL;

@@ -46,7 +46,7 @@ laptop — and they produce the same answer on every machine.
 ### The program
 
 `examples/conveyor/conveyor.st` is a conveyor with a start-stop station, a motor starter with
-a run-on delay, a part counter and a jam detector. It is 108 lines and holds three POUs — a
+a run-on delay, a part counter and a jam detector. It is 109 lines and holds three POUs — a
 *program organisation unit* is IEC's word for a named unit of code: a program, a function
 block or a function.
 
