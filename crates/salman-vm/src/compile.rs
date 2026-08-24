@@ -43,17 +43,31 @@ use crate::bytecode::{BinOp, Op, Program, Routine, UnOp};
 use crate::memory::{ImageLayout, Memory, Persistence, ProcessImage, SlotId};
 use crate::task::{ProgramBinding, TaskConfig, TaskTrigger};
 
-/// A construct the compiler does not implement yet.
-pub const U_NOT_COMPILED: DiagCode = DiagCode("U0301");
+// The compiler's diagnostic codes. `salman-lang` owns `E01xx` through `E04xx`
+// and the matching `U01xx`-`U04xx`, one band per front-end stage; this crate
+// owns the `x05xx` band, for both errors and not-implemented refusals, because
+// compilation is the stage after the ones `salman-lang` numbers.
+//
+// A code is a published identifier and must mean exactly one thing across the
+// whole workspace. Nothing in `salman-lang` can check that — it cannot see this
+// crate — so the check reads the source instead:
+// `salman_core::diag`, `no_diagnostic_code_means_two_things_in_this_workspace`.
+
+/// Something the compiler could not lay out, such as a type of unknown size.
+pub const E_LAYOUT: DiagCode = DiagCode("E0501");
+/// A compiled unit that has nothing to run.
+pub const E_NOTHING_TO_RUN: DiagCode = DiagCode("E0502");
 /// An `AT %...` location that does not resolve, or that a declaration's width
 /// does not match.
 pub const E_BAD_LOCATION: DiagCode = DiagCode("E0503");
 /// A write to a variable located in the input image.
 pub const E_WRITE_TO_INPUT: DiagCode = DiagCode("E0504");
-/// Something the compiler could not lay out, such as a type of unknown size.
-pub const E_LAYOUT: DiagCode = DiagCode("E0501");
-/// A compiled unit that has nothing to run.
-pub const E_NOTHING_TO_RUN: DiagCode = DiagCode("E0502");
+/// A construct the compiler does not implement yet.
+///
+/// Spelled `U0301` up to and including 0.1.0, which was the same number
+/// `salman_lang::codes::U_REFERENCES` uses, so the code identified two
+/// different refusals and a CI filter on it could not mean either one.
+pub const U_NOT_COMPILED: DiagCode = DiagCode("U0501");
 
 /// How large the process image is, in bytes, for each of `%I`, `%Q` and `%M`.
 ///

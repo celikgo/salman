@@ -567,7 +567,7 @@ fn enable_on_a_call_whose_result_is_used_is_refused_rather_than_invented() {
         "FUNCTION F : INT\nVAR_INPUT N : INT; END_VAR\n  F := N;\nEND_FUNCTION\n\
          PROGRAM P\nVAR R : INT; END_VAR\n  R := F(EN := FALSE, N := 1);\nEND_PROGRAM\n",
     );
-    assert!(rendered.contains("U0301"), "{rendered}");
+    assert!(rendered.contains("U0501"), "{rendered}");
     assert!(
         rendered.contains("no value when the call does not happen"),
         "{rendered}"

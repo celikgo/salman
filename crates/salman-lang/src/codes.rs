@@ -10,7 +10,20 @@
 //! * `E03xx` — declarations and symbols
 //! * `E04xx` — types
 //! * `W0xxx` — warnings
-//! * `U0xxx` — constructs salman does not implement yet
+//! * `U0xxx` — constructs salman does not implement yet, numbered in the band
+//!   of the stage that refuses them: `U01xx` lexical, `U02xx` syntactic,
+//!   `U03xx` the checker
+//!
+//! **This file is not the only place codes are declared.** `salman-vm` owns the
+//! `x05xx` band and declares it in `crates/salman-vm/src/compile.rs` — `E0501`
+//! to `E0504` and `U0501` — because compilation is the stage after the ones
+//! numbered here, and because this crate cannot see that one.
+//!
+//! A code must therefore be unique across the whole workspace, not just within
+//! this file. `diagnostic_codes_are_unique`, below, checks the constants here
+//! against each other; the check that spans crates reads the source, and is
+//! `no_diagnostic_code_means_two_things_in_this_workspace` in
+//! `crates/salman-core/src/diag.rs`. Grep before you take a number.
 
 use salman_core::diag::DiagCode;
 
