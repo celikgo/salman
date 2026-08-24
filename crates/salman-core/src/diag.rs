@@ -513,6 +513,8 @@ fn expand_tabs(line: &str, one_based_column: usize) -> (String, usize) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::clause::{CitationKind, CitedTest, ClauseRef, Provenance};
     use crate::span::{FileId, SourceMap, Span};
@@ -708,5 +710,119 @@ mod tests {
         let d = Diagnostic::error(E_TEST, "example")
             .with_primary(Span::new(id, 1_000, 2_000), "way out there");
         let _ = render(&d, &map);
+    }
+
+    // -- one code, one meaning, across the whole workspace --------------------
+
+    fn repo_root() -> std::path::PathBuf {
+        // CARGO_MANIFEST_DIR is <root>/crates/salman-core.
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("crate is two levels below the repository root")
+            .to_path_buf()
+    }
+
+    /// Every `.rs` file under `crates/*/src/`, in a fixed order.
+    fn library_sources() -> Vec<std::path::PathBuf> {
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let mut entries: Vec<_> = std::fs::read_dir(dir)
+                .unwrap_or_else(|err| panic!("cannot read {}: {err}", dir.display()))
+                .map(|e| e.expect("a readable directory entry").path())
+                .collect();
+            // read_dir order is platform-dependent; sort so a failure names the
+            // same file on every machine.
+            entries.sort();
+            for path in entries {
+                if path.is_dir() {
+                    walk(&path, out);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    out.push(path);
+                }
+            }
+        }
+
+        let crates = repo_root().join("crates");
+        let mut roots: Vec<_> = std::fs::read_dir(&crates)
+            .unwrap_or_else(|err| panic!("cannot read {}: {err}", crates.display()))
+            .map(|e| e.expect("a readable directory entry").path().join("src"))
+            .filter(|p| p.is_dir())
+            .collect();
+        roots.sort();
+
+        let mut files = Vec::new();
+        for root in roots {
+            walk(&root, &mut files);
+        }
+        files
+    }
+
+    /// The `NAME` and `CODE` of a `pub const NAME: DiagCode = DiagCode("CODE");`
+    /// line, or `None` for any other line.
+    ///
+    /// Only `pub const` counts. A code declared inside a `#[cfg(test)]` module
+    /// is private to it — `E_TEST` above is one — and cannot reach a user.
+    fn declared_code(line: &str) -> Option<(&str, &str)> {
+        let rest = line.strip_prefix("pub const ")?;
+        let (name, rest) = rest.split_once(": DiagCode = DiagCode(\"")?;
+        let (code, _) = rest.split_once("\")")?;
+        Some((name.trim(), code))
+    }
+
+    #[test]
+    fn no_diagnostic_code_means_two_things_in_this_workspace() {
+        // A code is a published identifier: it reaches users' CI filters and
+        // lint suppressions. One number standing for two different refusals
+        // makes the filter useless for both, and no test inside a single crate
+        // can see it — `salman-lang` cannot see `salman-vm`, and neither
+        // depends on the other's codes. So this reads the source, the way
+        // `clause::every_cited_test_exists_in_the_source_tree` does.
+        //
+        // U0301 was exactly this, up to and including 0.1.0: both
+        // `salman_lang::codes::U_REFERENCES` and the compiler's
+        // not-implemented refusal. The compiler's moved to `U0501`, in the
+        // band `salman-vm` already owned.
+        let mut by_code: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut files = 0usize;
+        for path in library_sources() {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()));
+            for line in text.lines() {
+                if let Some((name, code)) = declared_code(line) {
+                    let display = path
+                        .strip_prefix(repo_root())
+                        .unwrap_or(&path)
+                        .display()
+                        .to_string();
+                    by_code
+                        .entry(code.to_string())
+                        .or_default()
+                        .push(format!("{name} in {display}"));
+                }
+            }
+            files += 1;
+        }
+
+        assert!(
+            files > 50,
+            "only {files} source files were scanned; the walk is not finding the crates"
+        );
+        assert!(
+            by_code.len() > 50,
+            "only {} codes were found; the line pattern has drifted from the source",
+            by_code.len()
+        );
+
+        let collisions: Vec<String> = by_code
+            .iter()
+            .filter(|(_, names)| names.len() > 1)
+            .map(|(code, names)| format!("{code} is {}", names.join(", and ")))
+            .collect();
+        assert!(
+            collisions.is_empty(),
+            "a diagnostic code must mean exactly one thing across the workspace, \
+             and these do not:\n  {}",
+            collisions.join("\n  ")
+        );
     }
 }

@@ -182,24 +182,28 @@ The documented ranges, and how full each is today:
 | `E04xx` | types | `E0401`–`E0415` | `E0416` |
 | `E05xx` | compilation and layout — **declared in `salman-vm/src/compile.rs`, not here** | `E0501`–`E0504` | `E0505` |
 | `W0xxx` | warnings | `W0101`, `W0102`, `W0201`, `W0301`, `W0302` | per group |
-| `U0xxx` | constructs salman does not implement yet | `U0101`, `U0201`, `U0301` | per group |
+| `U01xx`–`U03xx` | not implemented, in the band of the stage that refuses it | `U0101` lexer, `U0201` parser, `U0301` checker | per band |
+| `U05xx` | not implemented, refused by the compiler — **also in `compile.rs`** | `U0501` | `U0502` |
 
-Two traps in that table:
+Two things about that table that will catch you:
 
-1. **`codes.rs` is not the only place codes are defined.** `crates/salman-vm/src/compile.rs`
-   declares `E_LAYOUT` (`E0501`), `E_NOTHING_TO_RUN` (`E0502`), `E_BAD_LOCATION` (`E0503`),
-   `E_WRITE_TO_INPUT` (`E0504`) and `U_NOT_COMPILED` (`U0301`). The `E05xx` range is not
-   documented in `codes.rs`'s header comment.
-2. **The uniqueness test does not span crates.** `diagnostic_codes_are_unique` in `codes.rs`
-   checks a hand-maintained array of the constants in that file. It cannot see `salman-vm`,
-   and one code is already shared across the boundary: `U0301` is both
-   `salman_lang::codes::U_REFERENCES`, which covers `REF_TO`, `^` and `?=` and is raised in
-   `sema.rs`, and `salman_vm::compile::U_NOT_COMPILED`, which is the compiler's
-   not-implemented refusal. That is known and recorded — `docs/CONFORMANCE.md` says *"Both the checker and the
-   compiler spell their not-implemented refusals `U0301`. They are the same code from two
-   crates … and only the message distinguishes them."* Which is exactly why you should
-   **grep the whole tree for a candidate number before you take it**, and add your constant to
-   the `diagnostic_codes_are_unique` array in the same commit.
+1. **`codes.rs` is not the only place codes are declared.** `crates/salman-vm/src/compile.rs`
+   owns the whole `x05xx` band: `E_LAYOUT` (`E0501`), `E_NOTHING_TO_RUN` (`E0502`),
+   `E_BAD_LOCATION` (`E0503`), `E_WRITE_TO_INPUT` (`E0504`) and `U_NOT_COMPILED` (`U0501`).
+   The band exists because compilation is the stage after the four `salman-lang` numbers, and
+   because `salman-lang` cannot see `salman-vm`.
+2. **`diagnostic_codes_are_unique` does not span crates**, and cannot: it is a
+   hand-maintained array inside `codes.rs`'s own test module. The check that does span them
+   reads the source — `no_diagnostic_code_means_two_things_in_this_workspace` in
+   `crates/salman-core/src/diag.rs` scans every `pub const … DiagCode("…")` under
+   `crates/*/src/` and fails if one number carries two names, printing both.
+
+   That test exists because the workspace shipped 0.1.0 with `U0301` meaning two things:
+   `salman_lang::codes::U_REFERENCES`, which covers `REF_TO`, `^` and `?=`, and the
+   compiler's not-implemented refusal. The compiler's moved to `U0501`. So: **grep the whole
+   tree before you take a number** — and add your constant to the
+   `diagnostic_codes_are_unique` array as well, because the fast local check is still worth
+   having.
 
 ### Emitting one
 
@@ -294,7 +298,7 @@ The order the work went in:
    either, because binding the inputs is part of the call. `ENO` is true when the call
    happened and true whenever `EN` is absent.
 5. **A second policy where the standard ran out.** `EN` on a call *whose result is used* is
-   refused (`U0301`): with `EN` false there is no call and therefore no result, and salman
+   refused (`U0501`): with `EN` false there is no call and therefore no result, and salman
    will not invent one.
 6. **Named tests for each**: `a_call_with_enable_false_does_not_happen_at_all`,
    `a_call_that_does_not_happen_does_not_write_its_inputs_either`,

@@ -1196,7 +1196,7 @@ VAR Answer : DINT; END_VAR
   Answer := Shared;
 END_PROGRAM
 ";
-    assert!(codes(source).contains(&"U0301"), "{:?}", codes(source));
+    assert!(codes(source).contains(&"U0501"), "{:?}", codes(source));
     assert!(compile(source).compiled.is_none());
 }
 

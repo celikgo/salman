@@ -233,14 +233,17 @@ Ordered by how often they catch people.
    Renaming a test therefore breaks a registry entry in a different crate.
 3. **`unwrap()` in library code.** It is `deny`, not `warn`. Return a typed error.
 4. **Reaching for `HashMap`.** Denied by name in `clippy.toml`. Use `BTreeMap`.
-5. **Adding a diagnostic code without checking both files.** `crates/salman-lang/src/codes.rs`
-   holds `E01xx` lexical, `E02xx` syntactic, `E03xx` declarations and symbols, `E04xx` types,
-   `W0xxx` warnings, `U0xxx` not-implemented — and `crates/salman-vm/src/compile.rs` declares
-   its own `E05xx` compilation codes plus `U0301`. `diagnostic_codes_are_unique` only checks
-   the `codes.rs` list, so it cannot catch a cross-crate collision — and one code is already
-   shared: `U0301` is both `salman_lang::codes::U_REFERENCES` and
-   `salman_vm::compile::U_NOT_COMPILED`, which `docs/CONFORMANCE.md` records. Grep the whole
-   tree for a code before you take it.
+5. **Adding a diagnostic code without checking both files.** Codes live in two places, by
+   band: `crates/salman-lang/src/codes.rs` owns `E01xx` lexical, `E02xx` syntactic, `E03xx`
+   declarations and symbols, `E04xx` types, the matching `U01xx`–`U03xx`, and `W0xxx`;
+   `crates/salman-vm/src/compile.rs` owns the `x05xx` band — `E0501`–`E0504` and `U0501`.
+   `diagnostic_codes_are_unique` checks `codes.rs` against itself and cannot see another
+   crate, so the workspace-wide check reads the source:
+   `no_diagnostic_code_means_two_things_in_this_workspace` in
+   `crates/salman-core/src/diag.rs` scans every `pub const … DiagCode("…")` under
+   `crates/*/src/` and fails if one number carries two names. It exists because `U0301` meant
+   two things up to 0.1.0. A code is published: once it means something, it keeps meaning
+   that.
 6. **Putting a decision in the wrong crate.** "Is this legal?" belongs in `salman-lang`.
    "What does it do?" belongs in `salman-vm`. A value's representation, a span, a diagnostic
    or a hash belongs in `salman-core`. If a change to the type checker needs a new opcode,

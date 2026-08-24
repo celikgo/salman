@@ -352,7 +352,7 @@ fn a_partly_specified_location_is_refused_rather_than_defaulted() {
 #[test]
 fn exponentiation_reports_that_it_is_not_implemented() {
     let build = compile(&program("  A : LREAL;", "  A := A ** 2.0;"));
-    assert!(codes(&build).contains(&"U0301"), "{:?}", codes(&build));
+    assert!(codes(&build).contains(&"U0501"), "{:?}", codes(&build));
 }
 
 // -- the shape of the diagnostics themselves -----------------------------

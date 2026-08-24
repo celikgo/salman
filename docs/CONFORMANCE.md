@@ -133,7 +133,7 @@ that can collide with nothing — and refusing it would invent a restriction IEC
 have. The `E0324` diagnostic says so, and
 `a_structure_field_may_be_called_en_or_eno` proves the field still works.
 
-*salman policy:* `EN` on a call **whose result is used** is refused (`U0301`). With `EN` false
+*salman policy:* `EN` on a call **whose result is used** is refused (`U0501`). With `EN` false
 there is no call and therefore no result, and salman will not invent one. Call it as a
 statement and read the result separately. Tests: `a_call_with_enable_false_does_not_happen_at_all`,
 `a_call_that_does_not_happen_does_not_write_its_inputs_either`,
@@ -270,7 +270,7 @@ recursion. It refuses two constructs as unimplemented rather than as wrong, both
 
 **The compiler** — `crates/salman-vm/src/compile.rs` — runs **only when the checker reported no
 error at all**, so everything it says is about a construct the checker deliberately let
-through. It refuses, under `U0301`, with a message naming the construct:
+through. It refuses, under `U0501`, with a message naming the construct:
 
 | What | The message begins | Test |
 |---|---|---|
@@ -304,9 +304,17 @@ salman lays every instance out once, at load, so there is nowhere for the inner 
 `E0502` "this project has nothing to run" is the compiler's remaining error: a file with no
 `PROGRAM` in it compiles to nothing schedulable.
 
-Both the checker and the compiler spell their not-implemented refusals `U0301`. They are the
-same code from two crates — `salman_lang::codes::U_REFERENCES` and
-`salman_vm::compile::U_NOT_COMPILED` — and only the message distinguishes them.
+Up to and including 0.1.0 the checker and the compiler spelled their not-implemented refusals
+with the **same** code, `U0301` — `salman_lang::codes::U_REFERENCES` and
+`salman_vm::compile::U_NOT_COMPILED` — and only the message distinguished them, which made a CI
+filter on that number useless for both. The compiler's is now `U0501`, in the `x05xx` band
+`salman-vm` already owned for `E0501`–`E0504`. `U0301` keeps the meaning it had in the checker.
+
+That the collision could exist at all was the real defect: `codes.rs`'s
+`diagnostic_codes_are_unique` checks that file against itself and cannot see another crate.
+`no_diagnostic_code_means_two_things_in_this_workspace`, in
+`crates/salman-core/src/diag.rs`, reads every `pub const … DiagCode("…")` under `crates/*/src/`
+and fails if one number carries two names, so this cannot happen again quietly.
 
 ---
 
@@ -486,7 +494,7 @@ table above and the runtime part company:
 | `[x]` | `OR`, `XOR`, `AND`, `&`, `=`, `<>`, `<`, `>`, `<=`, `>=`, `+`, `-`, `*`, `/`, `MOD`, unary `-`, `NOT` | Parsed, type-checked, compiled to a `Binary` or `Unary` instruction and executed. `exec.rs: bit_operations_keep_the_width_of_their_operands`, `exec.rs: integer_division_truncates_toward_zero`, `exec.rs: strings_and_dates_compare_by_value`; `semantics.rs: an_operation_between_two_widths_is_done_at_the_wider_one`, `semantics.rs: a_bit_operation_keeps_the_width_of_its_operands`, `semantics.rs: not_inverts_every_bit_of_the_width_it_is_written_on`, `semantics.rs: unsigned_arithmetic_stays_unsigned`, `semantics.rs: a_duration_scales_by_a_number_and_compares_with_a_duration` |
 | `[x]` | Unary `+` | The identity: `+X` is `X`, and it compiles to no instruction at all. `semantics.rs: unary_plus_is_the_identity_and_unary_minus_negates`, `semantics.rs: unary_plus_on_a_literal_is_the_literal` |
 | `[x]` | `.` field access, `[]` subscript, `()` call | Compiled to a slot offset, a bounds-checked indexed access and a call. `exec.rs: an_array_subscript_outside_its_bounds_faults_with_the_bounds_in_the_message`; `semantics.rs: an_array_is_indexed_from_its_declared_lower_bound`, `semantics.rs: a_two_dimensional_array_is_linearised_row_by_row`, `semantics.rs: each_dimension_is_checked_against_its_own_bounds` |
-| `[ ]` | `**` exponentiation | **Parses and type-checks; the compiler refuses it by name** under `U0301`, because salman implements no transcendental functions in this version. The interpreter also refuses `Pow`, but nothing compiled from source can reach that. `diagnostics.rs: exponentiation_reports_that_it_is_not_implemented` |
+| `[ ]` | `**` exponentiation | **Parses and type-checks; the compiler refuses it by name** under `U0501`, because salman implements no transcendental functions in this version. The interpreter also refuses `Pow`, but nothing compiled from source can reach that. `diagnostics.rs: exponentiation_reports_that_it_is_not_implemented` |
 | `[ ]` | `^` dereference | **Parses; the checker refuses it by name** under `U0301`. There are no reference types. `sema.rs: the_dereference_operator_is_reported_as_not_implemented` |
 
 Constant subexpressions are folded before code generation, wrapping exactly as the runtime
@@ -553,15 +561,15 @@ what makes a watch list, a trace and a force list possible without a second symb
 | `[x]` | A POU may be written above the blocks it instantiates | The layout iterates to a fixpoint rather than a fixed number of passes, so declaration order cannot change the answer: `semantics.rs: the_order_the_blocks_are_written_in_does_not_change_what_a_program_computes` |
 | `[ ]` | A function block that holds an instance of itself, directly or through another | Refused with `E0501`, naming the block: such a block has no finite size and salman lays every instance out once. `semantics.rs: a_function_block_that_holds_an_instance_of_itself_is_refused`, `semantics.rs: two_function_blocks_that_hold_each_other_are_refused` |
 | `[x]` | `VAR_GLOBAL` | `sema.rs: a_global_is_found_when_no_local_hides_it`, `sema.rs: a_local_shadows_a_global_of_the_same_name`, `sema.rs: a_configuration_global_is_visible_to_a_pou_body`; `semantics.rs: a_global_is_shared_between_two_programs_that_name_it` |
-| `[ ]` | `VAR_EXTERNAL` | Parsed and resolved, and then **refused by the compiler** under `U0301`. Nothing bound it to the global of the same name: it was given storage of its own, so a POU that wrote it wrote a private copy no other POU could see. A `VAR_GLOBAL` is visible by name without the block. `semantics.rs: a_var_external_declaration_is_refused_rather_than_given_private_storage` |
+| `[ ]` | `VAR_EXTERNAL` | Parsed and resolved, and then **refused by the compiler** under `U0501`. Nothing bound it to the global of the same name: it was given storage of its own, so a POU that wrote it wrote a private copy no other POU could see. A `VAR_GLOBAL` is visible by name without the block. `semantics.rs: a_var_external_declaration_is_refused_rather_than_given_private_storage` |
 | `[x]` | `CONFIGURATION`, `RESOURCE`, `TASK`, `PROGRAM ... WITH ...` | `parser.rs: a_configuration_holds_globals_resources_tasks_and_program_instances`; `sema.rs: a_configuration_produces_its_tasks_and_the_programs_bound_to_them`, `sema.rs: an_interval_that_is_not_a_positive_constant_duration_is_refused`, `sema.rs: a_single_trigger_must_name_a_global_bool` |
 | `[x]` | `VAR_IN_OUT` | Passed by value at the call and copied back to the caller's variable when the call returns, which is observably the same as a reference for the forms salman compiles. There are no reference types, so it cannot be one. `semantics.rs: an_argument_written_for_a_var_in_out_parameter_reaches_it_and_comes_back` |
 | `[x]` | A `FUNCTION` keeps no state between calls | Its locals start from their declared initial value on every call, which is what IEC 61131-3:2013 §6.6.2 "Functions" (Ed 3.0) makes a function mean. `semantics.rs: a_function_keeps_no_state_between_calls`, `semantics.rs: a_function_local_starts_from_its_declared_initial_value_on_every_call`, `semantics.rs: a_function_may_call_another_function` |
 | `[x]` | Two instances of one `PROGRAM` keep separate state | `semantics.rs: two_instances_of_one_program_keep_separate_state` |
 | `[ ]` | Enforcing a `STRING[n]` length or a subrange's bounds **at run time** | Neither is in the emitted code. Both are checked against constants at compile time, and that much is tested — `sema.rs: a_literal_outside_a_subrange_is_refused`, `sema.rs: a_string_literal_longer_than_its_target_is_refused` — but a value arriving through a variable is not checked. See the section before the tables |
-| `[ ]` | `AT %IX0.0` located variables | Lexed, parsed and resolved — `parser.rs: a_located_variable_keeps_the_address_it_was_bound_to` — and then **refused by the compiler** under `U0301`, because there is no IO mapping layer to bind them to: `diagnostics.rs: located_variables_report_that_the_io_mapping_layer_does_not_exist` |
+| `[ ]` | `AT %IX0.0` located variables | Lexed, parsed and resolved — `parser.rs: a_located_variable_keeps_the_address_it_was_bound_to` — and then **refused by the compiler** under `U0501`, because there is no IO mapping layer to bind them to: `diagnostics.rs: located_variables_report_that_the_io_mapping_layer_does_not_exist` |
 | `[x]` | Whole-aggregate assignment and argument passing: `A := B` between arrays or structures, and a structure passed to a `VAR_INPUT` | Compiled as a multi-slot copy. Not supported through a subscript or a direct address, where it is refused by name |
-| `[ ]` | Arrays whose elements occupy more than one slot: an array of function block instances, or of a structure with more than one field | The declaration is accepted and given slots; subscripting one is not compiled. `T[1](...)` is refused by the checker as `E0314`, `A[1].X` and `A[1] := B` by the compiler as `U0301` and `E0501`. An array of a single-field structure occupies one slot per element and does work |
+| `[ ]` | Arrays whose elements occupy more than one slot: an array of function block instances, or of a structure with more than one field | The declaration is accepted and given slots; subscripting one is not compiled. `T[1](...)` is refused by the checker as `E0314`, `A[1].X` and `A[1] := B` by the compiler as `U0501` and `E0501`. An array of a single-field structure occupies one slot per element and does work |
 | `[ ]` | Inline structures and enumerations in a variable declaration | Named, not implemented: `parser.rs: an_inline_structure_or_enumeration_asks_for_a_named_type` |
 | `[ ]` | `VAR_CONFIG` instance paths | Named: `parser.rs: an_instance_path_in_a_declaration_says_it_is_not_implemented` |
 | `[ ]` | The single-resource configuration shorthand | Named in the diagnostic; tasks must sit inside a `RESOURCE` |
@@ -747,7 +755,7 @@ of the implementation.
   `ARRAY [1..3] OF TON` and `ARRAY [1..3] OF Point`, the checker resolves them and the
   compiler gives them slots. What does not work is reaching into one: calling `T[1](...)` is
   refused by the checker as `E0314` "only a FUNCTION and a function block instance are
-  callable", and `A[1].X` and `A[1] := B` are refused by the compiler as `U0301` and `E0501`.
+  callable", and `A[1].X` and `A[1] := B` are refused by the compiler as `U0501` and `E0501`.
   An array of a *single-field* structure occupies one slot per element and works like an array
   of scalars, which is a distinction the messages do not draw.
 - **`VAR_ACCESS` and `VAR_CONFIG` semantics.** The sections parse; nothing acts on them. A
